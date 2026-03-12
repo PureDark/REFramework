@@ -2323,8 +2323,8 @@ void VR::on_present() {
     std::scoped_lock _{m_openvr_mtx};
     m_submitted = false;
 
-    EyeIndex nEye = (IsLeftEye()) ? EyeLeft : EyeRight;
-    EyeIndex nEyeOther = (IsLeftEye()) ? EyeRight : EyeLeft;
+    EyeIndex nEye = (m_render_frame_count % 2 == m_left_eye_interval) ? EyeLeft : EyeRight;
+    EyeIndex nEyeOther = (m_render_frame_count % 2 == m_left_eye_interval) ? EyeRight : EyeLeft;
 
     glm::mat4 matEyePosRender = get_current_eye_transform(false);
     glm::mat4 matEyePosProj = get_current_eye_transform(true);
