@@ -2323,6 +2323,17 @@ void VR::on_present() {
     std::scoped_lock _{m_openvr_mtx};
     m_submitted = false;
 
+    
+	static bool btn5 = false;
+    if (GetAsyncKeyState(VK_NUMPAD5) < 0 && btn5 == false) {
+        btn5 = true;
+    }
+    if (GetAsyncKeyState(VK_NUMPAD5) == 0 && btn5 == true) {
+        btn5 = false;
+        int32_t& value = m_reprojection_mode->value();
+        value = (value + 1 % 4); 
+    }
+
     EyeIndex nEye = (m_render_frame_count % 2 == m_left_eye_interval) ? EyeLeft : EyeRight;
     EyeIndex nEyeOther = (m_render_frame_count % 2 == m_left_eye_interval) ? EyeRight : EyeLeft;
 
@@ -3875,6 +3886,8 @@ void VR::on_draw_ui() {
 
     m_use_afr->draw("Use AFR");
     m_use_reprojection->draw("Use Reprojection");
+    m_reprojection_mode->draw("Reprojection Mode");
+    ImGui::Separator();
 
     m_decoupled_pitch->draw("Decoupled Camera Pitch");
 

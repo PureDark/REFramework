@@ -87,9 +87,9 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         params.InUIColorAlpha = NULL;
         params.OutEyeColor = NULL;
         params.OutEyeDepth = NULL;
-        params.Mode = AlternateEyeReprojection;
+        params.Mode = (ReprojectionMode)vr->m_reprojection_mode->value();
         params.EyeIndex = nEye;
-        params.ClearBeforeReprojection = true;
+        params.ClearBeforeReprojection = false;
         params.CameraData = &vr->cameraData[nEye];
         EvaluateReprojection(params);
     }

@@ -503,6 +503,14 @@ private:
     const ModToggle::Ptr m_decoupled_pitch{ ModToggle::create(generate_name("DecoupledPitch"), false) };
     const ModToggle::Ptr m_use_afr{ModToggle::create(generate_name("AlternateFrameRendering"), false)};
     const ModToggle::Ptr m_use_reprojection{ModToggle::create(generate_name("Reprojection"), false)};
+    const ModCombo::Ptr m_reprojection_mode{ModCombo::create(generate_name("Reprojection Mode"),
+        {
+            "None",
+            "AlternateEyeReprojection",
+            "PreviousFrameReprojection",
+            "CombinedReprojection",
+        },
+        (int)ReprojectionMode::None)};
     const ModToggle::Ptr m_use_custom_view_distance{ ModToggle::create(generate_name("UseCustomViewDistance"), false) };
     const ModToggle::Ptr m_hmd_oriented_audio{ ModToggle::create(generate_name("HMDOrientedAudio"), true) };
     const ModSlider::Ptr m_view_distance{ ModSlider::create(generate_name("CustomViewDistance"), 10.0f, 3000.0f, 500.0f) };
