@@ -303,6 +303,37 @@ void VR::on_camera_get_view_matrix(REManagedObject* camera, Matrix4x4f* result) 
 
     // Apply the complete eye transform. This fixes the need for parallel projections on all canted headsets like Pimax
     mtx = current_eye_transform * mtx;
+
+
+    // *result aka mtx, is actually WorldToView matrix
+    // 
+    // usually it should be 
+    // mat_ViewToWorld * mat_eye_transform to apply the transform (right multiplication)
+    // 
+    // but mtx is WorldToView (inverse(ViewToWorld))
+    // and the result requires to be WorldToView (inverse(ViewToWorld))
+    // 
+    // so essentially you need to do
+    // 
+    // inverse(mat_ViewToWorld * mat_eye_transform) = inverse(mat_eye_transform) * inverse(mat_ViewToWorld)
+    // 
+    // and inverse(mat_eye_transform) happens to be equal to the other eye's transform
+    // 
+    // that's why using a flipped eye transform happens to work when using left multiplication
+
+    //// easier way to understand it:
+    //auto current_eye_transform = get_current_eye_transform(false);
+    //auto other_eye_transform = get_current_eye_transform(true);
+    //auto worldToView = mtx;
+    //auto viewToWorld = glm::inverse(worldToView);
+    //mtx = glm::inverse(viewToWorld * current_eye_transform);
+    //// =>
+    //mtx = glm::inverse(current_eye_transform) * glm::inverse(viewToWorld);
+    //// =>
+    //mtx = other_eye_transform * worldToView;
+    //// which is 
+    //mtx = current_eye_transform * mtx;
+    //// in previous code
 }
 
 void VR::inputsystem_update_hook(void* ctx, REManagedObject* input_system) {
@@ -683,6 +714,19 @@ and place the openxr_loader.dll in the same folder.)";
     }
 
     m_init_finished = true;
+
+    //#############################
+    //#Reprojection Module Start
+    //#############################
+    auto& hook = g_framework->get_d3d12_hook();
+    hook->get_command_queue();
+    pd::DeviceParams params{};
+    params.d3d12Device = hook->get_device();
+    params.d3d12Queue = hook->get_command_queue();
+    d3d12Renderer = InitDevice(params);
+    //#############################
+    //#Reprojection Module End
+    //#############################
 
     // all OK
     return Mod::on_initialize();
@@ -2181,13 +2225,14 @@ Matrix4x4f VR::get_current_eye_transform(bool flip) {
 
     std::shared_lock _{get_runtime()->eyes_mtx};
 
-    auto mod_count = flip ? m_right_eye_interval : m_left_eye_interval;
+    auto nEye = flip ? vr::Eye_Right : vr::Eye_Left;
+    auto nEyeOther = flip ? vr::Eye_Left : vr::Eye_Right;
 
     if (m_frame_count % 2 == mod_count) {
-        return get_runtime()->eyes[vr::Eye_Left];
+        return get_runtime()->eyes[nEye];
     }
 
-    return get_runtime()->eyes[vr::Eye_Right];
+    return get_runtime()->eyes[nEyeOther];
 }
 
 Matrix4x4f VR::get_current_projection_matrix(bool flip) {
@@ -2197,13 +2242,14 @@ Matrix4x4f VR::get_current_projection_matrix(bool flip) {
 
     std::shared_lock _{get_runtime()->eyes_mtx};
 
-    auto mod_count = flip ? m_right_eye_interval : m_left_eye_interval;
+    auto nEye = flip ? VRRuntime::Eye::RIGHT : VRRuntime::Eye::LEFT;
+    auto nEyeOther = flip ? VRRuntime::Eye::LEFT : VRRuntime::Eye::RIGHT;
 
     if (m_frame_count % 2 == mod_count) {
-        return get_runtime()->projections[(uint32_t)VRRuntime::Eye::LEFT];
+        return get_runtime()->projections[(uint32_t)nEye];
     }
 
-    return get_runtime()->projections[(uint32_t)VRRuntime::Eye::RIGHT];
+    return get_runtime()->projections[(uint32_t)nEyeOther];
 }
 
 void VR::on_pre_imgui_frame() {
@@ -2214,8 +2260,20 @@ void VR::on_pre_imgui_frame() {
     m_overlay_component.on_pre_imgui_frame();
 }
 
+glm::mat4 to_reverseZ(const glm::mat4& proj) {
+
+	glm::mat4 transformMat = glm::mat4(
+		1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, -1,0,
+		0, 0, 1, 1
+	);
+
+    return transformMat * proj;
+}
+
 void VR::on_present() {
-    if ((m_render_frame_count + 1) % 2 == m_left_eye_interval) {
+    if ((m_render_frame_count + 1) % 2 == m_left_eye_interval || is_using_afr()) {
         ResetEvent(m_present_finished_event);
     }
 
@@ -2243,6 +2301,7 @@ void VR::on_present() {
             }
 
             openvr->is_hmd_active = hmd_active;
+            openvr->is_hmd_active = true;
 
             // upon headset re-entry, reinitialize OpenVR
             if (openvr->is_hmd_active && !openvr->was_hmd_active) {
@@ -2263,6 +2322,26 @@ void VR::on_present() {
     // attempt to fix crash when reinitializing openvr
     std::scoped_lock _{m_openvr_mtx};
     m_submitted = false;
+
+    EyeIndex nEye = (IsLeftEye()) ? EyeLeft : EyeRight;
+    EyeIndex nEyeOther = (IsLeftEye()) ? EyeRight : EyeLeft;
+
+    glm::mat4 matEyePosRender = get_current_eye_transform(false);
+    glm::mat4 matEyePosProj = get_current_eye_transform(true);
+
+    cameraData[nEye].camWorldToViewMatrix = glm::inverse(m_original_camera_matrix);
+    cameraData[nEye].camViewToWorldMatrix = m_original_camera_matrix;
+    cameraData[nEye].destViewToWorldMatrix = m_render_camera_matrix * matEyePosProj;
+    cameraData[nEye].srcViewToWorldMatrix = m_render_camera_matrix * matEyePosRender;
+    cameraData[nEye].destWorldToViewMatrix = glm::inverse(cameraData[nEye].destViewToWorldMatrix);
+    cameraData[nEye].srcWorldToViewMatrix = glm::inverse(cameraData[nEye].srcViewToWorldMatrix);
+
+    cameraData[nEye].destViewToClipMatrix = to_reverseZ(get_current_projection_matrix(true));
+    cameraData[nEye].destClipToViewMatrix = glm::inverse(cameraData[nEye].destViewToClipMatrix);
+    cameraData[nEye].srcViewToClipMatrix = to_reverseZ(get_current_projection_matrix(false));
+    cameraData[nEye].srcClipToViewMatrix = glm::inverse(cameraData[nEye].srcViewToClipMatrix);
+    cameraData[nEye].camViewToClipMatrix = cameraData[nEye].srcViewToClipMatrix;
+    cameraData[nEye].camClipToViewMatrix = cameraData[nEye].srcClipToViewMatrix;
 
     const auto renderer = g_framework->get_renderer_type();
     vr::EVRCompositorError e = vr::EVRCompositorError::VRCompositorError_None;
@@ -2303,7 +2382,7 @@ void VR::on_present() {
         m_submitted = false;
     }
 
-    if ((m_render_frame_count + 1) % 2 == m_left_eye_interval) {
+    if ((m_render_frame_count + 1) % 2 == m_left_eye_interval || is_using_afr()) {
         SetEvent(m_present_finished_event);
     }
 }
@@ -3028,7 +3107,7 @@ void VR::on_pre_begin_rendering(void* entry) {
     }
     
     // Call WaitGetPoses
-    if (!inside_on_end && m_frame_count % 2 == m_left_eye_interval) {
+    if (!inside_on_end && m_frame_count % 2 == m_left_eye_interval || is_using_afr()) {
         runtime->consume_events(nullptr);
         update_hmd_state();
     }
@@ -3057,7 +3136,7 @@ void VR::on_pre_end_rendering(void* entry) {
         return;
     }
 
-    if (runtime->ready() && m_frame_count % 2 == m_left_eye_interval) {
+    if (runtime->ready() && (m_frame_count % 2 == m_left_eye_interval) || is_using_afr()) {
         const auto stage = runtime->get_synchronize_stage();
 
         if (stage == VRRuntime::SynchronizeStage::LATE && runtime->synchronize_frame() == VRRuntime::Error::SUCCESS) {
@@ -3065,6 +3144,18 @@ void VR::on_pre_end_rendering(void* entry) {
                 m_openxr->begin_frame();
             }
         }
+    }
+
+    auto root_layer = sdk::renderer::get_root_layer();
+    if (root_layer != nullptr) {
+        auto [output_parent, output_layer] = root_layer->find_layer_recursive("via.render.layer.Output");
+        auto valid_scene_layers = (*output_layer)->find_fully_rendered_scene_layers();
+        if (valid_scene_layers.empty()) {
+            return;
+        }
+        if (valid_scene_layers.size() > 0) {
+            depthTex = valid_scene_layers[0]->get_depth_stencil_d3d12();
+        } 
     }
 }
 
@@ -3224,7 +3315,7 @@ void VR::on_wait_rendering(void* entry) {
     // to be signaled
     // only on the left eye interval because we need the right eye
     // to start render work as soon as possible
-    if (((m_frame_count + 1) % 2) == m_left_eye_interval) {
+    if (((m_frame_count + 1) % 2) == m_left_eye_interval || is_using_afr()) {
         if (WaitForSingleObject(m_present_finished_event, 333) == WAIT_TIMEOUT) {
             timed_out = true;
         }
@@ -3783,6 +3874,8 @@ void VR::on_draw_ui() {
     ImGui::Separator();
 
     m_use_afr->draw("Use AFR");
+    m_use_reprojection->draw("Use Reprojection");
+
     m_decoupled_pitch->draw("Decoupled Camera Pitch");
 
     if (ImGui::Checkbox("Positional Tracking", &m_positional_tracking)) {

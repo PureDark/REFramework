@@ -172,6 +172,32 @@ FetchContent_Declare(kananlib
 )
 FetchContent_MakeAvailable(kananlib)
 
+# Target: pdreprojectionmod
+if(REF_BUILD_DEPENDENCIES AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework-dependencies
+	set(pdreprojectionmod_SOURCES
+		cmake.toml
+		"dependencies/pd-reprojectionmod/dummy/PDReprojectionPlugin.cpp"
+	)
+
+	add_library(pdreprojectionmod SHARED)
+
+	target_sources(pdreprojectionmod PRIVATE ${pdreprojectionmod_SOURCES})
+	source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${pdreprojectionmod_SOURCES})
+
+	target_include_directories(pdreprojectionmod PUBLIC
+		"dependencies/pd-reprojectionmod/include"
+	)
+	
+	target_link_libraries(pdreprojectionmod PUBLIC
+		glm_static
+	)
+
+	set_target_properties(pdreprojectionmod PROPERTIES
+		OUTPUT_NAME
+			VRAFRReprojection
+	)
+
+endif()
 # Target: spdlog
 if(REF_BUILD_DEPENDENCIES AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework-dependencies
 	set(spdlog_SOURCES
@@ -2536,13 +2562,14 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
+		pdreprojectionmod
 	)
 
 	set_target_properties(RE2 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:VRAFRReprojection.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -2740,13 +2767,14 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
+		pdreprojectionmod
 	)
 
 	set_target_properties(RE2_TDB66 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:VRAFRReprojection.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -4863,13 +4891,14 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
+		pdreprojectionmod
 	)
 
 	set_target_properties(RE3 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:VRAFRReprojection.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -5067,13 +5096,14 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
+		pdreprojectionmod
 	)
 
 	set_target_properties(RE3_TDB67 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:VRAFRReprojection.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -5271,13 +5301,14 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
+		pdreprojectionmod
 	)
 
 	set_target_properties(RE4 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:VRAFRReprojection.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -8355,13 +8386,14 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
+		pdreprojectionmod
 	)
 
 	set_target_properties(RE7 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:VRAFRReprojection.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -8559,13 +8591,14 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
+		pdreprojectionmod
 	)
 
 	set_target_properties(RE7_TDB49 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:VRAFRReprojection.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -9724,13 +9757,14 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
+		pdreprojectionmod
 	)
 
 	set_target_properties(RE8 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:VRAFRReprojection.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -10887,13 +10921,14 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
+		pdreprojectionmod
 	)
 
 	set_target_properties(DMC5 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:VRAFRReprojection.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -12052,13 +12087,14 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
+		pdreprojectionmod
 	)
 
 	set_target_properties(MHRISE PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:VRAFRReprojection.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -13217,13 +13253,14 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
+		pdreprojectionmod
 	)
 
 	set_target_properties(SF6 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:VRAFRReprojection.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -14382,13 +14419,14 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
+		pdreprojectionmod
 	)
 
 	set_target_properties(DD2 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:VRAFRReprojection.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -15547,13 +15585,14 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
+		pdreprojectionmod
 	)
 
 	set_target_properties(MHWILDS PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:VRAFRReprojection.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -16712,13 +16751,14 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
+		pdreprojectionmod
 	)
 
 	set_target_properties(MHSTORIES3 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:VRAFRReprojection.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -17877,13 +17917,14 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
+		pdreprojectionmod
 	)
 
 	set_target_properties(RE9 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:VRAFRReprojection.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -19042,13 +19083,14 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
+		pdreprojectionmod
 	)
 
 	set_target_properties(PRAGMATA PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:VRAFRReprojection.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO

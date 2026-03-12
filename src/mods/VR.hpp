@@ -24,9 +24,16 @@
 
 #include "Mod.hpp"
 
+#include "PDReprojectionPlugin.h"
+
 class REManagedObject;
 
 class VR : public Mod {
+public:
+    CameraData cameraData[2];
+    ID3D12Resource* depthTex = NULL;
+    D3D12RendererAPI* d3d12Renderer = nullptr;
+
 public:
     static std::shared_ptr<VR>& get();
 
@@ -494,7 +501,8 @@ private:
     const ModKey::Ptr m_set_standing_key{ ModKey::create(generate_name("SetStandingOriginKey")) };
     const ModKey::Ptr m_recenter_view_key{ ModKey::create(generate_name("RecenterViewKey")) };
     const ModToggle::Ptr m_decoupled_pitch{ ModToggle::create(generate_name("DecoupledPitch"), false) };
-    const ModToggle::Ptr m_use_afr{ ModToggle::create(generate_name("AlternateFrameRendering"), false) };
+    const ModToggle::Ptr m_use_afr{ModToggle::create(generate_name("AlternateFrameRendering"), false)};
+    const ModToggle::Ptr m_use_reprojection{ModToggle::create(generate_name("Reprojection"), false)};
     const ModToggle::Ptr m_use_custom_view_distance{ ModToggle::create(generate_name("UseCustomViewDistance"), false) };
     const ModToggle::Ptr m_hmd_oriented_audio{ ModToggle::create(generate_name("HMDOrientedAudio"), true) };
     const ModSlider::Ptr m_view_distance{ ModSlider::create(generate_name("CustomViewDistance"), 10.0f, 3000.0f, 500.0f) };
