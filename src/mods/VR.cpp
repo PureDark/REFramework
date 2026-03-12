@@ -2228,7 +2228,7 @@ Matrix4x4f VR::get_current_eye_transform(bool flip) {
     auto nEye = flip ? vr::Eye_Right : vr::Eye_Left;
     auto nEyeOther = flip ? vr::Eye_Left : vr::Eye_Right;
 
-    if (m_frame_count % 2 == mod_count) {
+    if (m_frame_count % 2 == m_left_eye_interval) {
         return get_runtime()->eyes[nEye];
     }
 
@@ -2245,7 +2245,7 @@ Matrix4x4f VR::get_current_projection_matrix(bool flip) {
     auto nEye = flip ? VRRuntime::Eye::RIGHT : VRRuntime::Eye::LEFT;
     auto nEyeOther = flip ? VRRuntime::Eye::LEFT : VRRuntime::Eye::RIGHT;
 
-    if (m_frame_count % 2 == mod_count) {
+    if (m_frame_count % 2 == m_left_eye_interval) {
         return get_runtime()->projections[(uint32_t)nEye];
     }
 
