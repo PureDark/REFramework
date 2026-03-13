@@ -2323,6 +2323,14 @@ void VR::on_present() {
     std::scoped_lock _{m_openvr_mtx};
     m_submitted = false;
 
+	static bool btn4 = false;
+    if (GetAsyncKeyState(VK_NUMPAD4) < 0 && btn4 == false) {
+        btn4 = true;
+    }
+    if (GetAsyncKeyState(VK_NUMPAD4) == 0 && btn4 == true) {
+        btn4 = false;
+        m_clear_before_reprojection->toggle();
+    }
     
 	static bool btn5 = false;
     if (GetAsyncKeyState(VK_NUMPAD5) < 0 && btn5 == false) {
@@ -2331,7 +2339,15 @@ void VR::on_present() {
     if (GetAsyncKeyState(VK_NUMPAD5) == 0 && btn5 == true) {
         btn5 = false;
         int32_t& value = m_reprojection_mode->value();
-        value = (value + 1 % 4); 
+        value = (value + 1) % 4; 
+    }
+    static bool btn6 = false;
+    if (GetAsyncKeyState(VK_NUMPAD6) < 0 && btn6 == false) {
+        btn6 = true;
+    }
+    if (GetAsyncKeyState(VK_NUMPAD6) == 0 && btn6 == true) {
+        btn6 = false;
+        m_reprojection_debug->toggle();
     }
 
     EyeIndex nEye = (m_render_frame_count % 2 == m_left_eye_interval) ? EyeLeft : EyeRight;
@@ -3885,7 +3901,8 @@ void VR::on_draw_ui() {
     ImGui::Separator();
 
     m_use_afr->draw("Use AFR");
-    m_use_reprojection->draw("Use Reprojection");
+    m_clear_before_reprojection->draw("Clear Before Reprojection");
+    m_reprojection_debug->draw("Debug Reprojection");
     m_reprojection_mode->draw("Reprojection Mode");
     ImGui::Separator();
 

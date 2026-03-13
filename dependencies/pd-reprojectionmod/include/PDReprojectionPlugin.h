@@ -85,6 +85,7 @@ struct EvaluateParams {
     EyeIndex EyeIndex;
     bool ClearBeforeReprojection = false;
     CameraData* CameraData; // required, camera matrices for this frame
+    bool Debug = false;
 };
 
 struct __declspec(novtable) D3D12RendererAPI {
