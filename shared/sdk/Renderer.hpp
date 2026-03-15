@@ -455,6 +455,29 @@ public:
         return (sdk::renderer::TargetState**)((uintptr_t)this + s_b8g8r8a8_unorm_target_only_state_offset);
     }
 
+    auto get_ui_target() { return get_target_state("UITarget"); }
+    auto get_ui_target_d3d12() { return get_target_state_resource_d3d12("UITarget"); }
+
+    Texture* get_ui_buffer_tex() {
+        return utility::re_managed_object::get_field<::sdk::renderer::Texture*>(this, "UIBufferTexturePtr");
+    }
+
+    ID3D12Resource* get_ui_buffer_tex_d3d12() {
+        const auto tex = utility::re_managed_object::get_field<::sdk::renderer::Texture*>(this, "UIBufferTexturePtr");
+
+        if (tex == nullptr) {
+            return nullptr;
+        }
+
+        const auto internal_resource = tex->get_d3d12_resource_container();
+
+        if (internal_resource == nullptr) {
+            return nullptr;
+        }
+
+        return internal_resource->get_native_resource();
+    }
+
 private:
 #if TDB_VER >= 71
     // SF6/RE4

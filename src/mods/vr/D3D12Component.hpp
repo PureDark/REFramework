@@ -23,6 +23,8 @@
 
 #include <openvr.h>
 
+#include "PDReprojectionPlugin.h"
+
 class VR;
 
 namespace vrmod {
@@ -47,6 +49,8 @@ private:
     void render_srv_to_rtv(ID3D12GraphicsCommandList* command_list, const d3d12::TextureContext& src, const d3d12::TextureContext& dst, D3D12_RESOURCE_STATES src_state, D3D12_RESOURCE_STATES dst_state);
 
     template <typename T> using ComPtr = Microsoft::WRL::ComPtr<T>;
+
+    EyeTextures m_eyeTexs;
 
     ComPtr<ID3D12Resource> m_prev_backbuffer{};
     d3d12::TextureContext m_backbuffer_copy{};

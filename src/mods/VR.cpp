@@ -436,6 +436,9 @@ void VR::inputsystem_update_hook(void* ctx, REManagedObject* input_system) {
 }
 
 bool VR::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_ctx) {
+
+    uiBufferTex = layer->get_ui_buffer_tex_d3d12();
+
     // just don't render anything at all.
     // overlays just seem to break stuff in VR.
     if (!is_hmd_active()) {
@@ -648,6 +651,20 @@ float VR::get_sharpness_hook(void* tonemapping) {
 
 // Called when the mod is initialized
 std::optional<std::string> VR::on_initialize_d3d_thread() try {
+
+    // #############################
+    // #Reprojection Module Start
+    // #############################
+    auto& hook = g_framework->get_d3d12_hook();
+    hook->get_command_queue();
+    pd::DeviceParams params{};
+    params.d3d12Device = hook->get_device();
+    params.d3d12Queue = hook->get_command_queue();
+    d3d12Renderer = InitDevice(params);
+    // #############################
+    // #Reprojection Module End
+    // #############################
+
     auto openvr_error = initialize_openvr();
 
     if (openvr_error || !m_openvr->loaded) {
@@ -714,19 +731,6 @@ and place the openxr_loader.dll in the same folder.)";
     }
 
     m_init_finished = true;
-
-    //#############################
-    //#Reprojection Module Start
-    //#############################
-    auto& hook = g_framework->get_d3d12_hook();
-    hook->get_command_queue();
-    pd::DeviceParams params{};
-    params.d3d12Device = hook->get_device();
-    params.d3d12Queue = hook->get_command_queue();
-    d3d12Renderer = InitDevice(params);
-    //#############################
-    //#Reprojection Module End
-    //#############################
 
     // all OK
     return Mod::on_initialize();
@@ -2349,6 +2353,14 @@ void VR::on_present() {
         btn6 = false;
         m_reprojection_debug->toggle();
     }
+    static bool btn9 = false;
+    if (GetAsyncKeyState(VK_NUMPAD9) < 0 && btn9 == false) {
+        btn9 = true;
+    }
+    if (GetAsyncKeyState(VK_NUMPAD9) == 0 && btn9 == true) {
+        btn9 = false;
+        m_enable_ui_fix->toggle();
+    }
 
     EyeIndex nEye = (m_render_frame_count % 2 == m_left_eye_interval) ? EyeLeft : EyeRight;
     EyeIndex nEyeOther = (m_render_frame_count % 2 == m_left_eye_interval) ? EyeRight : EyeLeft;
@@ -3174,7 +3186,7 @@ void VR::on_pre_end_rendering(void* entry) {
     }
 
     auto root_layer = sdk::renderer::get_root_layer();
-    if (root_layer != nullptr) {
+    if (root_layer != nullptr && m_frame_count > 600) {
         auto [output_parent, output_layer] = root_layer->find_layer_recursive("via.render.layer.Output");
         auto valid_scene_layers = (*output_layer)->find_fully_rendered_scene_layers();
         if (valid_scene_layers.empty()) {
@@ -3903,7 +3915,10 @@ void VR::on_draw_ui() {
     m_use_afr->draw("Use AFR");
     m_clear_before_reprojection->draw("Clear Before Reprojection");
     m_reprojection_debug->draw("Debug Reprojection");
+    m_enable_ui_fix->draw("Enable UI Fix");
     m_reprojection_mode->draw("Reprojection Mode");
+    m_culling_distance->draw("Reprojection Culling Distance");
+    m_outline_width->draw("Reprojection Outline Width");
     ImGui::Separator();
 
     m_decoupled_pitch->draw("Decoupled Camera Pitch");

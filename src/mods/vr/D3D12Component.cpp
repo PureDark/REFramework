@@ -65,7 +65,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     EyeIndex nEye = (frame_count % 2 == vr->m_left_eye_interval) ? EyeLeft : EyeRight;
     EyeIndex nEyeOther = (frame_count % 2 == vr->m_left_eye_interval) ? EyeRight : EyeLeft;
     EvaluateParams params;
-    if (vr->is_using_afr() && vr->depthTex && vr->m_reprojection_mode->value() > 0) {
+    if (vr->is_using_afr() && vr->depthTex && vr->uiBufferTex && vr->m_reprojection_mode->value() > 0) {
         static TextureDesc texDesc[4];
         int texIndex = m_backbuffer_is_8bit ? backbuffer_index : 3;
         if (texDesc[texIndex].pTexture != eye_texture.Get()) {
@@ -81,18 +81,43 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             depthDesc.srvPos = vr->d3d12Renderer->CreateSRV(depthDesc.pTexture, depthDesc.srvPos);
             depthDesc.shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(depthDesc.srvPos);
         }
-        params.InCmdList = NULL;
+        static TextureDesc uiBufferDesc;
+        if (uiBufferDesc.pTexture != vr->uiBufferTex) {
+            uiBufferDesc.pTexture = vr->uiBufferTex;
+            uiBufferDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            uiBufferDesc.srvPos = vr->d3d12Renderer->CreateSRV(uiBufferDesc.pTexture, uiBufferDesc.srvPos);
+            uiBufferDesc.shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(uiBufferDesc.srvPos);
+            uiBufferDesc.renderTargetViewHandle = vr->d3d12Renderer->GetRTV(uiBufferDesc.pTexture);
+        }
+        auto uiDesc = vr->uiBufferTex->GetDesc();
+        auto cmdList = vr->d3d12Renderer->BeginCommandList(backbuffer_index);
+        params.InCmdList = cmdList;
         params.InEyeColor = &texDesc[texIndex];
         params.InEyeDepth = &depthDesc;
-        params.InUIColorAlpha = NULL;
+        if (vr->m_enable_ui_fix->value() && vr->uiBufferTex) {
+            params.InUIColorAlpha = &uiBufferDesc;
+            params.IsHudlessColor = false;
+        } else {
+            params.InUIColorAlpha = NULL;
+            params.IsHudlessColor = true;
+        }
         params.OutEyeColor = NULL;
         params.OutEyeDepth = NULL;
         params.Mode = (ReprojectionMode)vr->m_reprojection_mode->value();
         params.EyeIndex = nEye;
         params.ClearBeforeReprojection = vr->m_clear_before_reprojection->value();
         params.CameraData = &vr->cameraData[nEye];
+        params.CullingDistance = vr->m_culling_distance->value();
         params.Debug = vr->m_reprojection_debug->value();
+        params.OutlineWidth = vr->m_outline_width->value();
         EvaluateReprojection(params);
+        TextureDesc* eyeOtherDesc = (nEyeOther == EyeLeft) ? m_eyeTexs.eyeTexLeft : m_eyeTexs.eyeTexRight;
+        static bool debugClear = false;
+        if (debugClear && eyeOtherDesc) {
+            FLOAT pink[4] = {0.5, 0, 0, 0};
+            cmdList->ClearRenderTargetView(eyeOtherDesc->renderTargetViewHandle, pink, 0, NULL);
+        }
+        vr->d3d12Renderer->EndCommandList(backbuffer_index);
     }
 
     // If m_frame_count is even, we're rendering the left eye.
@@ -355,10 +380,9 @@ void D3D12Component::setup() {
     //#Reprojection Module Start
     //#############################
     static uint32_t lastSize[2]{0, 0};
-    EyeTextures eyeTexs = {}; 
     if (lastSize[0] != backbuffer_desc.Width || lastSize[1] != backbuffer_desc.Height) {
         InitParams params = {backbuffer_desc.Width, backbuffer_desc.Height, rt_desc.Format};
-        eyeTexs = InitReprojection(params);
+        m_eyeTexs = InitReprojection(params);
     }
     //#############################
     //#Reprojection Module End
@@ -380,8 +404,8 @@ void D3D12Component::setup() {
 
     for (auto& ctx : m_openvr.left_eye_tex) {
         ComPtr<ID3D12Resource> left_eye_tex{};
-        if (eyeTexs.eyeTexLeft != NULL) {
-            left_eye_tex = eyeTexs.eyeTexLeft->pTexture;
+        if (m_eyeTexs.eyeTexLeft != NULL) {
+            left_eye_tex = m_eyeTexs.eyeTexLeft->pTexture;
         } else {
             if (FAILED(device->CreateCommittedResource(&heap_props, D3D12_HEAP_FLAG_NONE, &rt_desc,
                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(left_eye_tex.GetAddressOf())))) {
@@ -398,8 +422,8 @@ void D3D12Component::setup() {
  
     for (auto& ctx : m_openvr.right_eye_tex) {
         ComPtr<ID3D12Resource> right_eye_tex{};
-        if (eyeTexs.eyeTexRight != NULL) {
-            right_eye_tex = eyeTexs.eyeTexRight->pTexture;
+        if (m_eyeTexs.eyeTexRight != NULL) {
+            right_eye_tex = m_eyeTexs.eyeTexRight->pTexture;
         } else {
             if (FAILED(device->CreateCommittedResource(&heap_props, D3D12_HEAP_FLAG_NONE, &rt_desc,
                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(right_eye_tex.GetAddressOf())))) {

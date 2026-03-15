@@ -32,6 +32,7 @@ class VR : public Mod {
 public:
     CameraData cameraData[2];
     ID3D12Resource* depthTex = NULL;
+    ID3D12Resource* uiBufferTex = NULL;
     D3D12RendererAPI* d3d12Renderer = nullptr;
 
 public:
@@ -503,7 +504,10 @@ private:
     const ModToggle::Ptr m_decoupled_pitch{ ModToggle::create(generate_name("DecoupledPitch"), false) };
     const ModToggle::Ptr m_use_afr{ModToggle::create(generate_name("AlternateFrameRendering"), false)};
     const ModToggle::Ptr m_clear_before_reprojection{ModToggle::create(generate_name("ClearBeforeReprojection"), false)};
+    const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
     const ModToggle::Ptr m_reprojection_debug{ModToggle::create(generate_name("ReprojectionDebug"), false)};
+    const ModSlider::Ptr m_culling_distance{ModSlider::create(generate_name("ReprojectionCullingDistance"), 0.1f, 10.0f, 0.5f)};
+    const ModSlider::Ptr m_outline_width{ModSlider::create(generate_name("ReprojectionOutlineWidth"), 0.1f, 200.0f, 15.0f)};
     const ModCombo::Ptr m_reprojection_mode{ModCombo::create(generate_name("Reprojection Mode"),
         {
             "None",
