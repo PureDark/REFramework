@@ -125,6 +125,9 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         // OpenXR texture
         if (runtime->is_openxr() && vr->m_openxr->ready()) {
             m_openxr.copy(0, eye_texture.Get());
+            if (vr->is_using_afr()) {
+                m_openxr.copy(1, m_openvr.get_right().texture.Get());
+            }
         }
 
         // OpenVR texture
@@ -176,6 +179,9 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         // OpenXR texture
         if (runtime->is_openxr() && vr->m_openxr->ready()) {
             m_openxr.copy(1, eye_texture.Get());
+            if (vr->is_using_afr()) {
+                m_openxr.copy(0, m_openvr.get_left().texture.Get());
+            }
         }
 
         // OpenVR texture
