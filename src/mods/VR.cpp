@@ -2353,6 +2353,31 @@ void VR::on_present() {
         btn6 = false;
         m_reprojection_debug->toggle();
     }
+    static bool btn7 = false;
+    if (GetAsyncKeyState(VK_NUMPAD7) < 0 && btn7 == false) {
+        btn7 = true;
+    }
+    if (GetAsyncKeyState(VK_NUMPAD7) == 0 && btn7 == true) {
+        btn7 = false;
+        m_use_afr->toggle();
+    }
+    static bool btn8 = false;
+    if (GetAsyncKeyState(VK_NUMPAD8) < 0 && btn8 == false) {
+        btn8 = true;
+    }
+    if (GetAsyncKeyState(VK_NUMPAD8) == 0 && btn8 == true) {
+        btn8 = false;
+        static float o_outline_width = -1;
+        float& outlineWidth = m_outline_width->value();
+        if (o_outline_width < 0) {
+            o_outline_width = outlineWidth;
+            outlineWidth = 0;
+        }
+        else {
+            outlineWidth = o_outline_width;
+            o_outline_width = -1;
+        }
+    }
     static bool btn9 = false;
     if (GetAsyncKeyState(VK_NUMPAD9) < 0 && btn9 == false) {
         btn9 = true;

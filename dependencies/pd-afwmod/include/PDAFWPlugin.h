@@ -29,13 +29,13 @@ namespace pd {
 		EyeLeft = 0,
 		EyeRight = 1
 	};
-
-	enum ReprojectionMode
+	
+	enum FrameWarpMode
 	{
 		None,
-		AlternateEyeReprojection,
-		PreviousFrameReprojection,
-		CombinedReprojection
+		AlternateEyeWarping,
+		PreviousFrameWarping,
+		CombinedWarping
 	};
 
 	enum ImageType
@@ -100,7 +100,7 @@ namespace pd {
 		TextureDesc*     OutEyeDepth = NULL;     // reprojected depth
 		float            InUIScale[2] = { 1.0f, 1.0f };
 		float            InUIPos[3] = { 0.0f, 0.0f, -1.0f };
-		ReprojectionMode Mode;
+		FrameWarpMode	 Mode;
 		EyeIndex         EyeIndex;
 		CameraData*      CameraData;  // required, camera matrices for this frame
 		bool             ClearBeforeReprojection = false;
@@ -131,10 +131,10 @@ namespace pd {
 		virtual void                        Blit(ID3D12GraphicsCommandList* cmdList, TextureDesc& srcDesc, TextureDesc& dstDesc, D3D12_VIEWPORT viewPort, bool enableBlend = false) = 0;
 		virtual void                        Copy(ID3D12GraphicsCommandList* cmdList, TextureDesc& srcDesc, TextureDesc& dstDesc) = 0;
 	};
-
+	
 	extern "C" __declspec(dllexport) D3D12RendererAPI* __stdcall InitDevice(DeviceParams params);
-	extern "C" __declspec(dllexport) EyeTextures __stdcall InitReprojection(InitParams params);
-	extern "C" __declspec(dllexport) void __stdcall EvaluateReprojection(EvaluateParams& params);
+	extern "C" __declspec(dllexport) EyeTextures __stdcall InitAlternateFrameWarp(InitParams params);
+	extern "C" __declspec(dllexport) void __stdcall EvaluateFrameWarp(EvaluateParams& params);
 }
 
 using namespace pd;

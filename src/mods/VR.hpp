@@ -24,7 +24,7 @@
 
 #include "Mod.hpp"
 
-#include "PDReprojectionPlugin.h"
+#include "PDAFWPlugin.h"
 
 class REManagedObject;
 
@@ -507,7 +507,7 @@ private:
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
     const ModToggle::Ptr m_reprojection_debug{ModToggle::create(generate_name("ReprojectionDebug"), false)};
     const ModSlider::Ptr m_culling_distance{ModSlider::create(generate_name("ReprojectionCullingDistance"), 0.1f, 10.0f, 0.5f)};
-    const ModSlider::Ptr m_outline_width{ModSlider::create(generate_name("ReprojectionOutlineWidth"), 0.1f, 200.0f, 15.0f)};
+    const ModSlider::Ptr m_outline_width{ModSlider::create(generate_name("ReprojectionOutlineWidth"), 0.0f, 200.0f, 8.0f)};
     const ModCombo::Ptr m_reprojection_mode{ModCombo::create(generate_name("Reprojection Mode"),
         {
             "None",
@@ -515,7 +515,7 @@ private:
             "PreviousFrameReprojection",
             "CombinedReprojection",
         },
-        (int)ReprojectionMode::CombinedReprojection)};
+        (int)FrameWarpMode::CombinedWarping)};
     const ModToggle::Ptr m_use_custom_view_distance{ ModToggle::create(generate_name("UseCustomViewDistance"), false) };
     const ModToggle::Ptr m_hmd_oriented_audio{ ModToggle::create(generate_name("HMDOrientedAudio"), true) };
     const ModSlider::Ptr m_view_distance{ ModSlider::create(generate_name("CustomViewDistance"), 10.0f, 3000.0f, 500.0f) };

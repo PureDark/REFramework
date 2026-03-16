@@ -23,7 +23,7 @@
 
 #include <openvr.h>
 
-#include "PDReprojectionPlugin.h"
+#include "PDAFWPlugin.h"
 
 class VR;
 
