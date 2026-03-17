@@ -16,7 +16,7 @@ namespace pd {
 		IDXGIAdapter*        dxgiAdapter = NULL;
 	};
 
-	struct InitParams
+	struct FrameWarpInitParams
 	{
 		int hmdWidth;
 		int hmdHeight;
@@ -29,7 +29,7 @@ namespace pd {
 		EyeLeft = 0,
 		EyeRight = 1
 	};
-	
+
 	enum FrameWarpMode
 	{
 		None,
@@ -90,7 +90,7 @@ namespace pd {
 		glm::mat4 camClipToViewMatrix;   // but it's usually harder to render UI to reprojected image yourself.
 	};
 
-	struct EvaluateParams
+	struct FrameWarpEvaluateParams
 	{
 		void*            InCmdList = NULL;       // optional, leave it NULL to use the built-in command list, which will execute immediately so better to submit your own command lists before calling
 		TextureDesc*     InEyeColor = NULL;      // optional, leave it NULL to use texture you got from calling init
@@ -105,9 +105,17 @@ namespace pd {
 		CameraData*      CameraData;  // required, camera matrices for this frame
 		bool             ClearBeforeReprojection = false;
 		float            CullingDistance{ 1.0f };  // culling any pixel from previous frame if it's within this distance, to avoid issues in first-person with hand models up close
-		bool             IsHudlessColor = true;   // specify whether InEyeColor is hudless or contaning UI, if the latter, will use UIColorAndAlpha to avoid reprojecting UI.
+		bool             IsHudlessColor = true;    // specify whether InEyeColor is hudless or contaning UI, if the latter, will use UIColorAndAlpha to avoid reprojecting UI.
 		bool             Debug = false;
 		float            OutlineWidth{ 5.0f };
+	};
+	
+	struct TonemapParams
+	{
+		float fGamma;
+		float fLowerLimit;
+		float fUpperLimit;
+		float fConvertToLimit;
 	};
 
 	struct __declspec(novtable) D3D12RendererAPI
@@ -130,11 +138,13 @@ namespace pd {
 		virtual bool                        CreateFrameBuffer(int nWidth, int nHeight, FramebufferDesc& framebufferDesc, bool createDepth, bool createUAV) = 0;
 		virtual void                        Blit(ID3D12GraphicsCommandList* cmdList, TextureDesc& srcDesc, TextureDesc& dstDesc, D3D12_VIEWPORT viewPort, bool enableBlend = false) = 0;
 		virtual void                        Copy(ID3D12GraphicsCommandList* cmdList, TextureDesc& srcDesc, TextureDesc& dstDesc) = 0;
+		virtual void                        Tonemap(ID3D12GraphicsCommandList* cmdList, TextureDesc& srcDesc, TextureDesc& dstDesc, TonemapParams params) = 0;
+		virtual TextureDesc&                ExtractUI(ID3D12GraphicsCommandList* cmdList, TextureDesc& hudlessDesc, TextureDesc& finalColorWithUI) = 0;
 	};
-	
+
 	extern "C" __declspec(dllexport) D3D12RendererAPI* __stdcall InitDevice(DeviceParams params);
-	extern "C" __declspec(dllexport) EyeTextures __stdcall InitAlternateFrameWarp(InitParams params);
-	extern "C" __declspec(dllexport) void __stdcall EvaluateFrameWarp(EvaluateParams& params);
+	extern "C" __declspec(dllexport) EyeTextures __stdcall InitFrameWarp(FrameWarpInitParams params);
+	extern "C" __declspec(dllexport) void __stdcall EvaluateFrameWarp(FrameWarpEvaluateParams& params);
 }
 
 using namespace pd;

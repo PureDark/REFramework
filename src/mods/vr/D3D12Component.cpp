@@ -67,8 +67,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     //#############################
     EyeIndex nEye = (frame_count % 2 == vr->m_left_eye_interval) ? EyeLeft : EyeRight;
     EyeIndex nEyeOther = (frame_count % 2 == vr->m_left_eye_interval) ? EyeRight : EyeLeft;
-    EvaluateParams params;
-    if (vr->is_using_afr() && vr->depthTex && vr->uiBufferTex && vr->m_reprojection_mode->value() > 0) {
+    FrameWarpEvaluateParams params;
+    if (vr->is_using_afr() && vr->depthTex && vr->uiBufferTex && vr->m_framewarp_mode->value() > 0) {
         static TextureDesc texDesc[4];
         int texIndex = m_backbuffer_is_8bit ? backbuffer_index : 3;
         if (texDesc[texIndex].pTexture != eye_texture.Get()) {
@@ -106,12 +106,12 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         }
         params.OutEyeColor = NULL;
         params.OutEyeDepth = NULL;
-        params.Mode = (FrameWarpMode)vr->m_reprojection_mode->value();
+        params.Mode = (FrameWarpMode)vr->m_framewarp_mode->value();
         params.EyeIndex = nEye;
-        params.ClearBeforeReprojection = vr->m_clear_before_reprojection->value();
+        params.ClearBeforeReprojection = vr->m_clear_before_framewarp->value();
         params.CameraData = &vr->cameraData[nEye];
         params.CullingDistance = vr->m_culling_distance->value();
-        params.Debug = vr->m_reprojection_debug->value();
+        params.Debug = vr->m_framewarp_debug->value();
         params.OutlineWidth = vr->m_outline_width->value();
         EvaluateFrameWarp(params);
         TextureDesc* eyeOtherDesc = (nEyeOther == EyeLeft) ? m_eyeTexs.eyeTexLeft : m_eyeTexs.eyeTexRight;
@@ -393,8 +393,8 @@ void D3D12Component::setup() {
     //#############################
     static uint32_t lastSize[2]{0, 0};
     if (lastSize[0] != backbuffer_desc.Width || lastSize[1] != backbuffer_desc.Height) {
-        InitParams params = {backbuffer_desc.Width, backbuffer_desc.Height, rt_desc.Format};
-        m_eyeTexs = InitAlternateFrameWarp(params);
+        FrameWarpInitParams params = {backbuffer_desc.Width, backbuffer_desc.Height, rt_desc.Format};
+        m_eyeTexs = InitFrameWarp(params);
     }
     //#############################
     //#Frame Warp Module End

@@ -2333,7 +2333,7 @@ void VR::on_present() {
     }
     if (GetAsyncKeyState(VK_NUMPAD4) == 0 && btn4 == true) {
         btn4 = false;
-        m_clear_before_reprojection->toggle();
+        m_clear_before_framewarp->toggle();
     }
     
 	static bool btn5 = false;
@@ -2342,7 +2342,7 @@ void VR::on_present() {
     }
     if (GetAsyncKeyState(VK_NUMPAD5) == 0 && btn5 == true) {
         btn5 = false;
-        int32_t& value = m_reprojection_mode->value();
+        int32_t& value = m_framewarp_mode->value();
         value = (value + 1) % 4; 
     }
     static bool btn6 = false;
@@ -2351,7 +2351,7 @@ void VR::on_present() {
     }
     if (GetAsyncKeyState(VK_NUMPAD6) == 0 && btn6 == true) {
         btn6 = false;
-        m_reprojection_debug->toggle();
+        m_framewarp_debug->toggle();
     }
     static bool btn7 = false;
     if (GetAsyncKeyState(VK_NUMPAD7) < 0 && btn7 == false) {
@@ -3938,12 +3938,12 @@ void VR::on_draw_ui() {
     ImGui::Separator();
 
     m_use_afr->draw("Use AFR");
-    m_clear_before_reprojection->draw("Clear Before Reprojection");
-    m_reprojection_debug->draw("Debug Reprojection");
-    m_enable_ui_fix->draw("Enable UI Fix");
-    m_reprojection_mode->draw("Reprojection Mode");
-    m_culling_distance->draw("Reprojection Culling Distance");
-    m_outline_width->draw("Reprojection Outline Width");
+    m_clear_before_framewarp->draw("Clear Before Framewarp");
+    m_framewarp_debug->draw("Debug Framewarp");
+    m_enable_ui_fix->draw("Enable UI Fix For Framewarp");
+    m_framewarp_mode->draw("Framewarp Mode");
+    m_culling_distance->draw("Framewarp Culling Distance");
+    m_outline_width->draw("Framewarp Outline Width");
     ImGui::Separator();
 
     m_decoupled_pitch->draw("Decoupled Camera Pitch");

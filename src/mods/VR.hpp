@@ -503,17 +503,17 @@ private:
     const ModKey::Ptr m_recenter_view_key{ ModKey::create(generate_name("RecenterViewKey")) };
     const ModToggle::Ptr m_decoupled_pitch{ ModToggle::create(generate_name("DecoupledPitch"), false) };
     const ModToggle::Ptr m_use_afr{ModToggle::create(generate_name("AlternateFrameRendering"), false)};
-    const ModToggle::Ptr m_clear_before_reprojection{ModToggle::create(generate_name("ClearBeforeReprojection"), false)};
+    const ModToggle::Ptr m_clear_before_framewarp{ModToggle::create(generate_name("ClearBeforeFramewarp"), false)};
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
-    const ModToggle::Ptr m_reprojection_debug{ModToggle::create(generate_name("ReprojectionDebug"), false)};
-    const ModSlider::Ptr m_culling_distance{ModSlider::create(generate_name("ReprojectionCullingDistance"), 0.1f, 10.0f, 0.5f)};
-    const ModSlider::Ptr m_outline_width{ModSlider::create(generate_name("ReprojectionOutlineWidth"), 0.0f, 200.0f, 8.0f)};
-    const ModCombo::Ptr m_reprojection_mode{ModCombo::create(generate_name("Reprojection Mode"),
+    const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
+    const ModSlider::Ptr m_culling_distance{ModSlider::create(generate_name("FramewarpCullingDistance"), 0.1f, 10.0f, 2.0f)};
+    const ModSlider::Ptr m_outline_width{ModSlider::create(generate_name("FramewarpOutlineWidth"), 0.0f, 200.0f, 8.0f)};
+    const ModCombo::Ptr m_framewarp_mode{ModCombo::create(generate_name("Framewarp Mode"),
         {
             "None",
-            "AlternateEyeReprojection",
-            "PreviousFrameReprojection",
-            "CombinedReprojection",
+            "AlternateEyeWarping",
+            "PreviousFrameWarping",
+            "CombinedWarping",
         },
         (int)FrameWarpMode::CombinedWarping)};
     const ModToggle::Ptr m_use_custom_view_distance{ ModToggle::create(generate_name("UseCustomViewDistance"), false) };
