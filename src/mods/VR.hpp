@@ -507,7 +507,7 @@ private:
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
     const ModSlider::Ptr m_culling_distance{ModSlider::create(generate_name("FramewarpCullingDistance"), 0.1f, 10.0f, 2.0f)};
-    const ModSlider::Ptr m_outline_width{ModSlider::create(generate_name("FramewarpOutlineWidth"), 0.0f, 200.0f, 8.0f)};
+    const ModSlider::Ptr m_outline_width{ModSlider::create(generate_name("FramewarpOutlineWidth"), 0.0f, 200.0f, 0.0f)};
     const ModCombo::Ptr m_framewarp_mode{ModCombo::create(generate_name("Framewarp Mode"),
         {
             "None",

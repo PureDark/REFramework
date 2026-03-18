@@ -85,14 +85,13 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             depthDesc.shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(depthDesc.srvPos);
         }
         static TextureDesc uiBufferDesc;
-        if (uiBufferDesc.pTexture != vr->uiBufferTex) {
+        if (vr->m_enable_ui_fix->value() && uiBufferDesc.pTexture != vr->uiBufferTex) {
             uiBufferDesc.pTexture = vr->uiBufferTex;
             uiBufferDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
             uiBufferDesc.srvPos = vr->d3d12Renderer->CreateSRV(uiBufferDesc.pTexture, uiBufferDesc.srvPos);
             uiBufferDesc.shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(uiBufferDesc.srvPos);
             uiBufferDesc.renderTargetViewHandle = vr->d3d12Renderer->GetRTV(uiBufferDesc.pTexture);
         }
-        auto uiDesc = vr->uiBufferTex->GetDesc();
         auto cmdList = vr->d3d12Renderer->BeginCommandList(backbuffer_index);
         params.InCmdList = cmdList;
         params.InEyeColor = &texDesc[texIndex];
