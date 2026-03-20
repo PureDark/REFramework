@@ -3,6 +3,6 @@
 
 namespace pd {
 	D3D12RendererAPI* __stdcall InitDevice(DeviceParams params){ return nullptr; };
-	EyeTextures __stdcall InitFrameWarp(FrameWarpInitParams params){ return EyeTextures(); };
+	EyeFrameBuffers __stdcall InitFrameWarp(FrameWarpInitParams params){ return EyeFrameBuffers(); };
 	void __stdcall EvaluateFrameWarp(FrameWarpEvaluateParams& params){};
 }

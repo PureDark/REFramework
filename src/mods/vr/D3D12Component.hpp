@@ -50,7 +50,7 @@ private:
 
     template <typename T> using ComPtr = Microsoft::WRL::ComPtr<T>;
 
-    EyeTextures m_eyeTexs;
+    EyeFrameBuffers m_eyeFrameBuffers;
 
     ComPtr<ID3D12Resource> m_prev_backbuffer{};
     d3d12::TextureContext m_backbuffer_copy{};

@@ -61,17 +61,23 @@ namespace pd {
 		D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_COMMON;
 	};
 
-	struct FramebufferDesc
+	struct FrameBufferDesc
 	{
-		FramebufferDesc() {};
-		TextureDesc texture;
+		FrameBufferDesc() {};
+		FrameBufferDesc(TextureDesc InColor, TextureDesc InDepth, TextureDesc InMotionVectors)
+		{
+			color = InColor;
+			depth = InDepth;
+			motionVectors = InMotionVectors;
+		};
+		TextureDesc color;
 		TextureDesc depth;
+		TextureDesc motionVectors;
 	};
 
-	struct EyeTextures
+	struct EyeFrameBuffers
 	{
-		TextureDesc* eyeTexLeft = NULL;
-		TextureDesc* eyeTexRight = NULL;
+		FrameBufferDesc eyeFrameBuffers[2];
 	};
 
 	struct CameraData
@@ -92,24 +98,22 @@ namespace pd {
 
 	struct FrameWarpEvaluateParams
 	{
-		void*            InCmdList = NULL;       // optional, leave it NULL to use the built-in command list, which will execute immediately so better to submit your own command lists before calling
-		TextureDesc*     InEyeColor = NULL;      // optional, leave it NULL to use texture you got from calling init
-		TextureDesc*     InEyeDepth;             // required, needs to be in pixel shader read state
-		TextureDesc*     InUIColorAlpha = NULL;  // optional, provide the UI and the plugin will render it according to the camera orientation without the HMD rotaion and position affecting it.
-		TextureDesc*     OutEyeColor = NULL;     // returns the texture containing the reprojected result, which is also the textures you got from calling init
-		TextureDesc*     OutEyeDepth = NULL;     // reprojected depth
+		void*            InCmdList = NULL;            // optional, leave it NULL to use the built-in command list, which will execute immediately so better to submit your own command lists before calling
+		FrameBufferDesc* InEyeFrameBuffer = NULL;     // required, needs to be in pixel shader resource state
+		FrameBufferDesc* OutEyeFrameBuffer = NULL;    // returns reprojected result, which is one of the framebuffer you got from calling InitFrameWarp
+		TextureDesc*     InUIColorAlpha = NULL;       // optional, provide the UI and the plugin will render it according to the camera orientation without the HMD rotaion and position affecting it.
 		float            InUIScale[2] = { 1.0f, 1.0f };
 		float            InUIPos[3] = { 0.0f, 0.0f, -1.0f };
 		FrameWarpMode	 Mode;
 		EyeIndex         EyeIndex;
 		CameraData*      CameraData;  // required, camera matrices for this frame
-		bool             ClearBeforeReprojection = false;
+		bool             ClearBeforeWarping = false;
 		float            CullingDistance{ 1.0f };  // culling any pixel from previous frame if it's within this distance, to avoid issues in first-person with hand models up close
 		bool             IsHudlessColor = true;    // specify whether InEyeColor is hudless or contaning UI, if the latter, will use UIColorAndAlpha to avoid reprojecting UI.
+		bool             IsMotionVectorsOtherEye = false;  // whether motion vectors include motion from camera jumping between eyes
 		bool             Debug = false;
-		float            OutlineWidth{ 5.0f };
 	};
-	
+
 	struct TonemapParams
 	{
 		float fGamma;
@@ -134,8 +138,8 @@ namespace pd {
 		virtual D3D12_CPU_DESCRIPTOR_HANDLE GetCPUDescriptorHandle(int pos) = 0;
 		virtual D3D12_GPU_DESCRIPTOR_HANDLE GetGPUDescriptorHandle(int pos) = 0;
 		virtual D3D12_GPU_DESCRIPTOR_HANDLE GetSamplerHandle(int pos) = 0;
-		virtual bool                        CreateTexture(int nWidth, int nHeight, DXGI_FORMAT format, D3D12_RESOURCE_STATES initialState, TextureDesc& textureDesc, bool isDepth, bool createUAV) = 0;
-		virtual bool                        CreateFrameBuffer(int nWidth, int nHeight, FramebufferDesc& framebufferDesc, bool createDepth, bool createUAV) = 0;
+		virtual bool                        CreateTexture(int nWidth, int nHeight, DXGI_FORMAT format, D3D12_RESOURCE_STATES initialState, TextureDesc& textureDesc, bool createUAV) = 0;
+		virtual bool                        CreateFrameBuffer(int nWidth, int nHeight, FrameBufferDesc& framebufferDesc, bool createUAV) = 0;
 		virtual void                        Blit(ID3D12GraphicsCommandList* cmdList, TextureDesc& srcDesc, TextureDesc& dstDesc, D3D12_VIEWPORT viewPort, bool enableBlend = false) = 0;
 		virtual void                        Copy(ID3D12GraphicsCommandList* cmdList, TextureDesc& srcDesc, TextureDesc& dstDesc) = 0;
 		virtual void                        Tonemap(ID3D12GraphicsCommandList* cmdList, TextureDesc& srcDesc, TextureDesc& dstDesc, TonemapParams params) = 0;
@@ -143,7 +147,7 @@ namespace pd {
 	};
 
 	extern "C" __declspec(dllexport) D3D12RendererAPI* __stdcall InitDevice(DeviceParams params);
-	extern "C" __declspec(dllexport) EyeTextures __stdcall InitFrameWarp(FrameWarpInitParams params);
+	extern "C" __declspec(dllexport) EyeFrameBuffers __stdcall InitFrameWarp(FrameWarpInitParams params);
 	extern "C" __declspec(dllexport) void __stdcall EvaluateFrameWarp(FrameWarpEvaluateParams& params);
 }
 

@@ -2367,16 +2367,6 @@ void VR::on_present() {
     }
     if (GetAsyncKeyState(VK_NUMPAD8) == 0 && btn8 == true) {
         btn8 = false;
-        static float o_outline_width = -1;
-        float& outlineWidth = m_outline_width->value();
-        if (o_outline_width < 0) {
-            o_outline_width = outlineWidth;
-            outlineWidth = 0;
-        }
-        else {
-            outlineWidth = o_outline_width;
-            o_outline_width = -1;
-        }
     }
     static bool btn9 = false;
     if (GetAsyncKeyState(VK_NUMPAD9) < 0 && btn9 == false) {
@@ -3219,6 +3209,7 @@ void VR::on_pre_end_rendering(void* entry) {
         }
         if (valid_scene_layers.size() > 0) {
             depthTex = valid_scene_layers[0]->get_depth_stencil_d3d12();
+            motionVectorsTex = valid_scene_layers[0]->get_target_state_resource_d3d12("VelocityTarget");
         } 
     }
 }
@@ -3942,8 +3933,6 @@ void VR::on_draw_ui() {
     m_framewarp_debug->draw("Debug Framewarp");
     m_enable_ui_fix->draw("Enable UI Fix For Framewarp");
     m_framewarp_mode->draw("Framewarp Mode");
-    m_culling_distance->draw("Framewarp Culling Distance");
-    m_outline_width->draw("Framewarp Outline Width");
     ImGui::Separator();
 
     m_decoupled_pitch->draw("Decoupled Camera Pitch");

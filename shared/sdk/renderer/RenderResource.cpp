@@ -15,7 +15,7 @@ void RenderResource::add_ref() {
 }
 
 void RenderResource::release() {
-    get_release_fn()(this);
+    //get_release_fn()(this);
 }
 
 RenderResource::ReleaseFn RenderResource::get_release_fn() {
