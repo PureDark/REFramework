@@ -86,6 +86,15 @@ condition = "build-framework-dependencies"
 [target.pdperfmod.properties]
 OUTPUT_NAME = "PDPerfPlugin"
 
+[target.pdafwmod]
+type = "shared"
+include-directories = ["dependencies/pd-afwmod/include"]
+sources = ["dependencies/pd-afwmod/dummy/**.cpp"]
+condition = "build-framework-dependencies"
+
+[target.pdafwmod.properties]
+OUTPUT_NAME = "PDAFWPlugin"
+
 [fetch-content.directxtk]
 git = "https://github.com/microsoft/DirectXTK"
 tag = "f5026eb34e7053b1aff325d38db107703f394974"
@@ -248,7 +257,8 @@ link-libraries = [
     "delayimp",
     "DirectXTK",
     "DirectXTK12",
-    "pdperfmod"
+    "pdperfmod",
+    "pdafwmod"
 ]
 cmake-before="""
 """

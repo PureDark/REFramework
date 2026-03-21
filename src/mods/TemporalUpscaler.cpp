@@ -79,6 +79,27 @@ std::optional<std::string> TemporalUpscaler::on_initialize() {
 
     return Mod::on_initialize();
 }
+std::optional<std::string> TemporalUpscaler::on_initialize_d3d_thread() try {
+
+    // #############################
+    // #Frame Warp Module Start
+    // #############################
+    auto& hook = g_framework->get_d3d12_hook();
+    hook->get_command_queue();
+    pd::DeviceParams params{};
+    params.d3d12Device = hook->get_device();
+    params.d3d12Queue = hook->get_command_queue();
+    d3d12Renderer = InitDevice(params);
+    // #############################
+    // #Frame Warp Module End
+    // #############################
+
+    // all OK
+    return Mod::on_initialize();
+} catch (...) {
+    spdlog::error("Exception occurred in VR::on_initialize()");
+    return Mod::on_initialize();
+}
 
 void TemporalUpscaler::on_config_load(const utility::Config& cfg) {
     for (IModValue& option : m_options) {
@@ -204,6 +225,53 @@ void TemporalUpscaler::on_draw_ui() {
 
 void TemporalUpscaler::on_early_present() {
     m_rendering = true;
+
+    auto& hook0 = g_framework->get_d3d12_hook();
+    auto swapchain0 = hook0->get_swap_chain();
+    auto device0 = hook0->get_device();
+
+    // get back buffer
+    ComPtr<ID3D12Resource> backbuffer{};
+
+    const auto backbuffer_index = swapchain0->GetCurrentBackBufferIndex();
+
+    if (FAILED(swapchain0->GetBuffer(backbuffer_index, IID_PPV_ARGS(&backbuffer)))) {
+        spdlog::error("[VR] Failed to get back buffer");
+    }
+
+    static bool debug1 = false;
+    static bool debug2 = false;
+    static TextureDesc hudlessDesc{};
+    static TextureDesc finalColorDesc{};
+    static TextureDesc backbufferDesc[3]{};
+    static TextureDesc extractedUI{};
+    if (hudlessTex && debug1 && VR::get()->is_using_afr()) {
+        if (hudlessDesc.pTexture == NULL || hudlessDesc.pTexture != hudlessTex) {
+            hudlessDesc.pTexture = hudlessTex;
+            hudlessDesc.srvPos = d3d12Renderer->CreateSRV(hudlessDesc.pTexture, hudlessDesc.srvPos);
+            hudlessDesc.shaderResourceViewHandle = d3d12Renderer->GetGPUDescriptorHandle(hudlessDesc.srvPos);
+        }
+        if (finalColorDesc.pTexture == NULL || finalColorDesc.pTexture != finalColorTex) {
+            finalColorDesc.pTexture = finalColorTex;
+            finalColorDesc.srvPos = d3d12Renderer->CreateSRV(finalColorDesc.pTexture, finalColorDesc.srvPos);
+            finalColorDesc.shaderResourceViewHandle = d3d12Renderer->GetGPUDescriptorHandle(finalColorDesc.srvPos);
+        }
+        if (backbufferDesc[backbuffer_index].pTexture == NULL || backbufferDesc[backbuffer_index].pTexture != backbuffer.Get()) {
+            backbufferDesc[backbuffer_index].pTexture = backbuffer.Get();
+            backbufferDesc[backbuffer_index].renderTargetViewHandle = d3d12Renderer->GetRTV(backbufferDesc[backbuffer_index].pTexture);
+        }
+        auto cmdList = d3d12Renderer->BeginCommandList(backbuffer_index);
+        extractedUIBufferDesc = d3d12Renderer->ExtractUI(cmdList, hudlessDesc, finalColorDesc);
+        //TonemapParams params;
+        //params.fGamma = 1.10f;
+        //params.fLowerLimit = 0.024f;
+        //params.fUpperLimit = 0.982f;
+        //params.fConvertToLimit = 0.958f;
+        //d3d12Renderer->Tonemap(cmdList, extractedUI, backbufferDesc[backbuffer_index], params);
+        //d3d12Renderer->Copy(cmdList, backbufferDesc[backbuffer_index], extractedUI);
+        //d3d12Renderer->Copy(cmdList, backbufferDesc[backbuffer_index], extractedUI);
+        d3d12Renderer->EndCommandList(backbuffer_index);
+    }
 
     if (!m_backend_loaded) {
         return;
@@ -846,6 +914,45 @@ void TemporalUpscaler::on_scene_layer_update(sdk::renderer::layer::Scene* layer,
     add_jitter(5, z_prepass_scene_info);
 }
 
+bool TemporalUpscaler::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_ctx) {
+
+    //auto uiTarget = layer->get_ui_target();
+    //auto rtv = uiTarget->get_rtv(0);
+    //if (rtv != nullptr) {
+    //    uiTargetEngineTex = rtv->get_texture_d3d12();
+    //    if (uiTargetEngineTex != nullptr) {
+    //        auto desc = uiTargetEngineTex->get_desc();
+    //        if (hudlessEngineTex == NULL || hudlessTargetSize[0] != desc->width || hudlessTargetSize[1] != desc->height) {
+    //            hudlessEngineTex = uiTargetEngineTex->clone();
+    //            hudlessTargetSize[0] = desc->width;
+    //            hudlessTargetSize[1] = desc->height;
+
+    //            const auto internal_resource = hudlessEngineTex->get_d3d12_resource_container();
+
+    //            if (internal_resource != nullptr) {
+    //                hudlessTex = internal_resource->get_native_resource();
+    //            }
+    //        }
+    //        if (finalColorEngineTex == NULL || hudlessTargetSize[0] != desc->width || hudlessTargetSize[1] != desc->height) {
+    //            finalColorEngineTex = uiTargetEngineTex->clone();
+    //            hudlessTargetSize[0] = desc->width;
+    //            hudlessTargetSize[1] = desc->height;
+
+    //            const auto internal_resource = finalColorEngineTex->get_d3d12_resource_container();
+
+    //            if (internal_resource != nullptr) {
+    //                finalColorTex = internal_resource->get_native_resource();
+    //            }
+    //        }
+    //        auto context = (sdk::renderer::RenderContext*)render_ctx;
+    //        hudlessTex->SetName(L"hudlessTex");
+    //        context->copy_texture(hudlessEngineTex, uiTargetEngineTex);
+    //    }
+    //}
+
+    return true;
+}
+
 void TemporalUpscaler::on_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_context) {
     if (!ready()) {
         return;
@@ -881,6 +988,16 @@ void TemporalUpscaler::on_overlay_layer_draw(sdk::renderer::layer::Overlay* laye
             }
         }
     }
+}
+
+bool TemporalUpscaler::on_pre_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer, void* render_context) {
+    //if (uiTargetEngineTex && hudlessEngineTex && finalColorEngineTex) {
+    //    auto context = (sdk::renderer::RenderContext*)render_context;
+    //    finalColorTex->SetName(L"finalColorTex");
+    //    context->copy_texture(finalColorEngineTex, uiTargetEngineTex);
+    //    //context->copy_texture(uiTargetEngineTex, hudlessEngineTex);
+    //}
+    return true;
 }
 
 void TemporalUpscaler::on_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer, void* render_context) {

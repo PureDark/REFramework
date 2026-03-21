@@ -162,6 +162,28 @@ if(REF_BUILD_DEPENDENCIES AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework-dep
 	)
 
 endif()
+# Target: pdafwmod
+if(REF_BUILD_DEPENDENCIES AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework-dependencies
+	set(pdafwmod_SOURCES
+		cmake.toml
+		"dependencies/pd-afwmod/dummy/PDAFWPlugin.cpp"
+	)
+
+	add_library(pdafwmod SHARED)
+
+	target_sources(pdafwmod PRIVATE ${pdafwmod_SOURCES})
+	source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${pdafwmod_SOURCES})
+
+	target_include_directories(pdafwmod PUBLIC
+		"dependencies/pd-afwmod/include"
+	)
+
+	set_target_properties(pdafwmod PROPERTIES
+		OUTPUT_NAME
+			PDAFWPlugin
+	)
+
+endif()
 # Target: spdlog
 if(REF_BUILD_DEPENDENCIES AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework-dependencies
 	set(spdlog_SOURCES
@@ -2297,6 +2319,7 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		DirectXTK
 		DirectXTK12
 		pdperfmod
+		pdafwmod
 	)
 
 	set_target_properties(RE2 PROPERTIES
@@ -2503,6 +2526,7 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		DirectXTK
 		DirectXTK12
 		pdperfmod
+		pdafwmod
 	)
 
 	set_target_properties(RE2_TDB66 PROPERTIES
@@ -4402,6 +4426,7 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		DirectXTK
 		DirectXTK12
 		pdperfmod
+		pdafwmod
 	)
 
 	set_target_properties(RE3 PROPERTIES
@@ -4608,6 +4633,7 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		DirectXTK
 		DirectXTK12
 		pdperfmod
+		pdafwmod
 	)
 
 	set_target_properties(RE3_TDB67 PROPERTIES
@@ -4814,6 +4840,7 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		DirectXTK
 		DirectXTK12
 		pdperfmod
+		pdafwmod
 	)
 
 	set_target_properties(RE4 PROPERTIES
@@ -7561,6 +7588,7 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		DirectXTK
 		DirectXTK12
 		pdperfmod
+		pdafwmod
 	)
 
 	set_target_properties(RE7 PROPERTIES
@@ -7767,6 +7795,7 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		DirectXTK
 		DirectXTK12
 		pdperfmod
+		pdafwmod
 	)
 
 	set_target_properties(RE7_TDB49 PROPERTIES
@@ -8821,6 +8850,7 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		DirectXTK
 		DirectXTK12
 		pdperfmod
+		pdafwmod
 	)
 
 	set_target_properties(RE8 PROPERTIES
@@ -9873,6 +9903,7 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		DirectXTK
 		DirectXTK12
 		pdperfmod
+		pdafwmod
 	)
 
 	set_target_properties(DMC5 PROPERTIES
@@ -10927,6 +10958,7 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		DirectXTK
 		DirectXTK12
 		pdperfmod
+		pdafwmod
 	)
 
 	set_target_properties(MHRISE PROPERTIES
@@ -11981,6 +12013,7 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		DirectXTK
 		DirectXTK12
 		pdperfmod
+		pdafwmod
 	)
 
 	set_target_properties(SF6 PROPERTIES
@@ -13035,6 +13068,7 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		DirectXTK
 		DirectXTK12
 		pdperfmod
+		pdafwmod
 	)
 
 	set_target_properties(DD2 PROPERTIES
@@ -14089,6 +14123,7 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		DirectXTK
 		DirectXTK12
 		pdperfmod
+		pdafwmod
 	)
 
 	set_target_properties(MHWILDS PROPERTIES

@@ -28,9 +28,17 @@
 
 #include "Mod.hpp"
 
+#include "PDAFWPlugin.h"
+
 class REManagedObject;
 
 class VR : public Mod {
+public:
+    CameraData cameraData[2];
+    ID3D12Resource* depthTex = NULL;
+    ID3D12Resource* motionVectorsTex = NULL;
+    ID3D12Resource* uiBufferTex = NULL;
+    D3D12RendererAPI* d3d12Renderer = nullptr;
 public:
     enum RenderingTechnique {
         ALTERNATING, // AFR
@@ -568,10 +576,22 @@ private:
     const ModKey::Ptr m_set_standing_key{ ModKey::create(generate_name("SetStandingOriginKey")) };
     const ModKey::Ptr m_recenter_view_key{ ModKey::create(generate_name("RecenterViewKey")) };
     const ModToggle::Ptr m_decoupled_pitch{ ModToggle::create(generate_name("DecoupledPitch"), false) };
+    const ModToggle::Ptr m_clear_before_framewarp{ModToggle::create(generate_name("ClearBeforeFramewarp"), false)};
+    const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
+    const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
+
+    const ModCombo::Ptr m_framewarp_mode{ModCombo::create(generate_name("Framewarp Mode"),
+        {
+            "None",
+            "AlternateEyeWarping",
+            "PreviousFrameWarping",
+            "CombinedWarping",
+        },
+        (int)FrameWarpMode::CombinedWarping)};
     const ModCombo::Ptr m_rendering_technique{ 
         ModCombo::create(generate_name("RenderingTechnique_V2"),
         {
-            "Alternating/AFR", 
+            "Alternate Frame Warping", 
             "Two Frame Sequential", 
             "Single Frame Multipass"
         }, 

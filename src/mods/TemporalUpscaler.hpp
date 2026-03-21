@@ -8,6 +8,8 @@
 #include "vr/d3d12/TextureContext.hpp"
 #include "Mod.hpp"
 
+#include "PDAFWPlugin.h"
+
 namespace sdk {
 namespace renderer {
 class RenderLayer;
@@ -20,11 +22,22 @@ class Scene;
 
 class TemporalUpscaler : public Mod {
 public:
+    ID3D12Resource* finalColorTex = NULL;
+    ID3D12Resource* hudlessTex = NULL;
+    sdk::intrusive_ptr<sdk::renderer::Texture> uiTargetEngineTex = NULL;
+    sdk::intrusive_ptr<sdk::renderer::Texture> finalColorEngineTex = NULL;
+    sdk::intrusive_ptr<sdk::renderer::Texture> hudlessEngineTex = NULL;
+    std::array<uint32_t, 2> hudlessTargetSize{};
+    D3D12RendererAPI* d3d12Renderer = nullptr;
+    TextureDesc extractedUIBufferDesc;
+
+public:
     static std::shared_ptr<TemporalUpscaler>& get();
 
     std::string_view get_name() const { return "TemporalUpscaler"; }
 
     std::optional<std::string> on_initialize() override;
+    std::optional<std::string> on_initialize_d3d_thread() override;
 
     void on_config_load(const utility::Config& cfg) override;
     void on_config_save(utility::Config& cfg) override;
@@ -41,9 +54,11 @@ public:
     void on_camera_get_projection_matrix(REManagedObject* camera, Matrix4x4f* result) override;
 
     void on_scene_layer_update(sdk::renderer::layer::Scene* scene_layer, void* render_context) override;
-    
+
+    bool on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_context) override;
     void on_overlay_layer_draw(sdk::renderer::layer::Overlay* overlay_layer, void* render_context) override;
-    
+
+    bool on_pre_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer, void* render_context) override;
     void on_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer, void* render_context) override;
 
     bool on_pre_output_layer_draw(sdk::renderer::layer::Output* layer, void* render_context) override;
@@ -70,6 +85,8 @@ public:
 
         return (T*)m_upscaled_textures[index];
     }
+
+    auto get_motion_scale() { return m_motion_scale;}
 
     enum PDGraphicsAPI {
         D3D11,
