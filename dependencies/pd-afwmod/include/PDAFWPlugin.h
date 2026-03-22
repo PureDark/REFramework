@@ -3,7 +3,7 @@
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <dxgi1_2.h>
-#include <glm/glm.hpp>
+#include <../../../dependencies/glm/glm/glm.hpp>
 #include "../../../build64_all/_deps/directxtk12-src/Src/d3dx12.h"
 
 namespace pd {
@@ -104,11 +104,12 @@ namespace pd {
 		TextureDesc*     InUIColorAlpha = NULL;       // optional, provide the UI and the plugin will render it according to the camera orientation without the HMD rotaion and position affecting it.
 		float            InUIScale[2] = { 1.0f, 1.0f };
 		float            InUIPos[3] = { 0.0f, 0.0f, -1.0f };
+		float            InMotionScale[2] = { 0.0f, 0.0f };
 		FrameWarpMode	 Mode;
 		EyeIndex         EyeIndex;
 		CameraData*      CameraData;  // required, camera matrices for this frame
 		bool             ClearBeforeWarping = false;
-		float            CullingDistance{ 1.0f };  // culling any pixel from previous frame if it's within this distance, to avoid issues in first-person with hand models up close
+		float            IgnoreMotionThreshold{ 2.5f };    // per-object motion vectors, ignore threshold in pixel space
 		bool             IsHudlessColor = true;    // specify whether InEyeColor is hudless or contaning UI, if the latter, will use UIColorAndAlpha to avoid reprojecting UI.
 		bool             IsMotionVectorsOtherEye = false;  // whether motion vectors include motion from camera jumping between eyes
 		bool             Debug = false;
@@ -140,9 +141,9 @@ namespace pd {
 		virtual D3D12_GPU_DESCRIPTOR_HANDLE GetSamplerHandle(int pos) = 0;
 		virtual bool                        CreateTexture(int nWidth, int nHeight, DXGI_FORMAT format, D3D12_RESOURCE_STATES initialState, TextureDesc& textureDesc, bool createUAV) = 0;
 		virtual bool                        CreateFrameBuffer(int nWidth, int nHeight, FrameBufferDesc& framebufferDesc, bool createUAV) = 0;
-		virtual void                        Blit(ID3D12GraphicsCommandList* cmdList, TextureDesc& srcDesc, TextureDesc& dstDesc, D3D12_VIEWPORT viewPort, bool enableBlend = false) = 0;
-		virtual void                        Copy(ID3D12GraphicsCommandList* cmdList, TextureDesc& srcDesc, TextureDesc& dstDesc) = 0;
-		virtual void                        Tonemap(ID3D12GraphicsCommandList* cmdList, TextureDesc& srcDesc, TextureDesc& dstDesc, TonemapParams params) = 0;
+		virtual void                        Blit(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, D3D12_VIEWPORT viewPort, bool enableBlend = false) = 0;
+		virtual void                        Copy(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc) = 0;
+		virtual void                        Tonemap(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, TonemapParams params) = 0;
 		virtual TextureDesc&                ExtractUI(ID3D12GraphicsCommandList* cmdList, TextureDesc& hudlessDesc, TextureDesc& finalColorWithUI) = 0;
 	};
 

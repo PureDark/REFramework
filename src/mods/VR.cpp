@@ -653,7 +653,7 @@ float VR::get_sharpness_hook(void* tonemapping) {
 std::optional<std::string> VR::on_initialize_d3d_thread() try {
 
     // #############################
-    // #Reprojection Module Start
+    // #Frame Warp Module Start
     // #############################
     auto& hook = g_framework->get_d3d12_hook();
     hook->get_command_queue();
@@ -662,7 +662,7 @@ std::optional<std::string> VR::on_initialize_d3d_thread() try {
     params.d3d12Queue = hook->get_command_queue();
     d3d12Renderer = InitDevice(params);
     // #############################
-    // #Reprojection Module End
+    // #Frame Warp Module End
     // #############################
 
     auto openvr_error = initialize_openvr();
@@ -2229,14 +2229,13 @@ Matrix4x4f VR::get_current_eye_transform(bool flip) {
 
     std::shared_lock _{get_runtime()->eyes_mtx};
 
-    auto nEye = flip ? vr::Eye_Right : vr::Eye_Left;
-    auto nEyeOther = flip ? vr::Eye_Left : vr::Eye_Right;
+    auto mod_count = flip ? m_right_eye_interval : m_left_eye_interval;
 
-    if (m_frame_count % 2 == m_left_eye_interval) {
-        return get_runtime()->eyes[nEye];
+    if (m_frame_count % 2 == mod_count) {
+        return get_runtime()->eyes[vr::Eye_Left];
     }
 
-    return get_runtime()->eyes[nEyeOther];
+    return get_runtime()->eyes[vr::Eye_Right];
 }
 
 Matrix4x4f VR::get_current_projection_matrix(bool flip) {
@@ -2246,14 +2245,13 @@ Matrix4x4f VR::get_current_projection_matrix(bool flip) {
 
     std::shared_lock _{get_runtime()->eyes_mtx};
 
-    auto nEye = flip ? VRRuntime::Eye::RIGHT : VRRuntime::Eye::LEFT;
-    auto nEyeOther = flip ? VRRuntime::Eye::LEFT : VRRuntime::Eye::RIGHT;
+    auto mod_count = flip ? m_right_eye_interval : m_left_eye_interval;
 
-    if (m_frame_count % 2 == m_left_eye_interval) {
-        return get_runtime()->projections[(uint32_t)nEye];
+    if (m_frame_count % 2 == mod_count) {
+        return get_runtime()->projections[(uint32_t)VRRuntime::Eye::LEFT];
     }
 
-    return get_runtime()->projections[(uint32_t)nEyeOther];
+    return get_runtime()->projections[(uint32_t)VRRuntime::Eye::RIGHT];
 }
 
 void VR::on_pre_imgui_frame() {
@@ -2305,7 +2303,7 @@ void VR::on_present() {
             }
 
             openvr->is_hmd_active = hmd_active;
-            openvr->is_hmd_active = true;
+            //openvr->is_hmd_active = true;
 
             // upon headset re-entry, reinitialize OpenVR
             if (openvr->is_hmd_active && !openvr->was_hmd_active) {
@@ -3209,7 +3207,7 @@ void VR::on_pre_end_rendering(void* entry) {
         }
         if (valid_scene_layers.size() > 0) {
             depthTex = valid_scene_layers[0]->get_depth_stencil_d3d12();
-            motionVectorsTex = valid_scene_layers[0]->get_target_state_resource_d3d12("VelocityTarget");
+            motionVectorsTex = valid_scene_layers[0]->get_motion_vectors_d3d12();
         } 
     }
 }
@@ -3929,11 +3927,13 @@ void VR::on_draw_ui() {
     ImGui::Separator();
 
     m_use_afr->draw("Use AFR");
-    m_clear_before_framewarp->draw("Clear Before Framewarp");
-    m_framewarp_debug->draw("Debug Framewarp");
-    m_enable_ui_fix->draw("Enable UI Fix For Framewarp");
-    m_framewarp_mode->draw("Framewarp Mode");
-    ImGui::Separator();
+    if (m_use_afr->value()) {
+        m_clear_before_framewarp->draw("Clear Before Framewarp");
+        m_framewarp_debug->draw("Debug Framewarp");
+        m_enable_ui_fix->draw("Enable Framewarp UI Fix");
+        m_ignore_motion_threshold->draw("Ignore Motion Threshold");
+        m_framewarp_mode->draw("Framewarp Mode");
+    }    ImGui::Separator();
 
     m_decoupled_pitch->draw("Decoupled Camera Pitch");
 

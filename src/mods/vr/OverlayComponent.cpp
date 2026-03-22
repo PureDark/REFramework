@@ -67,23 +67,21 @@ void OverlayComponent::update_input() {
 
     auto& vr = VR::get();
     auto& io = ImGui::GetIO();
-    if (!vr->m_use_afr) {
-        const auto is_initial_frame = vr->get_frame_count() % 2 == vr->m_left_eye_interval || vr->m_use_afr;
+    const auto is_initial_frame = vr->get_frame_count() % 2 == vr->m_left_eye_interval || vr->is_using_afr();
 
-        // Restore the previous frame's input state
-        // memcpy(io.KeysDown, m_initial_imgui_input_state.KeysDown, sizeof(io.KeysDown));
-        memcpy(io.MouseDown, m_initial_imgui_input_state.MouseDown, sizeof(io.MouseDown));
-        io.MousePos = m_initial_imgui_input_state.MousePos;
-        io.MouseWheel = m_initial_imgui_input_state.MouseWheel;
-        io.MouseWheelH = m_initial_imgui_input_state.MouseWheelH;
-        io.KeyCtrl = m_initial_imgui_input_state.KeyCtrl;
-        io.KeyShift = m_initial_imgui_input_state.KeyShift;
-        io.KeyAlt = m_initial_imgui_input_state.KeyAlt;
-        io.KeySuper = m_initial_imgui_input_state.KeySuper;
+    // Restore the previous frame's input state
+    //memcpy(io.KeysDown, m_initial_imgui_input_state.KeysDown, sizeof(io.KeysDown));
+    memcpy(io.MouseDown, m_initial_imgui_input_state.MouseDown, sizeof(io.MouseDown));
+    io.MousePos = m_initial_imgui_input_state.MousePos;
+    io.MouseWheel = m_initial_imgui_input_state.MouseWheel;
+    io.MouseWheelH = m_initial_imgui_input_state.MouseWheelH;
+    io.KeyCtrl = m_initial_imgui_input_state.KeyCtrl;
+    io.KeyShift = m_initial_imgui_input_state.KeyShift;
+    io.KeyAlt = m_initial_imgui_input_state.KeyAlt;
+    io.KeySuper = m_initial_imgui_input_state.KeySuper;
 
-        if (!is_initial_frame) {
-            return;
-        }
+    if (!is_initial_frame) {
+        return;
     }
 
     io.MouseWheel = 0;

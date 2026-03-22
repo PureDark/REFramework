@@ -1580,7 +1580,7 @@ DirectXResource<ID3D12Resource>* Texture::get_d3d12_resource_container() {
                     module_path_lower.ends_with(L"d3d11_2sdklayers.dll") ||
                     module_path_lower.ends_with(L"d3d11_3sdklayers.dll") ||
                     module_path_lower.ends_with(L"d3d11on12.dll")||
-                    module_path_lower.ends_with(L"renderdoc.dll");;
+                    module_path_lower.ends_with(L"renderdoc.dll");
                 };
 
                 // Standard path for semi-newer UE versions

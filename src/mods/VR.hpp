@@ -507,7 +507,8 @@ private:
     const ModToggle::Ptr m_clear_before_framewarp{ModToggle::create(generate_name("ClearBeforeFramewarp"), false)};
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
-    //const ModSlider::Ptr m_culling_distance{ModSlider::create(generate_name("FramewarpCullingDistance"), 0.1f, 10.0f, 2.0f)};
+    const ModSlider::Ptr m_ignore_motion_threshold{ModSlider::create(generate_name("IgnoreMotionThreshold"), 1.0f, 100.0f, 2.5f)};
+
     const ModCombo::Ptr m_framewarp_mode{ModCombo::create(generate_name("Framewarp Mode"),
         {
             "None",

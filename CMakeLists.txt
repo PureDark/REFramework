@@ -187,10 +187,6 @@ if(REF_BUILD_DEPENDENCIES AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework-dep
 	target_include_directories(pdafwmod PUBLIC
 		"dependencies/pd-afwmod/include"
 	)
-	
-	target_link_libraries(pdafwmod PUBLIC
-		glm_static
-	)
 
 	set_target_properties(pdafwmod PROPERTIES
 		OUTPUT_NAME

@@ -115,14 +115,16 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             params.InUIColorAlpha = NULL;
             params.IsHudlessColor = true;
         }
+        auto colorDesc = s_CurrentEyeFrameBuffer.color.pTexture->GetDesc();
         params.IsMotionVectorsOtherEye = true;
+        params.InMotionScale[0] = (float)colorDesc.Width / 2.0f;
+        params.InMotionScale[1] = -1.0f * ((float)colorDesc.Height / 2.0f);
         params.Mode = (FrameWarpMode)vr->m_framewarp_mode->value();
         params.EyeIndex = nEye;
         params.ClearBeforeWarping = vr->m_clear_before_framewarp->value();
         params.CameraData = &vr->cameraData[nEye];
-        params.CullingDistance = 0;
+        params.IgnoreMotionThreshold = vr->m_ignore_motion_threshold->value();
         params.Debug = vr->m_framewarp_debug->value();
-        params.IsMotionVectorsOtherEye = true;
         EvaluateFrameWarp(params);
         vr->d3d12Renderer->EndCommandList(backbuffer_index);
     }
@@ -160,14 +162,14 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 return e;
             }
             if (vr->is_using_afr()) {
-                auto& ctx = m_openvr.acquire_right();
+                //auto& ctx = m_openvr.acquire_right();
                 FLOAT black[4] = {0, 0, 0, 0};
                 //ctx.commands.clear_rtv(m_openvr.get_right(), black);
                 //m_openvr.copy_right(eye_texture.Get());
                 //if (params.OutEyeColor && vr->m_use_reprojection->value()) {
                 //    ctx.commands.copy((ID3D12Resource*)params.OutEyeColor, ctx.texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                 //}
-                ctx.commands.execute();
+                //ctx.commands.execute();
 
                 vr::D3D12TextureData_t right{m_openvr.get_right().texture.Get(), command_queue, 0};
 
@@ -216,14 +218,14 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 vr->m_submitted = true;
             }
             if (vr->is_using_afr()) {
-                auto& ctx = m_openvr.acquire_left();
-                FLOAT black[4] = {0, 0, 0, 0};
+                //auto& ctx = m_openvr.acquire_left();
+                //FLOAT black[4] = {0, 0, 0, 0};
                 //ctx.commands.clear_rtv(m_openvr.get_left(), black);
                 //m_openvr.copy_left(eye_texture.Get());
                 //if (params.OutEyeColor && vr->m_use_reprojection->value()) {
                 //    ctx.commands.copy((ID3D12Resource*)params.OutEyeColor, ctx.texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                 //}
-                ctx.commands.execute();
+                //ctx.commands.execute();
 
                 vr::D3D12TextureData_t left{m_openvr.get_left().texture.Get(), command_queue, 0};
 
@@ -236,7 +238,6 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                     return e;
                 }
             }
-
             ++m_openvr.texture_counter;
         }
     }
