@@ -439,6 +439,33 @@ bool VR::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* r
 
     uiBufferTex = layer->get_ui_buffer_tex_d3d12();
 
+    if (motionVectorsState) {
+        auto rtv = motionVectorsState->get_rtv(0);
+        if (rtv != nullptr) {
+            motionVectorsEngineTex = rtv->get_texture_d3d12();
+            if (motionVectorsEngineTex != nullptr) {
+                auto desc = motionVectorsEngineTex->get_desc();
+                if (motionVectorsBackupEngineTex == NULL || 
+                    motionVectorsTargetSize[0] != desc->width ||
+                    motionVectorsTargetSize[1] != desc->height) {
+
+                    motionVectorsBackupEngineTex = motionVectorsEngineTex->clone();
+                    motionVectorsTargetSize[0] = desc->width;
+                    motionVectorsTargetSize[1] = desc->height;
+
+                    const auto internal_resource = motionVectorsBackupEngineTex->get_d3d12_resource_container();
+
+                    if (internal_resource != nullptr) {
+                        motionVectorsBackupTex = internal_resource->get_native_resource();
+                    }
+                }
+                auto context = (sdk::renderer::RenderContext*)render_ctx;
+                motionVectorsBackupTex->SetName(L"motionVectorsBackupTex");
+                context->copy_texture(motionVectorsEngineTex, motionVectorsBackupEngineTex);
+            }
+        }
+    }
+
     // just don't render anything at all.
     // overlays just seem to break stuff in VR.
     if (!is_hmd_active()) {
@@ -3207,6 +3234,7 @@ void VR::on_pre_end_rendering(void* entry) {
         }
         if (valid_scene_layers.size() > 0) {
             depthTex = valid_scene_layers[0]->get_depth_stencil_d3d12();
+            motionVectorsState = valid_scene_layers[0]->get_motion_vectors_state();
             motionVectorsTex = valid_scene_layers[0]->get_motion_vectors_d3d12();
         } 
     }

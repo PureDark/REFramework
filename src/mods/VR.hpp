@@ -33,8 +33,13 @@ public:
     CameraData cameraData[2];
     ID3D12Resource* depthTex = NULL;
     ID3D12Resource* motionVectorsTex = NULL;
+    ID3D12Resource* motionVectorsBackupTex = NULL;
     ID3D12Resource* uiBufferTex = NULL;
     D3D12RendererAPI* d3d12Renderer = nullptr;
+    sdk::renderer::Texture* motionVectorsEngineTex = NULL;
+    sdk::renderer::Texture* motionVectorsBackupEngineTex = NULL;
+    sdk::renderer::TargetState* motionVectorsState = NULL;
+    std::array<uint32_t, 2> motionVectorsTargetSize{};
 
 public:
     static std::shared_ptr<VR>& get();
