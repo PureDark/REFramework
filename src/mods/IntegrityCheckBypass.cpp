@@ -17,7 +17,7 @@
 
 #include "IntegrityCheckBypass.hpp"
 
-template <typename T>
+template <typename T = uint64_t>
 T get_register_value(safetyhook::Context& context, int reg);
 
 struct IntegrityCheckPattern {
@@ -1383,7 +1383,7 @@ void IntegrityCheckBypass::immediate_patch_dd2() {
         sus_constant_patches.emplace_back(Patch::create(*ref + 2, { 0xEF, 0xBE, 0x37, 0x13 }, true));
     }
 
-    spdlog::info("[IntegrityCheckBypass]: Patched {} sus_constants!", sus_constant_patches.size());
+    spdlog::info("[IntegrityCheckBypass]: Patched {} sus_constants! (DD2+ variant)", sus_constant_patches.size());
 
     restore_unencrypted_paks();
 #endif
@@ -1499,18 +1499,6 @@ static std::shared_mutex& get_submit_descriptor_original_func_ptrs_mutex() {
     return original_func_ptrs_mutex;
 }
 
-static void remember_submit_descriptor_original_func_ptr(int64_t descriptor, uintptr_t func_ptr) {
-    if (descriptor == 0 || func_ptr == 0) {
-        return;
-    }
-
-    try {
-        std::unique_lock lock{get_submit_descriptor_original_func_ptrs_mutex()};
-        get_submit_descriptor_original_func_ptrs()[descriptor] = func_ptr;
-    } catch (...) {
-    }
-}
-
 static uintptr_t get_submit_descriptor_original_func_ptr(int64_t descriptor) {
     if (descriptor == 0) {
         return 0;
@@ -1527,6 +1515,22 @@ static uintptr_t get_submit_descriptor_original_func_ptr(int64_t descriptor) {
     }
 
     return 0;
+}
+
+static void remember_submit_descriptor_original_func_ptr(int64_t descriptor, uintptr_t func_ptr) {
+    if (descriptor == 0 || func_ptr == 0) {
+        return;
+    }
+
+    try {
+        if (get_submit_descriptor_original_func_ptr(descriptor) == func_ptr) {
+            return; // Only incur cost of a shared mutex.
+        }
+
+        std::unique_lock lock{get_submit_descriptor_original_func_ptrs_mutex()};
+        get_submit_descriptor_original_func_ptrs()[descriptor] = func_ptr;
+    } catch (...) {
+    }
 }
 
 uintptr_t __fastcall hk_JobQueue_SubmitDescriptor(uintptr_t scheduler, int64_t descriptor, int priority, uint32_t max_workers) {
@@ -1576,9 +1580,18 @@ uintptr_t __fastcall hk_JobQueue_SubmitDescriptor(uintptr_t scheduler, int64_t d
 // Harmless replacement - just returns
 static void __fastcall noop_job(int64_t, int64_t) {}
 
+template<int reg>
 void validate_job_func(SafetyHookContext& ctx) {
     auto func_ptr = ctx.rax;
     if (!func_ptr) {
+        return;
+    }
+
+    // inline isbadreadptr recreation so we don't call out into kernel32
+    __try {
+        volatile uint64_t dummy = *(volatile uint64_t*)func_ptr;
+        (void)dummy;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
         return;
     }
 
@@ -1586,22 +1599,22 @@ void validate_job_func(SafetyHookContext& ctx) {
         // UD2
         if (*reinterpret_cast<uint16_t*>(func_ptr) == 0x0B0F) {
             // if we already have a cached original, restore it to prevent crashes.
-            const auto original_func_ptr = get_submit_descriptor_original_func_ptr(ctx.rdx);
+            const auto original_func_ptr = get_submit_descriptor_original_func_ptr(get_register_value(ctx, reg));
             if (original_func_ptr != 0 && original_func_ptr != func_ptr) {
                 ctx.rax = original_func_ptr;
-                *(uintptr_t*)(ctx.rdx + 8) = original_func_ptr; // restore the func ptr in the descriptor as well.
-                SPDLOG_INFO("[IntegrityCheckBypass]: Restored descriptor 0x{:X} func pointer to 0x{:X} in job func validation (was 0x{:X})", ctx.rdx, original_func_ptr, func_ptr);
+                *(uintptr_t*)(get_register_value(ctx, reg) + 8) = original_func_ptr; // restore the func ptr in the descriptor as well.
+                SPDLOG_INFO("[IntegrityCheckBypass]: Restored descriptor 0x{:X} func pointer to 0x{:X} in job func validation (was 0x{:X})", get_register_value(ctx, reg), original_func_ptr, func_ptr);
             } else {
                 ctx.rax = reinterpret_cast<uintptr_t>(&noop_job);
                 //SPDLOG_INFO("[IntegrityCheckBypass]: Caught integrity check job submission at call site, skipping! FuncPtr: 0x{:X}", func_ptr);
             }
         } else {
             // also cache the original here for later.
-            remember_submit_descriptor_original_func_ptr(ctx.rdx, func_ptr);
+            remember_submit_descriptor_original_func_ptr(get_register_value(ctx, reg), func_ptr);
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         ctx.rax = reinterpret_cast<uintptr_t>(&noop_job);
-        //SPDLOG_WARN("[IntegrityCheckBypass]: Exception caught while validating job function pointer. FuncPtr: 0x{:X}", func_ptr);
+        SPDLOG_WARN("[IntegrityCheckBypass]: Exception caught while validating job function pointer. FuncPtr: 0x{:X}", func_ptr);
     }
 }
 
@@ -1625,6 +1638,8 @@ void IntegrityCheckBypass::immediate_patch_re9() {
         sus_constant_patches2.emplace_back(Patch::create(*ref, { 0xEF, 0xBE, 0x37, 0x13 }, true));
     }
 
+    spdlog::info("[IntegrityCheckBypass]: Patched {} sus_constants! (RE9+)", sus_constant_patches2.size());
+
     // This is hidden within RenderTaskEnd. RenderTaskEnd is interleaved with legitimate game code and integrity checks. Entire function is obfuscated.
     // What they are doing is finding UD2 gadgets (even in the middle of instructions) around the game and replace random thread scheduler jobs
     // with pointers to the found UD2 function/gadget.
@@ -1638,6 +1653,7 @@ void IntegrityCheckBypass::immediate_patch_re9() {
     std::optional<uintptr_t> result{};
     size_t nop_size{};
 
+#ifdef RE9
     for (auto ref = utility::scan(game, function_epilogue_sig);
             ref.has_value();
             ref = utility::scan(*ref + 1, (game_end - (*ref + 1)) - 0x1000, function_epilogue_sig))
@@ -1658,6 +1674,7 @@ void IntegrityCheckBypass::immediate_patch_re9() {
         });
 
         if (pop_count > 2) {
+            spdlog::info("Skipping candidate at 0x{:X} due to high pop count: {}", *ref, pop_count);
             continue;
         }
 
@@ -1727,9 +1744,98 @@ void IntegrityCheckBypass::immediate_patch_re9() {
             break;
         }
     }
+#endif
+
+    // Fallback: UD2 writer anchor approach (works for MHSTORIES3 and other games where the
+    // epilogue signature above doesn't match). The UD2 writer instruction 'mov [rax+rcx+8], rdx'
+    // (48 89 ? 08 08) is unique or near-unique in the anti-tamper section. Searching backwards from it
+    // for the SETcc + dispatch table load pattern finds the discriminator reliably.
+    if (!result) {
+        spdlog::info("[IntegrityCheckBypass]: Epilogue scan failed, trying UD2 writer anchor approach...");
+
+        for (auto ud2_ref = utility::scan(game, "48 89 ? 08 08");
+             ud2_ref.has_value() && !result;
+             ud2_ref = utility::scan(*ud2_ref + 1, (game_end - (*ud2_ref + 1)) - 0x1000, "48 89 ? 08 08"))
+        {
+            // Filter: the real UD2 writer uses SIB addressing: mov [base+index+disp8], reg.
+            // ModR/M byte (offset +2) must have rm=100 (SIB follows) and mod=01 (8-bit disp).
+            // False positives like mov [rdi+0x808],rax have rm=111 and mod=10 (32-bit disp).
+            const uint8_t modrm = *reinterpret_cast<const uint8_t*>(*ud2_ref + 2);
+            if ((modrm & 0xC7) != 0x44) { // mod=01, rm=100 -> SIB + disp8
+                continue;
+            }
+
+            // Search backwards from the UD2 writer for the dispatch pattern:
+            // [REX?] 0F 9x {ModR/M mod=11} [REX.W] 8B {ModR/M rm=100(SIB)} {SIB scale=8}
+            // The SETcc sets an index (0 or 1), the MOV loads from a 2-entry dispatch table.
+            const auto search_start = (*ud2_ref > 0x2000) ? (*ud2_ref - 0x2000) : (uintptr_t)game;
+            const uint8_t* base = reinterpret_cast<const uint8_t*>(search_start);
+            const size_t search_len = *ud2_ref - search_start;
+
+            for (size_t i = 0; i < search_len; i++) {
+                // Check for 0F 9x with the byte after having mod=11 (>= 0xC0)
+                size_t setcc_off = 0;
+                size_t setcc_len = 0;
+
+                // Pattern A: no REX prefix on SETcc -> 0F 9? {mod=11}
+                if (base[i] == 0x0F && (base[i+1] & 0xF0) == 0x90 && (base[i+2] & 0xC0) == 0xC0) {
+                    setcc_off = i;
+                    setcc_len = 3;
+                }
+                // Pattern B: REX prefix (40-4F) before SETcc -> 4? 0F 9? {mod=11}
+                else if ((base[i] & 0xF0) == 0x40 && base[i+1] == 0x0F && (base[i+2] & 0xF0) == 0x90 && (base[i+3] & 0xC0) == 0xC0) {
+                    setcc_off = i;
+                    setcc_len = 4;
+                }
+                else {
+                    continue;
+                }
+
+                // Now check if a MOV with SIB scale=8 follows within the next few bytes
+                // (there may be 0-2 intervening bytes between the SETcc and the MOV).
+                size_t dispatch_mov_end = 0;
+                bool found_dispatch = false;
+                for (size_t j = setcc_off + setcc_len; j < setcc_off + setcc_len + 4 && j + 3 < search_len; j++) {
+                    // REX.W prefix (48-4F) followed by 8B (MOV), ModR/M with rm=100 (SIB), SIB with scale=8
+                    if ((base[j] & 0xF0) == 0x40 && base[j+1] == 0x8B && (base[j+2] & 0x07) == 0x04 && (base[j+3] & 0xC0) == 0xC0) {
+                        found_dispatch = true;
+                        dispatch_mov_end = j + 4; // byte after the 4-byte MOV+SIB
+                        break;
+                    }
+                }
+
+                if (!found_dispatch) {
+                    continue;
+                }
+
+                // Final verification: this must be a anti-tamper dispatch block, not normal game code.
+                // anti-tamper dispatches always end with 'xchg [rsp], rXX; ret' (obfuscated indirect jmp).
+                // Compilers never emit this pattern. Search forward from the dispatch MOV for:
+                //   [REX?] 87 {ModR/M: mod=00, rm=100(SIB)} 24(SIB=[rsp]) C3(ret)
+                bool has_xchg_ret = false;
+                for (size_t k = dispatch_mov_end; k + 4 < search_len && k < dispatch_mov_end + 30; k++) {
+                    size_t xo = k;
+                    if ((base[xo] & 0xF0) == 0x40) xo++; // skip optional REX
+                    if (xo + 3 < search_len &&
+                        base[xo] == 0x87 && (base[xo+1] & 0xC7) == 0x04 && base[xo+2] == 0x24 && base[xo+3] == 0xC3) {
+                        has_xchg_ret = true;
+                        break;
+                    }
+                }
+
+                if (has_xchg_ret) {
+                    result = search_start + setcc_off;
+                    nop_size = setcc_len;
+                    spdlog::info("[IntegrityCheckBypass]: Found SETcc dispatch via UD2 writer anchor @ 0x{:X} ({}B), UD2 writer @ 0x{:X}",
+                        *result, nop_size, *ud2_ref);
+                    break;
+                }
+            }
+        }
+    }
 
     if (result) {
-        spdlog::info("[IntegrityCheckBypass]: Found slow path discriminator in RE9 @ 0x{:X} ({}B), patching...", *result, nop_size);
+        spdlog::info("[IntegrityCheckBypass]: Found slow path discriminator @ 0x{:X} ({}B), patching...", *result, nop_size);
         // NOP the conditional. This forces the dispatch index to its default (clean) value:
         // - For SETcc: the target register keeps its restored value (0) from the surrounding obfuscation,
         //   so the dispatch table always selects index 0 (the clean path).
@@ -1738,17 +1844,24 @@ void IntegrityCheckBypass::immediate_patch_re9() {
         std::vector<int16_t> nops{};
         nops.resize(nop_size, 0x90);
         static auto patch = Patch::create(*result, nops, true);
-        spdlog::info("[IntegrityCheckBypass]: Patched slow path discriminator in RE9!");
-    } else {
-        spdlog::error("[IntegrityCheckBypass]: Could not find conditional move instruction for thread scheduler corruptor in RE9!");
+        spdlog::info("[IntegrityCheckBypass]: Patched slow path discriminator!");
+    } 
+    
+    // Hook this anyways as a backup plan.
+    {
+        if (!result) {
+            spdlog::error("[IntegrityCheckBypass]: Could not find conditional move instruction for thread scheduler corruptor in RE9!");
+            spdlog::error("[IntegrityCheckBypass]: Could not find thread scheduler corruptor in RE9!");
+        }
 
-        spdlog::error("[IntegrityCheckBypass]: Could not find thread scheduler corruptor in RE9!");
         spdlog::warn("[IntegrityCheckBypass]: Attempting to hook JobQueue::SubmitDescriptor as a fallback for RE9. This may cause lag during integrity check jobs, but it should prevent crashes.");
 
         // Temporary workarounds for when none of that can be found
         // Temporarily needed on EGS and Japanese copies where obfuscation is different.
         // game will still lag but function with these.
-        auto ref = utility::scan(game, "41 B9 FF FF FF FF E8 ? ? ? ? 48 89 BE");
+
+        // This one is unnecessary and seems to be more unstable than mid-hooking the job callsites.
+        /*auto ref = utility::scan(game, "41 B9 FF FF FF FF E8 ? ? ? ? 48 89 BE");
         auto fn = ref ? utility::calculate_absolute(*ref + 7) : std::optional<uintptr_t>{};
 
         if (fn) {
@@ -1758,15 +1871,80 @@ void IntegrityCheckBypass::immediate_patch_re9() {
             );
 
             spdlog::info("[IntegrityCheckBypass]: Hooked JobQueue::SubmitDescriptor in RE9 @ 0x{:X}!", *fn);
-        }
+        }*/
 
         static std::vector<SafetyHookMid> callsites{};
 
-        for (auto ref = utility::scan(utility::get_executable(), "48 8b 42 08 48 8b 4a 10 48 8b 52 18 48 85 c9 0f 84 ? ? ? ? ff d0"); 
+        for (auto ref = utility::scan(utility::get_executable(), "? 8b ? 08 ? 8b ? 10 ? 8b ? 18 48 85 c9 0f 84 ? ? ? ? ff d0"); 
             ref; 
-            ref = utility::scan((*ref + 1), game_end - (*ref + 1), "48 8b 42 08 48 8b 4a 10 48 8b 52 18 48 85 c9 0f 84 ? ? ? ? ff d0")) 
+            ref = utility::scan((*ref + 1), game_end - (*ref + 1), "? 8b ? 08 ? 8b ? 10 ? 8b ? 18 48 85 c9 0f 84 ? ? ? ? ff d0")) 
         {
-            callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), validate_job_func));
+            const auto dec = utility::decode_one((uint8_t*)(*ref));
+            int reg = NDR_RDX; // default to rdx, which is the most common register used for the job descriptor pointer in observed patterns
+            if (dec && dec->OperandsCount >= 2 && dec->Operands[1].Type == ND_OP_MEM) {
+                // determine register being used in right hand side (mem)
+                reg = dec->Operands[1].Info.Memory.Base;
+                spdlog::info("[IntegrityCheckBypass]: Found candidate call site for job submission with integrity check in RE9 @ 0x{:X}, using register {} for descriptor", *ref, reg);
+            } else {
+                spdlog::warn("[IntegrityCheckBypass]: Found candidate call site for job submission with integrity check in RE9 @ 0x{:X}, but failed to decode register used for descriptor, defaulting to rdx", *ref);
+            }
+
+            switch (reg)
+            {
+            case NDR_RAX:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_RAX>));
+                break;
+            case NDR_RCX:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_RCX>));
+                break;
+            case NDR_RDX:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_RDX>));
+                break;
+            case NDR_RBX:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_RBX>));
+                break;
+            case NDR_RSP:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_RSP>));
+                break;
+            case NDR_RBP:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_RBP>));
+                break;
+            case NDR_RSI:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_RSI>));
+                break;
+            case NDR_RDI:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_RDI>));
+                break;
+            case NDR_R8:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_R8>));
+                break;
+            case NDR_R9:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_R9>));
+                break;
+            case NDR_R10:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_R10>));
+                break;
+            case NDR_R11:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_R11>));
+                break;
+            case NDR_R12:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_R12>));
+                break;
+            case NDR_R13:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_R13>));
+                break;
+            case NDR_R14:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_R14>));
+                break;
+            case NDR_R15:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_R15>));
+                break;
+            default:
+                callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), &validate_job_func<NDR_RDX>));
+                break;
+            };
+
+            //callsites.emplace_back(safetyhook::create_mid((void*)(*ref + 4), validate_job_func
             spdlog::info("[IntegrityCheckBypass]: Hooked call site at 0x{:X}", *ref);
         }
     }
