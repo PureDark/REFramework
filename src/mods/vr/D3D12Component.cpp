@@ -134,14 +134,15 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             params.InUIColorAlpha = NULL;
             params.IsHudlessColor = true;
         }
+        auto colorDesc = s_CurrentEyeFrameBuffer.color.pTexture->GetDesc();
         params.IsMotionVectorsOtherEye = false;
-        params.InMotionScale[0] = TemporalUpscaler::get()->get_motion_scale()[0];
-        params.InMotionScale[1] = TemporalUpscaler::get()->get_motion_scale()[1];
+        params.InMotionScale[0] = (float)colorDesc.Width / 2.0f;
+        params.InMotionScale[1] = -1.0f * ((float)colorDesc.Height / 2.0f);
         params.Mode = (FrameWarpMode)vr->m_framewarp_mode->value();
         params.EyeIndex = nEye;
         params.ClearBeforeWarping = vr->m_clear_before_framewarp->value();
         params.CameraData = &vr->cameraData[nEye];
-        params.CullingDistance = 0;
+        params.IgnoreMotionThreshold = vr->m_ignore_motion_threshold->value();
         params.Debug = vr->m_framewarp_debug->value();
         EvaluateFrameWarp(params);
         vr->d3d12Renderer->EndCommandList(backbuffer_index);
@@ -176,7 +177,6 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             m_openxr.copy(0, eye_texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT);
             if (vr->is_using_afr()) {
                 m_openxr.copy(1, m_openvr.get_right().texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT);
-                runtime->frame_synced = false;
             }
         }
 
@@ -294,7 +294,6 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 m_openxr.copy(1, eye_texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT);
                 if (vr->is_using_afr()) {
                     m_openxr.copy(0, m_openvr.get_left().texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT);
-                    runtime->frame_synced = false;
                 }
             }
         }

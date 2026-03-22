@@ -2621,24 +2621,24 @@ void VR::on_present() {
     std::scoped_lock _{m_openvr_mtx};
     m_submitted = false;
 
-	static bool btn4 = false;
-    if (GetAsyncKeyState(VK_NUMPAD4) < 0 && btn4 == false) {
-        btn4 = true;
-    }
-    if (GetAsyncKeyState(VK_NUMPAD4) == 0 && btn4 == true) {
-        btn4 = false;
-        m_clear_before_framewarp->toggle();
-    }
+	//static bool btn4 = false;
+ //   if (GetAsyncKeyState(VK_NUMPAD4) < 0 && btn4 == false) {
+ //       btn4 = true;
+ //   }
+ //   if (GetAsyncKeyState(VK_NUMPAD4) == 0 && btn4 == true) {
+ //       btn4 = false;
+ //       m_clear_before_framewarp->toggle();
+ //   }
     
-	static bool btn5 = false;
-    if (GetAsyncKeyState(VK_NUMPAD5) < 0 && btn5 == false) {
-        btn5 = true;
-    }
-    if (GetAsyncKeyState(VK_NUMPAD5) == 0 && btn5 == true) {
-        btn5 = false;
-        int32_t& value = m_framewarp_mode->value();
-        value = (value + 1) % 4; 
-    }
+	//static bool btn5 = false;
+ //   if (GetAsyncKeyState(VK_NUMPAD5) < 0 && btn5 == false) {
+ //       btn5 = true;
+ //   }
+ //   if (GetAsyncKeyState(VK_NUMPAD5) == 0 && btn5 == true) {
+ //       btn5 = false;
+ //       int32_t& value = m_framewarp_mode->value();
+ //       value = (value + 1) % 4; 
+ //   }
     static bool btn6 = false;
     if (GetAsyncKeyState(VK_NUMPAD6) < 0 && btn6 == false) {
         btn6 = true;
@@ -2754,7 +2754,7 @@ void VR::on_post_present() {
         m_d3d12.on_post_present(this);
     }
     
-    if (is_using_multipass() || (m_render_frame_count + 1) % 2 == m_left_eye_interval) {
+    if (is_using_multipass() || is_using_afr() || (m_render_frame_count + 1) % 2 == m_left_eye_interval) {
         runtime->consume_events(nullptr);
     }
 
@@ -4358,6 +4358,7 @@ void VR::on_draw_ui() {
         m_clear_before_framewarp->draw("Clear Before Framewarp");
         m_framewarp_debug->draw("Debug Framewarp");
         m_enable_ui_fix->draw("Enable Framewarp UI Fix");
+        m_ignore_motion_threshold->draw("Ignore Motion Threshold");
         m_framewarp_mode->draw("Framewarp Mode");
     }
     ImGui::Separator();

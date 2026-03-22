@@ -109,7 +109,7 @@ namespace pd {
 		EyeIndex         EyeIndex;
 		CameraData*      CameraData;  // required, camera matrices for this frame
 		bool             ClearBeforeWarping = false;
-		float            CullingDistance{ 1.0f };  // culling any pixel from previous frame if it's within this distance, to avoid issues in first-person with hand models up close
+		float            IgnoreMotionThreshold{ 2.5f };  // per-object motion vectors, ignore threshold in pixel space
 		bool             IsHudlessColor = true;    // specify whether InEyeColor is hudless or contaning UI, if the latter, will use UIColorAndAlpha to avoid reprojecting UI.
 		bool             IsMotionVectorsOtherEye = false;  // whether motion vectors include motion from camera jumping between eyes
 		bool             Debug = false;
