@@ -39,11 +39,17 @@ public:
     ID3D12Resource* motionVectorsTex = NULL;
     ID3D12Resource* uiBufferTex = NULL;
     D3D12RendererAPI* d3d12Renderer = nullptr;
+    
+    int m_camera_data_update_frame_count{};
+    void update_camera_data();
+    CameraData& get_camera_data(int index) { return cameraData[index]; };
+
 public:
     enum RenderingTechnique {
         ALTERNATING, // AFR
         SEQUENTIAL_FRAME, // Two frames, synchronized
-        MULTIPASS // Native stereo rendering, single frame
+        MULTIPASS, // Native stereo rendering, single frame
+        ALTERNATE_FRAME_WARPING // AFW
     };
 
 public:
@@ -124,6 +130,10 @@ public:
 
     bool is_using_multipass() const {
         return m_rendering_technique->value() == RenderingTechnique::MULTIPASS;
+    }
+
+    bool is_using_afw() const {
+        return m_rendering_technique->value() == RenderingTechnique::ALTERNATE_FRAME_WARPING;
     }
 
     RenderingTechnique get_rendering_technique() const {
@@ -592,14 +602,15 @@ private:
     const ModCombo::Ptr m_rendering_technique{ 
         ModCombo::create(generate_name("RenderingTechnique_V2"),
         {
-            "Alternate Frame Warping", 
+            "Alternating/AFR", 
             "Two Frame Sequential", 
-            "Single Frame Multipass"
+            "Single Frame Multipass",
+            "Alternate Frame Warping"
         }, 
 #if TDB_VER < 69
         1 // Previous rendering technique
 #else
-        2 // New rendering technique
+        3 // New rendering technique
 #endif
         ) 
     };

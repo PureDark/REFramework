@@ -123,6 +123,14 @@ namespace pd {
 		float fConvertToLimit;
 	};
 
+	struct CorrectMotionVectorsParams
+	{
+		TextureDesc* inMotionVectors;
+		TextureDesc* inDepth;
+		CameraData*  cameraData;
+		float        InMotionScale[2] = { 0.0f, 0.0f };
+	};
+
 	struct __declspec(novtable) D3D12RendererAPI
 	{
 		virtual ID3D12GraphicsCommandList*  BeginCommandList(int index) = 0;
@@ -145,6 +153,7 @@ namespace pd {
 		virtual void                        Copy(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc) = 0;
 		virtual void                        Tonemap(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, TonemapParams params) = 0;
 		virtual TextureDesc&                ExtractUI(ID3D12GraphicsCommandList* cmdList, TextureDesc& hudlessDesc, TextureDesc& finalColorWithUI) = 0;
+		virtual TextureDesc&                CorrectMotionVectors(ID3D12GraphicsCommandList* cmdList, CorrectMotionVectorsParams& params) = 0;
 	};
 
 	extern "C" __declspec(dllexport) D3D12RendererAPI* __stdcall InitDevice(DeviceParams params);

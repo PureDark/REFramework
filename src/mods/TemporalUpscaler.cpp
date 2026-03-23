@@ -176,7 +176,7 @@ void TemporalUpscaler::on_draw_ui() {
             m_upscale_type = (PDUpscaleType)m_available_upscale_methods[m_available_upscale_method_names[m_available_upscale_type]];
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        //std::this_thread::sleep_for(std::chrono::milliseconds(100));
         release_upscale_features();
         init_upscale_features();
     }
@@ -188,7 +188,12 @@ void TemporalUpscaler::on_draw_ui() {
     }*/
 
     if (m_upscale_quality->draw("Quality Level")) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        //std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        release_upscale_features();
+        init_upscale_features();
+    }
+    if (m_upscale_type == DLSS && m_dlss_preset->draw("DLSS Preset")) {
+        //std::this_thread::sleep_for(std::chrono::milliseconds(100));
         release_upscale_features();
         init_upscale_features();
     }
@@ -245,7 +250,7 @@ void TemporalUpscaler::on_early_present() {
     static TextureDesc finalColorDesc{};
     static TextureDesc backbufferDesc[3]{};
     static TextureDesc extractedUI{};
-    if (hudlessTex && debug1 && VR::get()->is_using_afr()) {
+    if (hudlessTex && debug1 && VR::get()->is_using_afw()) {
         if (hudlessDesc.pTexture == NULL || hudlessDesc.pTexture != hudlessTex) {
             hudlessDesc.pTexture = hudlessTex;
             hudlessDesc.srvPos = d3d12Renderer->CreateSRV(hudlessDesc.pTexture, hudlessDesc.srvPos);
@@ -318,6 +323,7 @@ void TemporalUpscaler::on_early_present() {
         auto vr = VR::get();
         const auto vr_enabled = vr->is_hmd_active();
         const auto is_vr_multipass = vr_enabled && vr->is_using_multipass();
+        const auto is_vr_afw = vr_enabled && vr->is_using_afw();
         const auto frame = vr->get_render_frame_count();
 
         auto& copier = m_copiers[swapchain->GetCurrentBackBufferIndex() % m_copiers.size()];
@@ -414,6 +420,11 @@ void TemporalUpscaler::on_early_present() {
                 params.verticalFOV = m_fov;
 
                 EvaluateUpscaler(&params);
+
+                if (i == 0) {
+                    copier.copy((ID3D12Resource*)m_upscaled_textures[evaluate_index], backbuffer.Get(),
+                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PRESENT);
+                }
             }
         } else {
             for (auto i = 0; i < m_eye_states.size(); ++i) {
@@ -453,13 +464,73 @@ void TemporalUpscaler::on_early_present() {
                 const auto evaluate_id = get_evaluate_id(index);
                 const auto evaluate_index = evaluate_id - 1;
 
+                ID3D12Resource* motion_vectors = state.motion_vectors.Get();
+                ID3D12Resource* depth = state.depth.Get();
+
+                if (!is_vr_multipass) {
+                    static TextureDesc motionVectorsDesc;
+                    if (motionVectorsDesc.pTexture != motion_vectors) {
+                        motionVectorsDesc.pTexture = motion_vectors;
+                        motionVectorsDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+                        motionVectorsDesc.srvPos = vr->d3d12Renderer->CreateSRV(motionVectorsDesc.pTexture, motionVectorsDesc.srvPos);
+                        motionVectorsDesc.shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(motionVectorsDesc.srvPos);
+                    }
+                    static TextureDesc depthDesc;
+                    if (depthDesc.pTexture != depth) {
+                        depthDesc.pTexture = depth;
+                        depthDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+                        depthDesc.srvPos = vr->d3d12Renderer->CreateSRV(depthDesc.pTexture, depthDesc.srvPos);
+                        depthDesc.shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(depthDesc.srvPos);
+                    }
+
+                    EyeIndex nEye = evaluate_index == 0 ? EyeLeft : EyeRight;
+                    EyeIndex nEyeOther = evaluate_index == 0 ? EyeRight : EyeLeft;
+
+                    
+                    CameraData& cameraDataEyePrev = vr->get_camera_data(nEye);
+                    CameraData& cameraDataEyeOther = vr->get_camera_data(nEyeOther);
+
+                    // src -> current eye current frame (rendered)
+                    // cam -> other eye previous farme (rendered)
+                    // dest -> current eye previous frame (rendered)
+                    CameraData cameraData;
+
+                    cameraData.camViewToWorldMatrix = cameraDataEyeOther.srcViewToWorldMatrix;
+                    cameraData.camWorldToViewMatrix = cameraDataEyeOther.srcWorldToViewMatrix;
+                    cameraData.camViewToClipMatrix = cameraDataEyeOther.srcViewToClipMatrix;
+                    cameraData.camClipToViewMatrix = cameraDataEyeOther.srcClipToViewMatrix;
+
+                    cameraData.destViewToWorldMatrix = cameraDataEyePrev.srcViewToWorldMatrix;
+                    cameraData.destWorldToViewMatrix = cameraDataEyePrev.srcWorldToViewMatrix;
+                    cameraData.destViewToClipMatrix = cameraDataEyePrev.srcViewToClipMatrix;
+                    cameraData.destClipToViewMatrix = cameraDataEyePrev.srcClipToViewMatrix;
+
+                    vr->update_camera_data();
+                    CameraData& cameraDataEyeCurr = vr->get_camera_data(nEye);
+                    cameraData.srcViewToWorldMatrix = cameraDataEyeCurr.srcViewToWorldMatrix;
+                    cameraData.srcWorldToViewMatrix = cameraDataEyeCurr.srcWorldToViewMatrix;
+                    cameraData.srcViewToClipMatrix = cameraDataEyeCurr.srcViewToClipMatrix;
+                    cameraData.srcClipToViewMatrix = cameraDataEyeCurr.srcClipToViewMatrix;
+
+                    auto cmdList = d3d12Renderer->BeginCommandList(evaluate_index);
+                    CorrectMotionVectorsParams mvparams;
+                    mvparams.inMotionVectors = &motionVectorsDesc;
+                    mvparams.inDepth = &depthDesc;
+                    mvparams.cameraData = &cameraData;
+                    mvparams.InMotionScale[0] = m_motion_scale[0];
+                    mvparams.InMotionScale[1] = m_motion_scale[1];
+                    auto correctedMV = d3d12Renderer->CorrectMotionVectors(cmdList, mvparams);
+                    motion_vectors = correctedMV.pTexture;
+                    d3d12Renderer->EndCommandList(evaluate_index);
+                }
+
                 UpscaleParams params{};
                 params.id = (int)evaluate_id;
                 params.execute = true;
                 params.reset = false;
                 params.color = state.color.Get();
-                params.motionVector = state.motion_vectors.Get();
-                params.depth = state.depth.Get();
+                params.motionVector = motion_vectors;
+                params.depth = depth;
                 params.mask = nullptr;
                 params.destination = nullptr;
                 params.motionScaleX = m_motion_scale[0];
@@ -606,6 +677,7 @@ bool TemporalUpscaler::init_upscale_features() {
     params.displaySizeX = out_w;
     params.displaySizeY = out_h;
     params.format = out_format;
+    params.preset = get_dlss_preset();
     params.isContentHDR = false;
     params.depthInverted = true;
     params.YAxisInverted = false;
@@ -841,6 +913,7 @@ void TemporalUpscaler::on_scene_layer_update(sdk::renderer::layer::Scene* layer,
 
     const auto vr_enabled = vr->is_hmd_active();
     const auto is_vr_multipass = vr_enabled && vr->is_using_multipass();
+    const auto is_vr_afw = vr->is_using_afw();
 
     if (vr->is_using_multipass()) {
         auto output_layer = sdk::renderer::get_output_layer();
@@ -889,11 +962,18 @@ void TemporalUpscaler::on_scene_layer_update(sdk::renderer::layer::Scene* layer,
         if (scene_info == nullptr) {
             return;
         }
+        if (vr_enabled && !is_vr_multipass) {
+            auto evaluate_index_other = (evaluate_index + 1) % 2;
+            this->m_old_projection_matrix[evaluate_index_other][i][2][0] += x;
+            this->m_old_projection_matrix[evaluate_index_other][i][2][1] += y;
 
-        this->m_old_projection_matrix[evaluate_index][i][2][0] += x;
-        this->m_old_projection_matrix[evaluate_index][i][2][1] += y;
+            scene_info->old_view_projection_matrix = this->m_old_projection_matrix[evaluate_index_other][i] * this->m_old_view_matrix[evaluate_index_other][i];
+        } else {
+            this->m_old_projection_matrix[evaluate_index][i][2][0] += x;
+            this->m_old_projection_matrix[evaluate_index][i][2][1] += y;
 
-        scene_info->old_view_projection_matrix = this->m_old_projection_matrix[evaluate_index][i] * this->m_old_view_matrix[evaluate_index][i];
+            scene_info->old_view_projection_matrix = this->m_old_projection_matrix[evaluate_index][i] * this->m_old_view_matrix[evaluate_index][i];
+        }
 
         this->m_old_projection_matrix[evaluate_index][i] = scene_info->projection_matrix;
         this->m_old_view_matrix[evaluate_index][i] = scene_info->view_matrix;

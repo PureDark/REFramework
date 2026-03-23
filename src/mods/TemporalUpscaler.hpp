@@ -8,6 +8,7 @@
 #include "vr/d3d12/TextureContext.hpp"
 #include "Mod.hpp"
 
+#include "PDPerfPlugin.h"
 #include "PDAFWPlugin.h"
 
 namespace sdk {
@@ -127,6 +128,21 @@ private:
     std::vector<sdk::renderer::RenderResource*> m_queued_release_resources{};
     std::recursive_mutex m_queued_release_resources_mutex{};
 
+    DLSS_Hint_Render_Preset get_dlss_preset() {
+        switch (m_dlss_preset->value()) { 
+        case 0:
+            return Preset_F;
+        case 1:
+            return Preset_J;
+        case 2:
+            return Preset_K;
+        case 3:
+            return Preset_L;
+        case 4:
+            return Preset_M;
+        }
+    }
+
     bool m_first_frame_finished{false};
     bool m_initialized{false};
     bool m_is_d3d12{false};
@@ -234,11 +250,23 @@ private:
         }, (int32_t)PDPerfQualityLevel::Balanced) 
     };
 
+    const ModCombo::Ptr m_dlss_preset{ 
+        ModCombo::create(generate_name("DLSSPreset"),
+        {
+            "Preset F",
+            "Preset J",
+            "Preset K",
+            "Preset L",
+            "Preset M"
+        }, (int32_t)DLSS_Hint_Render_Preset::Preset_M) 
+    };
+
      ValueList m_options{
         *m_enabled,
         *m_sharpness,
         *m_sharpness_amount,
         *m_use_native_resolution,
-        *m_upscale_quality
+        *m_upscale_quality,
+        *m_dlss_preset
      };
 };

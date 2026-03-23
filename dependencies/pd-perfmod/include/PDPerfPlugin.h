@@ -23,14 +23,29 @@ enum PerfQualityLevel
 };
 */
 
+typedef enum DLSS_Hint_Render_Preset {
+    Preset_Default, // default behavior, may or may not change after OTA
+    Preset_A,
+    Preset_B,
+    Preset_C,
+    Preset_D,
+    Preset_E,
+    Preset_F,
+    Preset_J,
+    Preset_K,
+    Preset_L,
+    Preset_M,
+    Preset_N,
+    Preset_O,
+} DLSS_Hint_Render_Preset;
+
 typedef struct
 {
 	unsigned int X;
 	unsigned int Y;
 } Coordinates;
 
-typedef struct
-{
+struct InitParams {
 	int  id;
 	int  upscaleMethod;
 	int  qualityLevel;
@@ -43,7 +58,13 @@ typedef struct
 	bool motionVetorsJittered;
 	bool enableSharpening;
 	bool enableAutoExposure;
-} InitParams;
+	DLSS_Hint_Render_Preset preset = Preset_Default;
+	bool enableAsyncComputeFG = false;
+	bool highResMotionVectors = false;
+	void* presentCallback = nullptr;
+	void* cmdList = nullptr;
+    void* reserve[4] = { nullptr};
+} ;
 
 struct UpscaleParams
 {
@@ -70,6 +91,13 @@ struct UpscaleParams
 	Coordinates colorBase = { 0, 0 };
 	Coordinates depthBase = { 0, 0 };
 	Coordinates motionBase = { 0, 0 };
+	void* uiTex = nullptr;
+	void* hudless = nullptr;
+	unsigned int frameIndex = 0;
+	bool usePremulAlpha = false;
+	int  FGFrames = 1;
+	void* exposure = nullptr;
+    void* reserve[4] = { nullptr};
 };
 
 /* If you are calling EvaluateUpscale more than once per frame, set execute to true only at last call*/

@@ -84,7 +84,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     EyeIndex nEye = (frame_count % 2 == vr->m_left_eye_interval) ? EyeLeft : EyeRight;
     EyeIndex nEyeOther = (frame_count % 2 == vr->m_left_eye_interval) ? EyeRight : EyeLeft;
     FrameWarpEvaluateParams params;
-    if (vr->is_using_afr() && vr->depthTex && vr->motionVectorsTex && vr->m_framewarp_mode->value() > 0) {
+    if (vr->is_using_afw() && vr->depthTex && vr->motionVectorsTex && vr->m_framewarp_mode->value() > 0) {
         static TextureDesc texDesc[4];
         int texIndex = m_backbuffer_is_8bit ? backbuffer_index : 3;
         if (texDesc[texIndex].pTexture != eye_texture.Get()) {
@@ -135,7 +135,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             params.IsHudlessColor = true;
         }
         auto colorDesc = s_CurrentEyeFrameBuffer.color.pTexture->GetDesc();
-        params.IsMotionVectorsOtherEye = false;
+        params.IsMotionVectorsOtherEye = vr->debug2;
         params.InMotionScale[0] = (float)colorDesc.Width / 2.0f;
         params.InMotionScale[1] = -1.0f * ((float)colorDesc.Height / 2.0f);
         params.Mode = (FrameWarpMode)vr->m_framewarp_mode->value();
@@ -175,7 +175,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         // OpenXR texture
         if (runtime->is_openxr() && vr->m_openxr->ready()) {
             m_openxr.copy(0, eye_texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT);
-            if (vr->is_using_afr()) {
+            if (vr->is_using_afw()) {
                 m_openxr.copy(1, m_openvr.get_right().texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT);
             }
         }
@@ -199,7 +199,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 spdlog::error("[VR] VRCompositor failed to submit left eye: {}", (int)e);
                 return e;
             }
-            if (vr->is_using_afr()) {
+            if (vr->is_using_afw()) {
                 //auto& ctx = m_openvr.acquire_right();
                 //if (params.OutEyeFrameBuffer && vr->m_framewarp_mode->value() > 0) {
                 //    ctx.commands.copy((ID3D12Resource*)params.OutEyeFrameBuffer->color.pTexture, ctx.texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -292,7 +292,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 vr->m_multipass.eye_textures[1].Reset();
             } else {
                 m_openxr.copy(1, eye_texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT);
-                if (vr->is_using_afr()) {
+                if (vr->is_using_afw()) {
                     m_openxr.copy(0, m_openvr.get_left().texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT);
                 }
             }
@@ -355,7 +355,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             } else {
                 vr->m_submitted = true;
             }
-            if (vr->is_using_afr()) {
+            if (vr->is_using_afw()) {
                 //auto& ctx = m_openvr.acquire_left();
                 //if (params.OutEyeFrameBuffer && vr->m_framewarp_mode->value() > 0) {
                 //    ctx.commands.copy((ID3D12Resource*)params.OutEyeFrameBuffer->color.pTexture, ctx.texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -380,7 +380,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
 
     vr::EVRCompositorError e = vr::EVRCompositorError::VRCompositorError_None;
 
-    if (frame_count % 2 == vr->m_right_eye_interval || is_multipass || vr->is_using_afr()) {
+    if (frame_count % 2 == vr->m_right_eye_interval || is_multipass || vr->is_using_afw()) {
         ////////////////////////////////////////////////////////////////////////////////
         // OpenXR start ////////////////////////////////////////////////////////////////
         ////////////////////////////////////////////////////////////////////////////////
@@ -426,7 +426,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         }
 
         // Allows the desktop window to be recorded.
-        if (vr->m_desktop_fix->value() && frame_count % 2 == vr->m_right_eye_interval) {
+        if (vr->m_desktop_fix->value() && (frame_count % 2 == vr->m_right_eye_interval)) {
             if (runtime->ready() && m_prev_backbuffer != backbuffer && m_prev_backbuffer != nullptr) {
                 auto& copier = m_generic_copiers[frame_count % m_generic_copiers.size()];
                 copier.wait(INFINITE);

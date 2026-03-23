@@ -2568,10 +2568,34 @@ glm::mat4 to_reverseZ(const glm::mat4& proj) {
     return transformMat * proj;
 }
 
+void VR::update_camera_data() {
+    if (m_camera_data_update_frame_count != m_render_frame_count) {
+        m_camera_data_update_frame_count = m_render_frame_count;
+
+        EyeIndex nEye = (m_render_frame_count % 2 == m_left_eye_interval) ? EyeLeft : EyeRight;
+        glm::mat4 matEyePosRender = get_current_eye_transform(false);
+        glm::mat4 matEyePosProj = get_current_eye_transform(true);
+
+        cameraData[nEye].camWorldToViewMatrix = glm::inverse(m_original_camera_matrix);
+        cameraData[nEye].camViewToWorldMatrix = m_original_camera_matrix;
+        cameraData[nEye].destViewToWorldMatrix = m_render_camera_matrix * matEyePosProj;
+        cameraData[nEye].srcViewToWorldMatrix = m_render_camera_matrix * matEyePosRender;
+        cameraData[nEye].destWorldToViewMatrix = glm::inverse(cameraData[nEye].destViewToWorldMatrix);
+        cameraData[nEye].srcWorldToViewMatrix = glm::inverse(cameraData[nEye].srcViewToWorldMatrix);
+
+        cameraData[nEye].destViewToClipMatrix = to_reverseZ(get_current_projection_matrix(true));
+        cameraData[nEye].destClipToViewMatrix = glm::inverse(cameraData[nEye].destViewToClipMatrix);
+        cameraData[nEye].srcViewToClipMatrix = to_reverseZ(get_current_projection_matrix(false));
+        cameraData[nEye].srcClipToViewMatrix = glm::inverse(cameraData[nEye].srcViewToClipMatrix);
+        cameraData[nEye].camViewToClipMatrix = cameraData[nEye].srcViewToClipMatrix;
+        cameraData[nEye].camClipToViewMatrix = cameraData[nEye].srcClipToViewMatrix;
+    }
+}
+
 void VR::on_present() {
     REF_PROFILE_FUNCTION();
 
-    if (is_using_multipass() || is_using_afr() || (m_render_frame_count + 1) % 2 == m_left_eye_interval) {
+    if (is_using_multipass() || is_using_afw() || (m_render_frame_count + 1) % 2 == m_left_eye_interval) {
         ResetEvent(m_present_finished_event);
     }
 
@@ -2655,8 +2679,8 @@ void VR::on_present() {
         btn7 = false;
         //m_use_afr->toggle();
         int32_t& value = m_rendering_technique->value();
-        value = (value + 2) % 4;
-        if (value == SEQUENTIAL_FRAME || value == 3)
+        value = (value + 1) % 4;
+        if (value == SEQUENTIAL_FRAME || value == ALTERNATING)
             value = MULTIPASS;
     }
     static bool btn8 = false;
@@ -2675,25 +2699,7 @@ void VR::on_present() {
         m_enable_ui_fix->toggle();
     }
 
-    EyeIndex nEye = (m_render_frame_count % 2 == m_left_eye_interval) ? EyeLeft : EyeRight;
-    EyeIndex nEyeOther = (m_render_frame_count % 2 == m_left_eye_interval) ? EyeRight : EyeLeft;
-
-    glm::mat4 matEyePosRender = get_current_eye_transform(false);
-    glm::mat4 matEyePosProj = get_current_eye_transform(true);
-
-    cameraData[nEye].camWorldToViewMatrix = glm::inverse(m_original_camera_matrix);
-    cameraData[nEye].camViewToWorldMatrix = m_original_camera_matrix;
-    cameraData[nEye].destViewToWorldMatrix = m_render_camera_matrix * matEyePosProj;
-    cameraData[nEye].srcViewToWorldMatrix = m_render_camera_matrix * matEyePosRender;
-    cameraData[nEye].destWorldToViewMatrix = glm::inverse(cameraData[nEye].destViewToWorldMatrix);
-    cameraData[nEye].srcWorldToViewMatrix = glm::inverse(cameraData[nEye].srcViewToWorldMatrix);
-
-    cameraData[nEye].destViewToClipMatrix = to_reverseZ(get_current_projection_matrix(true));
-    cameraData[nEye].destClipToViewMatrix = glm::inverse(cameraData[nEye].destViewToClipMatrix);
-    cameraData[nEye].srcViewToClipMatrix = to_reverseZ(get_current_projection_matrix(false));
-    cameraData[nEye].srcClipToViewMatrix = glm::inverse(cameraData[nEye].srcViewToClipMatrix);
-    cameraData[nEye].camViewToClipMatrix = cameraData[nEye].srcViewToClipMatrix;
-    cameraData[nEye].camClipToViewMatrix = cameraData[nEye].srcClipToViewMatrix;
+    update_camera_data();
 
     const auto renderer = g_framework->get_renderer_type();
     vr::EVRCompositorError e = vr::EVRCompositorError::VRCompositorError_None;
@@ -2734,7 +2740,7 @@ void VR::on_present() {
         m_submitted = false;
     }
 
-    if (is_using_multipass() || is_using_afr() || (m_render_frame_count + 1) % 2 == m_left_eye_interval) {
+    if (is_using_multipass() || is_using_afw() || (m_render_frame_count + 1) % 2 == m_left_eye_interval) {
         SetEvent(m_present_finished_event);
     }
 }
@@ -2754,7 +2760,7 @@ void VR::on_post_present() {
         m_d3d12.on_post_present(this);
     }
     
-    if (is_using_multipass() || is_using_afr() || (m_render_frame_count + 1) % 2 == m_left_eye_interval) {
+    if (is_using_multipass() || is_using_afw() || (m_render_frame_count + 1) % 2 == m_left_eye_interval) {
         runtime->consume_events(nullptr);
     }
 
@@ -3465,11 +3471,11 @@ void VR::on_pre_begin_rendering(void* entry) {
     }
     
     // Call WaitGetPoses
-    if (is_using_multipass() || is_using_afr() || (!inside_on_end && m_frame_count % 2 == m_left_eye_interval)) {
+    if (is_using_multipass() || is_using_afw() || (!inside_on_end && m_frame_count % 2 == m_left_eye_interval)) {
         update_hmd_state();
     }
 
-    const auto should_update_camera = (m_frame_count % 2 == m_left_eye_interval) || is_using_afr() || is_using_multipass();
+    const auto should_update_camera = (m_frame_count % 2 == m_left_eye_interval)|| is_using_afr() || is_using_afw() || is_using_multipass();
 
     if (!inside_on_end && should_update_camera) {
         update_camera();
@@ -3495,7 +3501,7 @@ void VR::on_pre_end_rendering(void* entry) {
         return;
     }
 
-    if (runtime->ready() && (m_frame_count % 2 == m_left_eye_interval || is_using_multipass() || is_using_afr())) {
+    if (runtime->ready() && (m_frame_count % 2 == m_left_eye_interval || is_using_multipass() || is_using_afw())) {
         const auto stage = runtime->get_synchronize_stage();
 
         if (stage == VRRuntime::SynchronizeStage::LATE && runtime->synchronize_frame() == VRRuntime::Error::SUCCESS) {
@@ -3557,8 +3563,8 @@ void VR::on_end_rendering(void* entry) {
         }
     }
 
-    if (is_using_afr() || inside_on_end) {
-        if (is_using_afr()) {
+    if (is_using_afr() || is_using_afw() || inside_on_end) {
+        if (is_using_afr() || is_using_afw()) {
             restore_camera();
             m_in_render = false;
         }
@@ -3791,7 +3797,7 @@ void VR::on_wait_rendering(void* entry) {
     // to be signaled
     // only on the left eye interval because we need the right eye
     // to start render work as soon as possible
-    if (((m_frame_count + 1) % 2) == m_left_eye_interval || is_using_multipass() || is_using_afr()) {
+    if (((m_frame_count + 1) % 2) == m_left_eye_interval || is_using_multipass() || is_using_afw()) {
         if (WaitForSingleObject(m_present_finished_event, 333) == WAIT_TIMEOUT) {
             timed_out = true;
         }
@@ -4354,7 +4360,7 @@ void VR::on_draw_ui() {
     ImGui::Separator();
 
     m_rendering_technique->draw("Rendering Technique");
-    if (m_rendering_technique->value() == ALTERNATING) {
+    if (m_rendering_technique->value() == ALTERNATE_FRAME_WARPING) {
         m_clear_before_framewarp->draw("Clear Before Framewarp");
         m_framewarp_debug->draw("Debug Framewarp");
         m_enable_ui_fix->draw("Enable Framewarp UI Fix");
