@@ -96,16 +96,20 @@ public:
     };
 
     enum PDUpscaleType {
-        DLSS,
-        FSR2,
-        XESS
+		DLSS,
+		FSR2,
+		XESS,
+		FSR3,
+		FSR4
     };
 
     enum PDPerfQualityLevel {
-        Performance,
-        Balanced,
-        Quality,
-        UltraPerformance
+		Performance,
+		Balanced,
+		Quality,
+		UltraPerformance,
+		UltraQuality,
+		Native
     };
 
 
@@ -129,16 +133,18 @@ private:
     std::recursive_mutex m_queued_release_resources_mutex{};
 
     DLSS_Hint_Render_Preset get_dlss_preset() {
-        switch (m_dlss_preset->value()) { 
+        switch (m_dlss_preset->value()) {
         case 0:
-            return Preset_F;
+            return Preset_Default;
         case 1:
-            return Preset_J;
+            return Preset_F;
         case 2:
-            return Preset_K;
+            return Preset_J;
         case 3:
-            return Preset_L;
+            return Preset_K;
         case 4:
+            return Preset_L;
+        case 5:
             return Preset_M;
         }
     }
@@ -246,19 +252,22 @@ private:
             "Performance",
             "Balanced",
             "Quality",
-            "Ultra Performance"
-        }, (int32_t)PDPerfQualityLevel::Balanced) 
+            "Ultra Performance",
+            "Ultra Quality",
+            "Native"
+        }, (int32_t)PDPerfQualityLevel::Quality) 
     };
 
     const ModCombo::Ptr m_dlss_preset{ 
         ModCombo::create(generate_name("DLSSPreset"),
-        {
+        {   
+            "Default",
             "Preset F",
             "Preset J",
             "Preset K",
             "Preset L",
             "Preset M"
-        }, (int32_t)DLSS_Hint_Render_Preset::Preset_M) 
+        }, (int32_t)0) 
     };
 
      ValueList m_options{

@@ -135,7 +135,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             params.IsHudlessColor = true;
         }
         auto colorDesc = s_CurrentEyeFrameBuffer.color.pTexture->GetDesc();
-        params.IsMotionVectorsOtherEye = vr->debug2;
+        params.IsMotionVectorsOtherEye = true;
         params.InMotionScale[0] = (float)colorDesc.Width / 2.0f;
         params.InMotionScale[1] = -1.0f * ((float)colorDesc.Height / 2.0f);
         params.Mode = (FrameWarpMode)vr->m_framewarp_mode->value();
