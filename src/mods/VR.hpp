@@ -40,7 +40,7 @@ public:
     ID3D12Resource* uiBufferTex = NULL;
     D3D12RendererAPI* d3d12Renderer = nullptr;
     
-    bool enableMVCorrection = false;
+    bool enableMVCorrection = true;
     int m_camera_data_update_frame_count{};
     void update_camera_data();
     CameraData& get_camera_data(int index) { return cameraData[index]; };

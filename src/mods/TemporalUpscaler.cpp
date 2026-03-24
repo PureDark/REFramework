@@ -479,86 +479,6 @@ void TemporalUpscaler::on_early_present() {
                 ID3D12Resource* motion_vectors = state.motion_vectors.Get();
                 ID3D12Resource* depth = state.depth.Get();
 
-                if (!is_vr_multipass && m_afw_backend_loaded && d3d12Renderer && cmdList && VR::get()->enableMVCorrection) {
-                    static TextureDesc motionVectorsDesc;
-                    if (motionVectorsDesc.pTexture != motion_vectors) {
-                        motionVectorsDesc.pTexture = motion_vectors;
-                        motionVectorsDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-                        motionVectorsDesc.srvPos = vr->d3d12Renderer->CreateSRV(motionVectorsDesc.pTexture, motionVectorsDesc.srvPos);
-                        motionVectorsDesc.shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(motionVectorsDesc.srvPos);
-                    }
-                    static TextureDesc depthDesc;
-                    if (depthDesc.pTexture != depth) {
-                        depthDesc.pTexture = depth;
-                        depthDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-                        depthDesc.srvPos = vr->d3d12Renderer->CreateSRV(depthDesc.pTexture, depthDesc.srvPos);
-                        depthDesc.shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(depthDesc.srvPos);
-                    }
-
-                    EyeIndex nEye = evaluate_index == 0 ? EyeLeft : EyeRight;
-                    EyeIndex nEyeOther = evaluate_index == 0 ? EyeRight : EyeLeft;
-
-                    
-                    CameraData& cameraDataEyePrev = vr->get_camera_data(nEye);
-                    CameraData& cameraDataEyeOther = vr->get_camera_data(nEyeOther);
-
-                    // dest -> current eye previous frame (rendered)
-                    // src -> current eye current frame (rendered)
-                    // cam -> other eye previous farme (rendered)
-                    CameraData cameraData;
-
-                    //cameraData.camViewToWorldMatrix = cameraDataEyeOther.srcViewToWorldMatrix;
-                    //cameraData.camWorldToViewMatrix = cameraDataEyeOther.srcWorldToViewMatrix;
-                    //cameraData.camViewToClipMatrix = cameraDataEyeOther.srcViewToClipMatrix;
-                    //cameraData.camClipToViewMatrix = cameraDataEyeOther.srcClipToViewMatrix;
-
-                    //cameraData.destViewToWorldMatrix = cameraDataEyePrev.srcViewToWorldMatrix;
-                    //cameraData.destWorldToViewMatrix = cameraDataEyePrev.srcWorldToViewMatrix;
-                    //cameraData.destViewToClipMatrix = cameraDataEyePrev.srcViewToClipMatrix;
-                    //cameraData.destClipToViewMatrix = cameraDataEyePrev.srcClipToViewMatrix;
-
-                    //vr->update_camera_data();
-                    //CameraData& cameraDataEyeCurr = vr->get_camera_data(nEye);
-                    //cameraData.srcViewToWorldMatrix = cameraDataEyeCurr.srcViewToWorldMatrix;
-                    //cameraData.srcWorldToViewMatrix = cameraDataEyeCurr.srcWorldToViewMatrix;
-                    //cameraData.srcViewToClipMatrix = cameraDataEyeCurr.srcViewToClipMatrix;
-                    //cameraData.srcClipToViewMatrix = cameraDataEyeCurr.srcClipToViewMatrix;
-                    const auto w = (float)get_render_width();
-                    const auto h = (float)get_render_height();
-                    float x = m_jitter_scale[0] * (-m_jitter_offsets[nEye][0] / w);
-                    float y = m_jitter_scale[1] * (-m_jitter_offsets[nEye][1] / h);
-
-                    cameraData.destWorldToViewMatrix = this->m_eye_view_matrix_prev[nEye];
-                    cameraData.destViewToClipMatrix = this->m_eye_projection_matrix_prev[nEye];
-                    cameraData.destViewToClipMatrix[2][0] += x;
-                    cameraData.destViewToClipMatrix[2][1] += y;
-                    cameraData.destViewToWorldMatrix = glm::inverse(cameraData.destWorldToViewMatrix);
-                    cameraData.destClipToViewMatrix = glm::inverse(cameraData.destViewToClipMatrix);
-
-                    cameraData.srcWorldToViewMatrix = this->m_eye_view_matrix[nEye];
-                    cameraData.srcViewToClipMatrix = this->m_eye_projection_matrix[nEye];
-                    cameraData.srcViewToClipMatrix[2][0] += x;
-                    cameraData.srcViewToClipMatrix[2][1] += y;
-                    cameraData.srcViewToWorldMatrix = glm::inverse(cameraData.srcWorldToViewMatrix);
-                    cameraData.srcClipToViewMatrix = glm::inverse(cameraData.srcViewToClipMatrix);
-
-                    cameraData.camWorldToViewMatrix = this->m_eye_view_matrix[nEyeOther];
-                    cameraData.camViewToClipMatrix = this->m_eye_projection_matrix[nEyeOther];
-                    cameraData.camViewToClipMatrix[2][0] += x;
-                    cameraData.camViewToClipMatrix[2][1] += y;
-                    cameraData.camViewToWorldMatrix = glm::inverse(cameraData.camWorldToViewMatrix);
-                    cameraData.camClipToViewMatrix = glm::inverse(cameraData.camViewToClipMatrix);
-
-                    CorrectMotionVectorsParams mvparams;
-                    mvparams.inMotionVectors = &motionVectorsDesc;
-                    mvparams.inDepth = &depthDesc;
-                    mvparams.cameraData = &cameraData;
-                    mvparams.InMotionScale[0] = m_motion_scale[0];
-                    mvparams.InMotionScale[1] = m_motion_scale[1];
-                    auto correctedMV = d3d12Renderer->CorrectMotionVectors(cmdList, mvparams);
-                    motion_vectors = correctedMV.pTexture;
-                }
-
                 UpscaleParams params{};
                 params.id = (int)evaluate_id;
                 params.execute = true;
@@ -1005,29 +925,16 @@ void TemporalUpscaler::on_scene_layer_update(sdk::renderer::layer::Scene* layer,
         if (scene_info == nullptr) {
             return;
         }
-        if (vr_enabled && !is_vr_multipass && vr->enableMVCorrection) {
-            auto evaluate_index_other = (evaluate_index + 1) % 2;
-            this->m_old_projection_matrix[evaluate_index_other][i][2][0] += x;
-            this->m_old_projection_matrix[evaluate_index_other][i][2][1] += y;
 
-            scene_info->old_view_projection_matrix = this->m_old_projection_matrix[evaluate_index_other][i] * this->m_old_view_matrix[evaluate_index_other][i];
+        this->m_old_projection_matrix[evaluate_index][i][2][0] += x;
+        this->m_old_projection_matrix[evaluate_index][i][2][1] += y;
 
-            if (i == 0) {
-                this->m_eye_projection_matrix_prev[evaluate_index] = this->m_eye_projection_matrix[evaluate_index];
-                this->m_eye_view_matrix_prev[evaluate_index] = this->m_eye_view_matrix[evaluate_index];
-                this->m_eye_projection_matrix[evaluate_index] = scene_info->projection_matrix;
-                this->m_eye_view_matrix[evaluate_index] = scene_info->view_matrix;
-            }
-        } else {
-            this->m_old_projection_matrix[evaluate_index][i][2][0] += x;
-            this->m_old_projection_matrix[evaluate_index][i][2][1] += y;
-
-            scene_info->old_view_projection_matrix = this->m_old_projection_matrix[evaluate_index][i] * this->m_old_view_matrix[evaluate_index][i];
-        }
+        this->m_old_view_projection_matrix[evaluate_index][i] = scene_info->old_view_projection_matrix;
+        scene_info->old_view_projection_matrix = this->m_old_projection_matrix[evaluate_index][i] * this->m_old_view_matrix[evaluate_index][i];
 
 
-        this->m_old_projection_matrix[evaluate_index][i] = scene_info->projection_matrix;
-        this->m_old_view_matrix[evaluate_index][i] = scene_info->view_matrix;
+        //this->m_old_projection_matrix[evaluate_index][i] = scene_info->projection_matrix;
+        //this->m_old_view_matrix[evaluate_index][i] = scene_info->view_matrix;
 
         scene_info->projection_matrix[2][0] += x;
         scene_info->projection_matrix[2][1] += y;
@@ -1046,8 +953,121 @@ void TemporalUpscaler::on_scene_layer_update(sdk::renderer::layer::Scene* layer,
     add_jitter(5, z_prepass_scene_info);
 }
 
+
+void TemporalUpscaler::on_scene_layer_draw(sdk::renderer::layer::Scene* layer, void* render_context) {
+    if (!ready()) {
+        return;
+    }
+
+    auto& vr = VR::get();
+
+    // Other layers appear when using scopes or mirrors are displayed
+    if (!layer->is_fully_rendered() || !layer->has_main_camera()) {
+        return;
+    }
+
+    // Multiple layers are not supported when not using VR
+    if (!vr->is_hmd_active() || !vr->is_using_multipass()) {
+        if (layer != m_eye_states[0].scene_layer) {
+            return;
+        }
+    }
+
+    if (vr->is_hmd_active() && vr->is_using_multipass()) {
+        if (layer != m_eye_states[0].scene_layer && layer != m_eye_states[1].scene_layer) {
+            return;
+        }
+    }
+
+    auto scene_info = layer->get_scene_info();
+    auto depth_distortion_scene_info = layer->get_depth_distortion_scene_info();
+    auto filter_scene_info = layer->get_filter_scene_info();
+    auto jitter_disable_scene_info = layer->get_jitter_disable_scene_info();
+    auto jitter_disable_post_scene_info = layer->get_jitter_disable_post_scene_info();
+    auto z_prepass_scene_info = layer->get_z_prepass_scene_info();
+
+    uint32_t vr_index = 0;
+
+    const auto vr_enabled = vr->is_hmd_active();
+    const auto is_vr_multipass = vr_enabled && vr->is_using_multipass();
+    const auto is_vr_afw = vr->is_using_afw();
+
+    if (vr->is_using_multipass()) {
+        auto output_layer = sdk::renderer::get_output_layer();
+
+        if (output_layer != nullptr) {
+            const auto scenes = vr->get_camera_duplicator().get_relevant_scene_layers();
+
+            if (!scenes.empty()) {
+                if (layer == m_eye_states[0].scene_layer) {
+                    vr_index = 0;
+                } else {
+                    vr_index = 1;
+                }
+            }
+        }
+    } else if (vr_enabled) {
+        vr_index = vr->get_game_frame_count();
+    }
+
+    const auto evaluate_id = get_evaluate_id(vr_enabled ? vr_index : 0);
+    const auto evaluate_index = evaluate_id - 1;
+
+    const auto phase = GetJitterPhaseCount(evaluate_id);
+    const auto w = (float)get_render_width();
+    const auto h = (float)get_render_height();
+
+    float x = 0.0f;
+    float y = 0.0f;
+
+    if (m_jitter) {
+        x = m_jitter_scale[0] * (-m_jitter_offsets[evaluate_index][0] / w);
+        y = m_jitter_scale[1] * (-m_jitter_offsets[evaluate_index][1] / h);
+    }
+
+    auto remove_jitter = [&](int32_t i, sdk::renderer::SceneInfo* scene_info) {
+        if (scene_info == nullptr) {
+            return;
+        }
+
+        this->m_old_projection_matrix[evaluate_index][i][2][0] -= x;
+        this->m_old_projection_matrix[evaluate_index][i][2][1] -= y;
+
+        if (vr_enabled && !is_vr_multipass && vr->enableMVCorrection) {
+            scene_info->old_view_projection_matrix = this->m_old_view_projection_matrix[evaluate_index][i];
+        } else {
+            scene_info->old_view_projection_matrix = this->m_old_projection_matrix[evaluate_index][i] * this->m_old_view_matrix[evaluate_index][i];
+        }
+
+        scene_info->projection_matrix[2][0] -= x;
+        scene_info->projection_matrix[2][1] -= y;
+
+        this->m_old_projection_matrix[evaluate_index][i] = scene_info->projection_matrix;
+        this->m_old_view_matrix[evaluate_index][i] = scene_info->view_matrix;
+
+        scene_info->inverse_projection_matrix = glm::inverse(scene_info->projection_matrix);
+
+        scene_info->view_projection_matrix = scene_info->projection_matrix * scene_info->view_matrix;
+        scene_info->inverse_view_projection_matrix = glm::inverse(scene_info->view_projection_matrix);
+    };
+
+    remove_jitter(0, scene_info);
+    remove_jitter(1, depth_distortion_scene_info);
+    remove_jitter(2, filter_scene_info);
+    remove_jitter(3, jitter_disable_scene_info);
+    remove_jitter(4, jitter_disable_post_scene_info);
+    remove_jitter(5, z_prepass_scene_info);
+}
+
 bool TemporalUpscaler::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_ctx) {
-    if (m_enable_ui_fix->value() && !VR::get()->is_using_multipass()) {
+
+    if (!ready()) {
+        return true;
+    }
+
+    auto& vr = VR::get();
+
+    if (m_enable_ui_fix->value() && !vr->is_using_multipass()) {
         auto uiTarget = layer->get_ui_target();
         auto rtv = uiTarget->get_rtv(0);
         if (rtv != nullptr) {
