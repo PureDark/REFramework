@@ -80,19 +80,22 @@ std::optional<std::string> TemporalUpscaler::on_initialize() {
     return Mod::on_initialize();
 }
 std::optional<std::string> TemporalUpscaler::on_initialize_d3d_thread() try {
-
-    // #############################
-    // #Frame Warp Module Start
-    // #############################
-    auto& hook = g_framework->get_d3d12_hook();
-    hook->get_command_queue();
-    pd::DeviceParams params{};
-    params.d3d12Device = hook->get_device();
-    params.d3d12Queue = hook->get_command_queue();
-    d3d12Renderer = InitDevice(params);
-    // #############################
-    // #Frame Warp Module End
-    // #############################
+    m_afw_backend_loaded = GetModuleHandleA("PDAFWPlugin.dll") != nullptr || 
+        utility::load_module_from_current_directory(L"PDAFWPlugin.dll") != nullptr;
+    if (g_framework->is_dx12() && m_afw_backend_loaded) {
+        // #############################
+        // #Frame Warp Module Start
+        // #############################
+        auto& hook = g_framework->get_d3d12_hook();
+        hook->get_command_queue();
+        pd::DeviceParams params{};
+        params.d3d12Device = hook->get_device();
+        params.d3d12Queue = hook->get_command_queue();
+        d3d12Renderer = InitDevice(params);
+        // #############################
+        // #Frame Warp Module End
+        // #############################
+    }
 
     // all OK
     return Mod::on_initialize();
@@ -148,6 +151,10 @@ void TemporalUpscaler::on_draw_ui() {
     //if (ImGui::Checkbox("Use Native Res (DLAA)", &m_use_native_resolution)) {
     if (m_use_native_resolution->draw("Use Native Res (DLAA)")) {
         update_motion_scale();
+    }
+
+    if (m_is_d3d12) {
+        m_enable_ui_fix->draw("Enable UI Fix");
     }
 
     //if (ImGui::Checkbox("Sharpness", &m_sharpness)) {
@@ -231,53 +238,6 @@ void TemporalUpscaler::on_draw_ui() {
 void TemporalUpscaler::on_early_present() {
     m_rendering = true;
 
-    auto& hook0 = g_framework->get_d3d12_hook();
-    auto swapchain0 = hook0->get_swap_chain();
-    auto device0 = hook0->get_device();
-
-    // get back buffer
-    ComPtr<ID3D12Resource> backbuffer{};
-
-    const auto backbuffer_index = swapchain0->GetCurrentBackBufferIndex();
-
-    if (FAILED(swapchain0->GetBuffer(backbuffer_index, IID_PPV_ARGS(&backbuffer)))) {
-        spdlog::error("[VR] Failed to get back buffer");
-    }
-
-    static bool debug1 = false;
-    static bool debug2 = false;
-    static TextureDesc hudlessDesc{};
-    static TextureDesc finalColorDesc{};
-    static TextureDesc backbufferDesc[3]{};
-    static TextureDesc extractedUI{};
-    if (hudlessTex && debug1 && VR::get()->is_using_afw()) {
-        if (hudlessDesc.pTexture == NULL || hudlessDesc.pTexture != hudlessTex) {
-            hudlessDesc.pTexture = hudlessTex;
-            hudlessDesc.srvPos = d3d12Renderer->CreateSRV(hudlessDesc.pTexture, hudlessDesc.srvPos);
-            hudlessDesc.shaderResourceViewHandle = d3d12Renderer->GetGPUDescriptorHandle(hudlessDesc.srvPos);
-        }
-        if (finalColorDesc.pTexture == NULL || finalColorDesc.pTexture != finalColorTex) {
-            finalColorDesc.pTexture = finalColorTex;
-            finalColorDesc.srvPos = d3d12Renderer->CreateSRV(finalColorDesc.pTexture, finalColorDesc.srvPos);
-            finalColorDesc.shaderResourceViewHandle = d3d12Renderer->GetGPUDescriptorHandle(finalColorDesc.srvPos);
-        }
-        if (backbufferDesc[backbuffer_index].pTexture == NULL || backbufferDesc[backbuffer_index].pTexture != backbuffer.Get()) {
-            backbufferDesc[backbuffer_index].pTexture = backbuffer.Get();
-            backbufferDesc[backbuffer_index].renderTargetViewHandle = d3d12Renderer->GetRTV(backbufferDesc[backbuffer_index].pTexture);
-        }
-        auto cmdList = d3d12Renderer->BeginCommandList(backbuffer_index);
-        extractedUIBufferDesc = d3d12Renderer->ExtractUI(cmdList, hudlessDesc, finalColorDesc);
-        //TonemapParams params;
-        //params.fGamma = 1.10f;
-        //params.fLowerLimit = 0.024f;
-        //params.fUpperLimit = 0.982f;
-        //params.fConvertToLimit = 0.958f;
-        //d3d12Renderer->Tonemap(cmdList, extractedUI, backbufferDesc[backbuffer_index], params);
-        //d3d12Renderer->Copy(cmdList, backbufferDesc[backbuffer_index], extractedUI);
-        //d3d12Renderer->Copy(cmdList, backbufferDesc[backbuffer_index], extractedUI);
-        d3d12Renderer->EndCommandList(backbuffer_index);
-    }
-
     if (!m_backend_loaded) {
         return;
     }
@@ -310,9 +270,61 @@ void TemporalUpscaler::on_early_present() {
         auto device = hook->get_device();
         ComPtr<ID3D12Resource> backbuffer{};
 
-        if (FAILED(swapchain->GetBuffer(swapchain->GetCurrentBackBufferIndex(), IID_PPV_ARGS(&backbuffer)))) {
+        const auto backbuffer_index = swapchain->GetCurrentBackBufferIndex();
+
+        if (FAILED(swapchain->GetBuffer(backbuffer_index, IID_PPV_ARGS(&backbuffer)))) {
             spdlog::error("[TemporalUpscaler] Failed to get backbuffer (D3D12)");
             return;
+        }
+
+        static bool debug2 = true;
+        static bool btn5 = false;
+        if (GetAsyncKeyState(VK_NUMPAD5) < 0 && btn5 == false) {
+            btn5 = true;
+        }
+        if (GetAsyncKeyState(VK_NUMPAD5) == 0 && btn5 == true) {
+            btn5 = false;
+            m_enable_ui_fix->toggle();
+        }
+        static bool btn4 = false;
+        if (GetAsyncKeyState(VK_NUMPAD4) < 0 && btn4 == false) {
+            btn4 = true;
+        }
+        if (GetAsyncKeyState(VK_NUMPAD4) == 0 && btn4 == true) {
+            btn4 = false;
+            //debug2 = !debug2;
+            VR::get()->enableMVCorrection = !VR::get()->enableMVCorrection;
+        }
+        static TextureDesc hudlessDesc{};
+        static TextureDesc finalColorDesc{};
+        static TextureDesc backbufferDesc[3]{};
+        ID3D12GraphicsCommandList* cmdList = NULL;
+        if (m_afw_backend_loaded && d3d12Renderer) {
+            cmdList = d3d12Renderer->BeginCommandList(backbuffer_index);
+            if (hudlessTex && m_enable_ui_fix->value() && !VR::get()->is_using_multipass()) {
+                if (hudlessDesc.pTexture == NULL || hudlessDesc.pTexture != hudlessTex) {
+                    hudlessDesc.pTexture = hudlessTex;
+                    hudlessDesc.srvPos = d3d12Renderer->CreateSRV(hudlessDesc.pTexture, hudlessDesc.srvPos);
+                    hudlessDesc.shaderResourceViewHandle = d3d12Renderer->GetGPUDescriptorHandle(hudlessDesc.srvPos);
+                }
+                if (finalColorDesc.pTexture == NULL || finalColorDesc.pTexture != finalColorTex) {
+                    finalColorDesc.pTexture = finalColorTex;
+                    finalColorDesc.srvPos = d3d12Renderer->CreateSRV(finalColorDesc.pTexture, finalColorDesc.srvPos);
+                    finalColorDesc.shaderResourceViewHandle = d3d12Renderer->GetGPUDescriptorHandle(finalColorDesc.srvPos);
+                }
+                if (backbufferDesc[backbuffer_index].pTexture == NULL || backbufferDesc[backbuffer_index].pTexture != backbuffer.Get()) {
+                    backbufferDesc[backbuffer_index].pTexture = backbuffer.Get();
+                    backbufferDesc[backbuffer_index].renderTargetViewHandle =
+                        d3d12Renderer->GetRTV(backbufferDesc[backbuffer_index].pTexture);
+                }
+                extractedUIBufferDesc = d3d12Renderer->ExtractUI(cmdList, hudlessDesc, finalColorDesc);
+                // TonemapParams params;
+                // params.fGamma = 1.10f;
+                // params.fLowerLimit = 0.024f;
+                // params.fUpperLimit = 0.982f;
+                // params.fConvertToLimit = 0.958f;
+                // d3d12Renderer->Tonemap(cmdList, extractedUIBufferDesc, backbufferDesc[backbuffer_index], params);
+            }
         }
 
         auto bb_desc = backbuffer->GetDesc();
@@ -467,7 +479,7 @@ void TemporalUpscaler::on_early_present() {
                 ID3D12Resource* motion_vectors = state.motion_vectors.Get();
                 ID3D12Resource* depth = state.depth.Get();
 
-                if (!is_vr_multipass) {
+                if (!is_vr_multipass && m_afw_backend_loaded && d3d12Renderer && cmdList && VR::get()->enableMVCorrection) {
                     static TextureDesc motionVectorsDesc;
                     if (motionVectorsDesc.pTexture != motion_vectors) {
                         motionVectorsDesc.pTexture = motion_vectors;
@@ -490,29 +502,53 @@ void TemporalUpscaler::on_early_present() {
                     CameraData& cameraDataEyePrev = vr->get_camera_data(nEye);
                     CameraData& cameraDataEyeOther = vr->get_camera_data(nEyeOther);
 
+                    // dest -> current eye previous frame (rendered)
                     // src -> current eye current frame (rendered)
                     // cam -> other eye previous farme (rendered)
-                    // dest -> current eye previous frame (rendered)
                     CameraData cameraData;
 
-                    cameraData.camViewToWorldMatrix = cameraDataEyeOther.srcViewToWorldMatrix;
-                    cameraData.camWorldToViewMatrix = cameraDataEyeOther.srcWorldToViewMatrix;
-                    cameraData.camViewToClipMatrix = cameraDataEyeOther.srcViewToClipMatrix;
-                    cameraData.camClipToViewMatrix = cameraDataEyeOther.srcClipToViewMatrix;
+                    //cameraData.camViewToWorldMatrix = cameraDataEyeOther.srcViewToWorldMatrix;
+                    //cameraData.camWorldToViewMatrix = cameraDataEyeOther.srcWorldToViewMatrix;
+                    //cameraData.camViewToClipMatrix = cameraDataEyeOther.srcViewToClipMatrix;
+                    //cameraData.camClipToViewMatrix = cameraDataEyeOther.srcClipToViewMatrix;
 
-                    cameraData.destViewToWorldMatrix = cameraDataEyePrev.srcViewToWorldMatrix;
-                    cameraData.destWorldToViewMatrix = cameraDataEyePrev.srcWorldToViewMatrix;
-                    cameraData.destViewToClipMatrix = cameraDataEyePrev.srcViewToClipMatrix;
-                    cameraData.destClipToViewMatrix = cameraDataEyePrev.srcClipToViewMatrix;
+                    //cameraData.destViewToWorldMatrix = cameraDataEyePrev.srcViewToWorldMatrix;
+                    //cameraData.destWorldToViewMatrix = cameraDataEyePrev.srcWorldToViewMatrix;
+                    //cameraData.destViewToClipMatrix = cameraDataEyePrev.srcViewToClipMatrix;
+                    //cameraData.destClipToViewMatrix = cameraDataEyePrev.srcClipToViewMatrix;
 
-                    vr->update_camera_data();
-                    CameraData& cameraDataEyeCurr = vr->get_camera_data(nEye);
-                    cameraData.srcViewToWorldMatrix = cameraDataEyeCurr.srcViewToWorldMatrix;
-                    cameraData.srcWorldToViewMatrix = cameraDataEyeCurr.srcWorldToViewMatrix;
-                    cameraData.srcViewToClipMatrix = cameraDataEyeCurr.srcViewToClipMatrix;
-                    cameraData.srcClipToViewMatrix = cameraDataEyeCurr.srcClipToViewMatrix;
+                    //vr->update_camera_data();
+                    //CameraData& cameraDataEyeCurr = vr->get_camera_data(nEye);
+                    //cameraData.srcViewToWorldMatrix = cameraDataEyeCurr.srcViewToWorldMatrix;
+                    //cameraData.srcWorldToViewMatrix = cameraDataEyeCurr.srcWorldToViewMatrix;
+                    //cameraData.srcViewToClipMatrix = cameraDataEyeCurr.srcViewToClipMatrix;
+                    //cameraData.srcClipToViewMatrix = cameraDataEyeCurr.srcClipToViewMatrix;
+                    const auto w = (float)get_render_width();
+                    const auto h = (float)get_render_height();
+                    float x = m_jitter_scale[0] * (-m_jitter_offsets[nEye][0] / w);
+                    float y = m_jitter_scale[1] * (-m_jitter_offsets[nEye][1] / h);
 
-                    auto cmdList = d3d12Renderer->BeginCommandList(evaluate_index);
+                    cameraData.destWorldToViewMatrix = this->m_eye_view_matrix_prev[nEye];
+                    cameraData.destViewToClipMatrix = this->m_eye_projection_matrix_prev[nEye];
+                    cameraData.destViewToClipMatrix[2][0] += x;
+                    cameraData.destViewToClipMatrix[2][1] += y;
+                    cameraData.destViewToWorldMatrix = glm::inverse(cameraData.destWorldToViewMatrix);
+                    cameraData.destClipToViewMatrix = glm::inverse(cameraData.destViewToClipMatrix);
+
+                    cameraData.srcWorldToViewMatrix = this->m_eye_view_matrix[nEye];
+                    cameraData.srcViewToClipMatrix = this->m_eye_projection_matrix[nEye];
+                    cameraData.srcViewToClipMatrix[2][0] += x;
+                    cameraData.srcViewToClipMatrix[2][1] += y;
+                    cameraData.srcViewToWorldMatrix = glm::inverse(cameraData.srcWorldToViewMatrix);
+                    cameraData.srcClipToViewMatrix = glm::inverse(cameraData.srcViewToClipMatrix);
+
+                    cameraData.camWorldToViewMatrix = this->m_eye_view_matrix[nEyeOther];
+                    cameraData.camViewToClipMatrix = this->m_eye_projection_matrix[nEyeOther];
+                    cameraData.camViewToClipMatrix[2][0] += x;
+                    cameraData.camViewToClipMatrix[2][1] += y;
+                    cameraData.camViewToWorldMatrix = glm::inverse(cameraData.camWorldToViewMatrix);
+                    cameraData.camClipToViewMatrix = glm::inverse(cameraData.camViewToClipMatrix);
+
                     CorrectMotionVectorsParams mvparams;
                     mvparams.inMotionVectors = &motionVectorsDesc;
                     mvparams.inDepth = &depthDesc;
@@ -521,7 +557,6 @@ void TemporalUpscaler::on_early_present() {
                     mvparams.InMotionScale[1] = m_motion_scale[1];
                     auto correctedMV = d3d12Renderer->CorrectMotionVectors(cmdList, mvparams);
                     motion_vectors = correctedMV.pTexture;
-                    d3d12Renderer->EndCommandList(evaluate_index);
                 }
 
                 UpscaleParams params{};
@@ -563,6 +598,14 @@ void TemporalUpscaler::on_early_present() {
             spdlog::info("Successfully rendered with TemporalUpscaler");
             once = false;
         }
+        if (m_afw_backend_loaded && d3d12Renderer && cmdList) {
+            if (m_enable_ui_fix->value() && !is_vr_multipass  && extractedUIBufferDesc.pTexture && finalColorDesc.pTexture) {
+                CD3DX12_VIEWPORT vp(backbufferDesc[backbuffer_index].pTexture);
+                d3d12Renderer->Blit(cmdList, backbufferDesc[backbuffer_index], extractedUIBufferDesc, vp, debug2);
+            }
+            d3d12Renderer->EndCommandList(backbuffer_index);
+        }
+
     } else {
         auto& hook = g_framework->get_d3d11_hook();
         auto swapchain = hook->get_swap_chain();
@@ -937,8 +980,8 @@ void TemporalUpscaler::on_scene_layer_update(sdk::renderer::layer::Scene* layer,
     const auto evaluate_index = evaluate_id - 1;
 
     const auto phase = GetJitterPhaseCount(evaluate_id);
-    const auto w = (float)GetRenderWidth(evaluate_id);
-    const auto h = (float)GetRenderHeight(evaluate_id);
+    const auto w = (float)get_render_width();
+    const auto h = (float)get_render_height();
 
     float x = 0.0f;
     float y = 0.0f;
@@ -962,18 +1005,26 @@ void TemporalUpscaler::on_scene_layer_update(sdk::renderer::layer::Scene* layer,
         if (scene_info == nullptr) {
             return;
         }
-        if (vr_enabled && !is_vr_multipass) {
+        if (vr_enabled && !is_vr_multipass && vr->enableMVCorrection) {
             auto evaluate_index_other = (evaluate_index + 1) % 2;
             this->m_old_projection_matrix[evaluate_index_other][i][2][0] += x;
             this->m_old_projection_matrix[evaluate_index_other][i][2][1] += y;
 
             scene_info->old_view_projection_matrix = this->m_old_projection_matrix[evaluate_index_other][i] * this->m_old_view_matrix[evaluate_index_other][i];
+
+            if (i == 0) {
+                this->m_eye_projection_matrix_prev[evaluate_index] = this->m_eye_projection_matrix[evaluate_index];
+                this->m_eye_view_matrix_prev[evaluate_index] = this->m_eye_view_matrix[evaluate_index];
+                this->m_eye_projection_matrix[evaluate_index] = scene_info->projection_matrix;
+                this->m_eye_view_matrix[evaluate_index] = scene_info->view_matrix;
+            }
         } else {
             this->m_old_projection_matrix[evaluate_index][i][2][0] += x;
             this->m_old_projection_matrix[evaluate_index][i][2][1] += y;
 
             scene_info->old_view_projection_matrix = this->m_old_projection_matrix[evaluate_index][i] * this->m_old_view_matrix[evaluate_index][i];
         }
+
 
         this->m_old_projection_matrix[evaluate_index][i] = scene_info->projection_matrix;
         this->m_old_view_matrix[evaluate_index][i] = scene_info->view_matrix;
@@ -984,6 +1035,7 @@ void TemporalUpscaler::on_scene_layer_update(sdk::renderer::layer::Scene* layer,
 
         scene_info->view_projection_matrix = scene_info->projection_matrix * scene_info->view_matrix;
         scene_info->inverse_view_projection_matrix = glm::inverse(scene_info->view_projection_matrix);
+
     };
 
     add_jitter(0, scene_info);
@@ -995,40 +1047,42 @@ void TemporalUpscaler::on_scene_layer_update(sdk::renderer::layer::Scene* layer,
 }
 
 bool TemporalUpscaler::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_ctx) {
+    if (m_enable_ui_fix->value() && !VR::get()->is_using_multipass()) {
+        auto uiTarget = layer->get_ui_target();
+        auto rtv = uiTarget->get_rtv(0);
+        if (rtv != nullptr) {
+            uiTargetEngineTex = rtv->get_texture_d3d12();
+            if (uiTargetEngineTex != nullptr) {
+                auto desc = uiTargetEngineTex->get_desc();
+                if (hudlessEngineTex == NULL || hudlessTargetSize[0] != desc->width || hudlessTargetSize[1] != desc->height) {
+                    hudlessEngineTex = uiTargetEngineTex->clone();
+                    hudlessTargetSize[0] = desc->width;
+                    hudlessTargetSize[1] = desc->height;
 
-    //auto uiTarget = layer->get_ui_target();
-    //auto rtv = uiTarget->get_rtv(0);
-    //if (rtv != nullptr) {
-    //    uiTargetEngineTex = rtv->get_texture_d3d12();
-    //    if (uiTargetEngineTex != nullptr) {
-    //        auto desc = uiTargetEngineTex->get_desc();
-    //        if (hudlessEngineTex == NULL || hudlessTargetSize[0] != desc->width || hudlessTargetSize[1] != desc->height) {
-    //            hudlessEngineTex = uiTargetEngineTex->clone();
-    //            hudlessTargetSize[0] = desc->width;
-    //            hudlessTargetSize[1] = desc->height;
+                    const auto internal_resource = hudlessEngineTex->get_d3d12_resource_container();
 
-    //            const auto internal_resource = hudlessEngineTex->get_d3d12_resource_container();
+                    if (internal_resource != nullptr) {
+                        hudlessTex = internal_resource->get_native_resource();
+                    }
+                }
+                if (finalColorEngineTex == NULL || finalColorTargetSize[0] != desc->width || finalColorTargetSize[1] != desc->height) {
+                    finalColorEngineTex = uiTargetEngineTex->clone();
+                    finalColorTargetSize[0] = desc->width;
+                    finalColorTargetSize[1] = desc->height;
 
-    //            if (internal_resource != nullptr) {
-    //                hudlessTex = internal_resource->get_native_resource();
-    //            }
-    //        }
-    //        if (finalColorEngineTex == NULL || hudlessTargetSize[0] != desc->width || hudlessTargetSize[1] != desc->height) {
-    //            finalColorEngineTex = uiTargetEngineTex->clone();
-    //            hudlessTargetSize[0] = desc->width;
-    //            hudlessTargetSize[1] = desc->height;
+                    const auto internal_resource = finalColorEngineTex->get_d3d12_resource_container();
 
-    //            const auto internal_resource = finalColorEngineTex->get_d3d12_resource_container();
-
-    //            if (internal_resource != nullptr) {
-    //                finalColorTex = internal_resource->get_native_resource();
-    //            }
-    //        }
-    //        auto context = (sdk::renderer::RenderContext*)render_ctx;
-    //        hudlessTex->SetName(L"hudlessTex");
-    //        context->copy_texture(hudlessEngineTex, uiTargetEngineTex);
-    //    }
-    //}
+                    if (internal_resource != nullptr) {
+                        finalColorTex = internal_resource->get_native_resource();
+                    }
+                }
+                auto context = (sdk::renderer::RenderContext*)render_ctx;
+                hudlessTex->SetName(L"hudlessTex");
+                context->copy_texture(hudlessEngineTex, uiTargetEngineTex);
+                // context->clear_rtv(rtv);
+            }
+        }
+    }
 
     return true;
 }
@@ -1071,12 +1125,12 @@ void TemporalUpscaler::on_overlay_layer_draw(sdk::renderer::layer::Overlay* laye
 }
 
 bool TemporalUpscaler::on_pre_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer, void* render_context) {
-    //if (uiTargetEngineTex && hudlessEngineTex && finalColorEngineTex) {
-    //    auto context = (sdk::renderer::RenderContext*)render_context;
-    //    finalColorTex->SetName(L"finalColorTex");
-    //    context->copy_texture(finalColorEngineTex, uiTargetEngineTex);
-    //    //context->copy_texture(uiTargetEngineTex, hudlessEngineTex);
-    //}
+    if (m_enable_ui_fix->value() && !VR::get()->is_using_multipass() && uiTargetEngineTex && hudlessEngineTex && finalColorEngineTex) {
+        auto context = (sdk::renderer::RenderContext*)render_context;
+        finalColorTex->SetName(L"finalColorTex");
+        context->copy_texture(finalColorEngineTex, uiTargetEngineTex);
+        context->copy_texture(uiTargetEngineTex, hudlessEngineTex);
+    }
     return true;
 }
 

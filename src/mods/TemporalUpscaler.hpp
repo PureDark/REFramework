@@ -29,8 +29,11 @@ public:
     sdk::intrusive_ptr<sdk::renderer::Texture> finalColorEngineTex = NULL;
     sdk::intrusive_ptr<sdk::renderer::Texture> hudlessEngineTex = NULL;
     std::array<uint32_t, 2> hudlessTargetSize{};
+    std::array<uint32_t, 2> finalColorTargetSize{};
     D3D12RendererAPI* d3d12Renderer = nullptr;
     TextureDesc extractedUIBufferDesc;
+
+    bool is_enabled_ui_fix() { return m_enable_ui_fix->value(); };
 
 public:
     static std::shared_ptr<TemporalUpscaler>& get();
@@ -147,12 +150,14 @@ private:
         case 5:
             return Preset_M;
         }
+        return Preset_Default;
     }
 
     bool m_first_frame_finished{false};
     bool m_initialized{false};
     bool m_is_d3d12{false};
     bool m_backend_loaded{false};
+    bool m_afw_backend_loaded{false};
     bool m_backbuffer_inconsistency{false};
     bool m_upscale{true};
     bool m_rendering{false};
@@ -230,6 +235,11 @@ private:
     std::array<std::array<Matrix4x4f, 6>, 2> m_old_projection_matrix{};
     std::array<std::array<Matrix4x4f, 6>, 2> m_old_view_matrix{};
 
+    std::array<Matrix4x4f, 2> m_eye_projection_matrix{};
+    std::array<Matrix4x4f, 2> m_eye_view_matrix{};
+    std::array<Matrix4x4f, 2> m_eye_projection_matrix_prev{};
+    std::array<Matrix4x4f, 2> m_eye_view_matrix_prev{};
+
     const ModToggle::Ptr m_enabled{
         ModToggle::create(generate_name("Enabled"), true)
     };
@@ -245,6 +255,8 @@ private:
     const ModToggle::Ptr m_use_native_resolution{
         ModToggle::create(generate_name("UseNativeResolution"), false)
     };
+
+    const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
 
     const ModCombo::Ptr m_upscale_quality{ 
         ModCombo::create(generate_name("UpscaleQuality"),

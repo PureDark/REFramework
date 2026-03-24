@@ -48,7 +48,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     }
 
     // TODO: Correct this for the upscaler...?
-    if (!m_backbuffer_is_8bit && (!vr->is_using_multipass() || (vr->m_multipass.eye_textures[0] == nullptr || vr->m_multipass.eye_textures[1] == nullptr))) {
+    if (!m_backbuffer_is_8bit && (!vr->is_using_multipass() || (vr->m_multipass.eye_textures[0] != nullptr && vr->m_multipass.eye_textures[1]!= nullptr))) {
         auto& commands = m_backbuffer_copy_commands[backbuffer_index % m_backbuffer_copy_commands.size()];
         auto command_list = commands.cmd_list.Get();
         commands.wait(INFINITE);
@@ -84,7 +84,10 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     EyeIndex nEye = (frame_count % 2 == vr->m_left_eye_interval) ? EyeLeft : EyeRight;
     EyeIndex nEyeOther = (frame_count % 2 == vr->m_left_eye_interval) ? EyeRight : EyeLeft;
     FrameWarpEvaluateParams params;
-    if (vr->is_using_afw() && vr->depthTex && vr->motionVectorsTex && vr->m_framewarp_mode->value() > 0) {
+    if (vr->is_using_afw() && (!m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture || !m_eyeFrameBuffers.eyeFrameBuffers[1].color.pTexture))
+        force_reset();
+    if (vr->is_using_afw() && m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture && vr->depthTex && vr->motionVectorsTex &&
+        vr->m_framewarp_mode->value() > 0) {
         static TextureDesc texDesc[4];
         int texIndex = m_backbuffer_is_8bit ? backbuffer_index : 3;
         if (texDesc[texIndex].pTexture != eye_texture.Get()) {
@@ -108,7 +111,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             motionVectorsDesc.shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(motionVectorsDesc.srvPos);
         }
         static TextureDesc uiBufferDesc;
-        if (vr->m_enable_ui_fix->value() && uiBufferDesc.pTexture != vr->uiBufferTex) {
+        if (vr->m_enable_ui_fix->value() && vr->uiBufferTex) {
             uiBufferDesc.pTexture = vr->uiBufferTex;
             uiBufferDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
             uiBufferDesc.srvPos = vr->d3d12Renderer->CreateSRV(uiBufferDesc.pTexture, uiBufferDesc.srvPos);
@@ -127,7 +130,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         if (vr->m_enable_ui_fix->value() && vr->uiBufferTex) {
             params.InUIColorAlpha = &uiBufferDesc;
             params.IsHudlessColor = false;
-        } else if (vr->m_enable_ui_fix->value() && TemporalUpscaler::get()->extractedUIBufferDesc.pTexture) {
+        } else if (vr->m_enable_ui_fix->value() && TemporalUpscaler::get()->is_enabled_ui_fix() &&
+                   TemporalUpscaler::get()->extractedUIBufferDesc.pTexture) {
             params.InUIColorAlpha = &TemporalUpscaler::get()->extractedUIBufferDesc;
             params.IsHudlessColor = false;
         } else {
@@ -135,7 +139,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             params.IsHudlessColor = true;
         }
         auto colorDesc = s_CurrentEyeFrameBuffer.color.pTexture->GetDesc();
-        params.IsMotionVectorsOtherEye = true;
+        params.IsMotionVectorsOtherEye = vr->enableMVCorrection;
         params.InMotionScale[0] = (float)colorDesc.Width / 2.0f;
         params.InMotionScale[1] = -1.0f * ((float)colorDesc.Height / 2.0f);
         params.Mode = (FrameWarpMode)vr->m_framewarp_mode->value();
@@ -531,7 +535,7 @@ void D3D12Component::setup() {
         backbuffer_desc.Height = vr->get_hmd_height();
 
         if (backbuffer.Get() == real_backbuffer.Get()) {
-            backbuffer_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            //backbuffer_desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
             spdlog::warn("[VR] Multipass textures are not setup correctly: Re-using backbuffer.");
         } else {
             spdlog::info("[VR] Multipass textures are setup correctly.");
@@ -556,20 +560,6 @@ void D3D12Component::setup() {
     heap_props.Type = D3D12_HEAP_TYPE_DEFAULT;
     heap_props.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
     heap_props.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-
-    // Create copy of backbuffer to use as SRV to convert from HDR to 8bit
-    if (!m_backbuffer_is_8bit) {
-        ComPtr<ID3D12Resource> backbuffer_copy{};
-        if (FAILED(device->CreateCommittedResource(&heap_props, D3D12_HEAP_FLAG_NONE, &backbuffer_srv_desc, D3D12_RESOURCE_STATE_PRESENT, nullptr,
-                IID_PPV_ARGS(backbuffer_copy.GetAddressOf())))) {
-            spdlog::error("[VR] Failed to create backbuffer copy.");
-            return;
-        }
-
-        if (!m_backbuffer_copy.setup(device, backbuffer_copy.Get(), std::nullopt, std::nullopt)) {
-            spdlog::error("[VR] Error setting up backbuffer copy texture RTV/SRV.");
-        }
-    }
 
     // Create copy of backbuffer to use as SRV to convert from HDR to 8bit
     if (!m_backbuffer_is_8bit) {
@@ -616,7 +606,8 @@ void D3D12Component::setup() {
     //#Frame Warp Module Start
     //#############################
     static uint32_t lastSize[2]{0, 0};
-    if (lastSize[0] != backbuffer_desc.Width || lastSize[1] != backbuffer_desc.Height) {
+    static DXGI_FORMAT lastFormat = DXGI_FORMAT_UNKNOWN;
+    if (vr->is_using_afw() && (lastSize[0] != backbuffer_desc.Width || lastSize[1] != backbuffer_desc.Height || lastFormat != rt_desc.Format)) {
         FrameWarpInitParams params = {backbuffer_desc.Width, backbuffer_desc.Height, rt_desc.Format};
         m_eyeFrameBuffers = InitFrameWarp(params);
     }
