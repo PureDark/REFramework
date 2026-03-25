@@ -286,15 +286,15 @@ void TemporalUpscaler::on_early_present() {
             btn5 = false;
             m_enable_ui_fix->toggle();
         }
-        static bool btn4 = false;
-        if (GetAsyncKeyState(VK_NUMPAD4) < 0 && btn4 == false) {
-            btn4 = true;
-        }
-        if (GetAsyncKeyState(VK_NUMPAD4) == 0 && btn4 == true) {
-            btn4 = false;
-            //debug2 = !debug2;
-            VR::get()->enableMVCorrection = !VR::get()->enableMVCorrection;
-        }
+        //static bool btn4 = false;
+        //if (GetAsyncKeyState(VK_NUMPAD4) < 0 && btn4 == false) {
+        //    btn4 = true;
+        //}
+        //if (GetAsyncKeyState(VK_NUMPAD4) == 0 && btn4 == true) {
+        //    btn4 = false;
+        //    //debug2 = !debug2;
+        //    VR::get()->enableMVCorrection = !VR::get()->enableMVCorrection;
+        //}
         static TextureDesc hudlessDesc{};
         static TextureDesc finalColorDesc{};
         static TextureDesc backbufferDesc[3]{};
@@ -925,19 +925,19 @@ void TemporalUpscaler::on_scene_layer_update(sdk::renderer::layer::Scene* layer,
         if (scene_info == nullptr) {
             return;
         }
-
-        this->m_old_projection_matrix[evaluate_index][i][2][0] += x;
-        this->m_old_projection_matrix[evaluate_index][i][2][1] += y;
+        auto old_projection_matrix = this->m_old_projection_matrix[evaluate_index][i];
+        old_projection_matrix[2][0] += x;
+        old_projection_matrix[2][1] += y;
 
         this->m_old_view_projection_matrix[evaluate_index][i] = scene_info->old_view_projection_matrix;
-        scene_info->old_view_projection_matrix = this->m_old_projection_matrix[evaluate_index][i] * this->m_old_view_matrix[evaluate_index][i];
+        scene_info->old_view_projection_matrix = old_projection_matrix * this->m_old_view_matrix[evaluate_index][i];
 
-
-        //this->m_old_projection_matrix[evaluate_index][i] = scene_info->projection_matrix;
-        //this->m_old_view_matrix[evaluate_index][i] = scene_info->view_matrix;
+        this->m_old_projection_matrix[evaluate_index][i] = scene_info->projection_matrix;
+        this->m_old_view_matrix[evaluate_index][i] = scene_info->view_matrix;
 
         scene_info->projection_matrix[2][0] += x;
         scene_info->projection_matrix[2][1] += y;
+
         scene_info->inverse_projection_matrix = glm::inverse(scene_info->projection_matrix);
 
         scene_info->view_projection_matrix = scene_info->projection_matrix * scene_info->view_matrix;
@@ -953,38 +953,43 @@ void TemporalUpscaler::on_scene_layer_update(sdk::renderer::layer::Scene* layer,
     add_jitter(5, z_prepass_scene_info);
 }
 
-
-void TemporalUpscaler::on_scene_layer_draw(sdk::renderer::layer::Scene* layer, void* render_context) {
+bool TemporalUpscaler::on_pre_post_effect_layer_draw(sdk::renderer::layer::PostEffect* layer, void* render_context) {
     if (!ready()) {
-        return;
+        return true;
     }
 
     auto& vr = VR::get();
 
+    if (vr->is_using_multipass() || !vr->enableMVCorrection) {
+        return true;
+    }
+
+    auto scene_layer = (sdk::renderer::layer::Scene*)layer->get_parent();
+
     // Other layers appear when using scopes or mirrors are displayed
-    if (!layer->is_fully_rendered() || !layer->has_main_camera()) {
-        return;
+    if (!scene_layer->is_fully_rendered() || !scene_layer->has_main_camera()) {
+        return true;
     }
 
     // Multiple layers are not supported when not using VR
     if (!vr->is_hmd_active() || !vr->is_using_multipass()) {
-        if (layer != m_eye_states[0].scene_layer) {
-            return;
+        if (scene_layer != m_eye_states[0].scene_layer) {
+            return true;
         }
     }
 
     if (vr->is_hmd_active() && vr->is_using_multipass()) {
-        if (layer != m_eye_states[0].scene_layer && layer != m_eye_states[1].scene_layer) {
-            return;
+        if (scene_layer != m_eye_states[0].scene_layer && scene_layer != m_eye_states[1].scene_layer) {
+            return true;
         }
     }
 
-    auto scene_info = layer->get_scene_info();
-    auto depth_distortion_scene_info = layer->get_depth_distortion_scene_info();
-    auto filter_scene_info = layer->get_filter_scene_info();
-    auto jitter_disable_scene_info = layer->get_jitter_disable_scene_info();
-    auto jitter_disable_post_scene_info = layer->get_jitter_disable_post_scene_info();
-    auto z_prepass_scene_info = layer->get_z_prepass_scene_info();
+    auto scene_info = scene_layer->get_scene_info();
+    auto depth_distortion_scene_info = scene_layer->get_depth_distortion_scene_info();
+    auto filter_scene_info = scene_layer->get_filter_scene_info();
+    auto jitter_disable_scene_info = scene_layer->get_jitter_disable_scene_info();
+    auto jitter_disable_post_scene_info = scene_layer->get_jitter_disable_post_scene_info();
+    auto z_prepass_scene_info = scene_layer->get_z_prepass_scene_info();
 
     uint32_t vr_index = 0;
 
@@ -999,7 +1004,7 @@ void TemporalUpscaler::on_scene_layer_draw(sdk::renderer::layer::Scene* layer, v
             const auto scenes = vr->get_camera_duplicator().get_relevant_scene_layers();
 
             if (!scenes.empty()) {
-                if (layer == m_eye_states[0].scene_layer) {
+                if (scene_layer == m_eye_states[0].scene_layer) {
                     vr_index = 0;
                 } else {
                     vr_index = 1;
@@ -1013,50 +1018,26 @@ void TemporalUpscaler::on_scene_layer_draw(sdk::renderer::layer::Scene* layer, v
     const auto evaluate_id = get_evaluate_id(vr_enabled ? vr_index : 0);
     const auto evaluate_index = evaluate_id - 1;
 
-    const auto phase = GetJitterPhaseCount(evaluate_id);
-    const auto w = (float)get_render_width();
-    const auto h = (float)get_render_height();
-
-    float x = 0.0f;
-    float y = 0.0f;
-
-    if (m_jitter) {
-        x = m_jitter_scale[0] * (-m_jitter_offsets[evaluate_index][0] / w);
-        y = m_jitter_scale[1] * (-m_jitter_offsets[evaluate_index][1] / h);
-    }
-
-    auto remove_jitter = [&](int32_t i, sdk::renderer::SceneInfo* scene_info) {
+    // [PureDark] This is to fix the volumetrics in AFR/AFW
+    auto restroe_old_vp_matrix = [&](int32_t i, sdk::renderer::SceneInfo* scene_info) {
         if (scene_info == nullptr) {
             return;
         }
 
-        this->m_old_projection_matrix[evaluate_index][i][2][0] -= x;
-        this->m_old_projection_matrix[evaluate_index][i][2][1] -= y;
-
-        if (vr_enabled && !is_vr_multipass && vr->enableMVCorrection) {
+        if (vr_enabled && !is_vr_multipass) {
             scene_info->old_view_projection_matrix = this->m_old_view_projection_matrix[evaluate_index][i];
         } else {
             scene_info->old_view_projection_matrix = this->m_old_projection_matrix[evaluate_index][i] * this->m_old_view_matrix[evaluate_index][i];
         }
-
-        scene_info->projection_matrix[2][0] -= x;
-        scene_info->projection_matrix[2][1] -= y;
-
-        this->m_old_projection_matrix[evaluate_index][i] = scene_info->projection_matrix;
-        this->m_old_view_matrix[evaluate_index][i] = scene_info->view_matrix;
-
-        scene_info->inverse_projection_matrix = glm::inverse(scene_info->projection_matrix);
-
-        scene_info->view_projection_matrix = scene_info->projection_matrix * scene_info->view_matrix;
-        scene_info->inverse_view_projection_matrix = glm::inverse(scene_info->view_projection_matrix);
     };
 
-    remove_jitter(0, scene_info);
-    remove_jitter(1, depth_distortion_scene_info);
-    remove_jitter(2, filter_scene_info);
-    remove_jitter(3, jitter_disable_scene_info);
-    remove_jitter(4, jitter_disable_post_scene_info);
-    remove_jitter(5, z_prepass_scene_info);
+    restroe_old_vp_matrix(0, scene_info);
+    restroe_old_vp_matrix(1, depth_distortion_scene_info);
+    restroe_old_vp_matrix(2, filter_scene_info);
+    restroe_old_vp_matrix(3, jitter_disable_scene_info);
+    restroe_old_vp_matrix(4, jitter_disable_post_scene_info);
+    restroe_old_vp_matrix(5, z_prepass_scene_info);
+    return true;
 }
 
 bool TemporalUpscaler::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_ctx) {
@@ -1065,8 +1046,16 @@ bool TemporalUpscaler::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* 
         return true;
     }
 
+    auto context = (sdk::renderer::RenderContext*)render_ctx;
+    auto scene_layer = (sdk::renderer::layer::Scene*)layer->get_parent();
+
+    auto& state = m_eye_states[0];
+    if (state.scene_layer != scene_layer)
+        return true;
+
     auto& vr = VR::get();
 
+    // [PureDark] For fixing blurry UI caused by upscaling
     if (m_enable_ui_fix->value() && !vr->is_using_multipass()) {
         auto uiTarget = layer->get_ui_target();
         auto rtv = uiTarget->get_rtv(0);
@@ -1096,10 +1085,8 @@ bool TemporalUpscaler::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* 
                         finalColorTex = internal_resource->get_native_resource();
                     }
                 }
-                auto context = (sdk::renderer::RenderContext*)render_ctx;
                 hudlessTex->SetName(L"hudlessTex");
                 context->copy_texture(hudlessEngineTex, uiTargetEngineTex);
-                // context->clear_rtv(rtv);
             }
         }
     }
@@ -1145,11 +1132,21 @@ void TemporalUpscaler::on_overlay_layer_draw(sdk::renderer::layer::Overlay* laye
 }
 
 bool TemporalUpscaler::on_pre_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer, void* render_context) {
+    auto context = (sdk::renderer::RenderContext*)render_context;
+    auto scene_layer = (sdk::renderer::layer::Scene*)layer->get_parent();
+
+    if (scene_layer == nullptr)
+        return true;
+
+    auto& state = m_eye_states[0];
+    if (state.scene_layer != scene_layer)
+        return true;
+
+    // [PureDark] Copying the hudless back to the final buffer does work well with the extracted UI
     if (m_enable_ui_fix->value() && !VR::get()->is_using_multipass() && uiTargetEngineTex && hudlessEngineTex && finalColorEngineTex) {
-        auto context = (sdk::renderer::RenderContext*)render_context;
         finalColorTex->SetName(L"finalColorTex");
         context->copy_texture(finalColorEngineTex, uiTargetEngineTex);
-        context->copy_texture(uiTargetEngineTex, hudlessEngineTex);
+        //context->copy_texture(uiTargetEngineTex, hudlessEngineTex);
     }
     return true;
 }

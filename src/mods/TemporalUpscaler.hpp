@@ -58,7 +58,7 @@ public:
     void on_camera_get_projection_matrix(REManagedObject* camera, Matrix4x4f* result) override;
 
     void on_scene_layer_update(sdk::renderer::layer::Scene* scene_layer, void* render_context) override;
-    void on_scene_layer_draw(sdk::renderer::layer::Scene* scene_layer, void* render_context) override;
+    bool on_pre_post_effect_layer_draw(sdk::renderer::layer::PostEffect* scene_layer, void* render_context) override;
 
     bool on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_context) override;
     void on_overlay_layer_draw(sdk::renderer::layer::Overlay* overlay_layer, void* render_context) override;
@@ -236,11 +236,6 @@ private:
     std::array<std::array<Matrix4x4f, 6>, 2> m_old_projection_matrix{};
     std::array<std::array<Matrix4x4f, 6>, 2> m_old_view_matrix{};
     std::array<std::array<Matrix4x4f, 6>, 2> m_old_view_projection_matrix{};
-
-    std::array<Matrix4x4f, 2> m_eye_projection_matrix{};
-    std::array<Matrix4x4f, 2> m_eye_view_matrix{};
-    std::array<Matrix4x4f, 2> m_eye_projection_matrix_prev{};
-    std::array<Matrix4x4f, 2> m_eye_view_matrix_prev{};
 
     const ModToggle::Ptr m_enabled{
         ModToggle::create(generate_name("Enabled"), true)
