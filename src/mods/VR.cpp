@@ -2623,7 +2623,7 @@ void VR::on_present() {
             }
 
             openvr->is_hmd_active = hmd_active;
-            //openvr->is_hmd_active = true;
+            openvr->is_hmd_active = true;
 
             // upon headset re-entry, reinitialize OpenVR
             if (openvr->is_hmd_active && !openvr->was_hmd_active) {
@@ -4364,6 +4364,7 @@ void VR::on_draw_ui() {
         m_clear_before_framewarp->draw("Clear Before Framewarp");
         m_framewarp_debug->draw("Debug Framewarp");
         m_enable_ui_fix->draw("Enable Framewarp UI Fix");
+        m_enable_volumetric_fix->draw("Enable Framewarp Volumetric Fix");
         m_ignore_motion_threshold->draw("Ignore Motion Threshold");
         m_framewarp_mode->draw("Framewarp Mode");
     }

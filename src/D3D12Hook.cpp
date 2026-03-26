@@ -182,7 +182,7 @@ bool D3D12Hook::hook() {
 
     ZeroMemory(&swap_chain_desc1, sizeof(swap_chain_desc1));
 
-    swap_chain_desc1.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    swap_chain_desc1.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     swap_chain_desc1.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     swap_chain_desc1.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
     swap_chain_desc1.BufferCount = 2;

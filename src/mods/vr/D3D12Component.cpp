@@ -156,21 +156,24 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     //#############################
 
     const auto is_multipass = vr->is_using_multipass();
-
+    auto eye_format = DXGI_FORMAT_UNKNOWN;
     if (is_multipass && (vr->m_multipass.eye_textures[0] != nullptr && vr->m_multipass.eye_textures[1] != nullptr)) {
         const auto eye_desc = vr->m_multipass.eye_textures[0]->GetDesc();
+        eye_format = eye_desc.Format;
+    } else {
+        eye_format = backbuffer->GetDesc().Format;
+    }
 
-        if (runtime->is_openxr()) {
-            if (eye_desc.Format != m_openxr.last_format) {
-                spdlog::info("[VR] OpenXR format changed from {} to {}", m_openxr.last_format, eye_desc.Format);
-                m_openxr.create_swapchains();
-            }
-        } else {
-            if (eye_desc.Format != m_openvr.last_format) {
-                spdlog::info("[VR] OpenVR format changed from {} to {}", m_openvr.last_format, eye_desc.Format);
-                on_reset(vr);
-                setup();
-            }
+    if (runtime->is_openxr()) {
+        if (eye_format != m_openxr.last_format) {
+            spdlog::info("[VR] OpenXR format changed from {} to {}", m_openxr.last_format, eye_format);
+            m_openxr.create_swapchains();
+        }
+    } else {
+        if (eye_format != m_openvr.last_format) {
+            spdlog::info("[VR] OpenVR format changed from {} to {}", m_openvr.last_format, eye_format);
+            on_reset(vr);
+            setup();
         }
     }
 
@@ -577,7 +580,7 @@ void D3D12Component::setup() {
 
     auto rt_desc = backbuffer_desc;
 
-    rt_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    rt_desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     rt_desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
     rt_desc.Flags &= ~D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;
 
@@ -818,6 +821,7 @@ std::optional<std::string> D3D12Component::OpenXR::create_swapchains() {
         } else {
             backbuffer_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         }
+        spdlog::info("[VR] Format: {}", backbuffer_desc.Format);
 
         // Create the swapchain.
         XrSwapchainCreateInfo swapchain_create_info{XR_TYPE_SWAPCHAIN_CREATE_INFO};
