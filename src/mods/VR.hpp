@@ -109,8 +109,8 @@ public:
     int32_t get_frame_count() const;
     int32_t get_game_frame_count() const;
 
-    bool is_using_afr() const {
-        return m_use_afr->value();
+    bool is_using_afw() const {
+        return m_use_afw->value();
     }
 
     // Functions that generally use a mutex or have more complex logic
@@ -508,7 +508,7 @@ private:
     const ModKey::Ptr m_set_standing_key{ ModKey::create(generate_name("SetStandingOriginKey")) };
     const ModKey::Ptr m_recenter_view_key{ ModKey::create(generate_name("RecenterViewKey")) };
     const ModToggle::Ptr m_decoupled_pitch{ ModToggle::create(generate_name("DecoupledPitch"), false) };
-    const ModToggle::Ptr m_use_afr{ModToggle::create(generate_name("AlternateFrameRendering"), false)};
+    const ModToggle::Ptr m_use_afw{ModToggle::create(generate_name("AlternateFrameWrapping"), false)};
     const ModToggle::Ptr m_clear_before_framewarp{ModToggle::create(generate_name("ClearBeforeFramewarp"), false)};
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
@@ -567,7 +567,7 @@ private:
         *m_set_standing_key,
         *m_recenter_view_key,
         *m_decoupled_pitch,
-        *m_use_afr,
+        *m_use_afw,
         *m_use_custom_view_distance,
         *m_hmd_oriented_audio,
         *m_view_distance,
