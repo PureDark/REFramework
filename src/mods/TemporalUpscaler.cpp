@@ -959,7 +959,7 @@ bool TemporalUpscaler::on_pre_post_effect_layer_draw(sdk::renderer::layer::PostE
 
     auto& vr = VR::get();
 
-    if (vr->is_using_multipass() || !vr->enableMVCorrection) {
+    if (vr->is_using_multipass() || !vr->is_enable_volumetric_fix()) {
         return true;
     }
 
