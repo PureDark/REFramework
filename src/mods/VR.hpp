@@ -40,10 +40,10 @@ public:
     ID3D12Resource* uiBufferTex = NULL;
     D3D12RendererAPI* d3d12Renderer = nullptr;
     
-    bool enableMVCorrection = true;
     int m_camera_data_update_frame_count{};
     void update_camera_data();
     CameraData& get_camera_data(int index) { return cameraData[index]; };
+    bool is_enable_volumetric_fix() { return m_enable_volumetric_fix->value(); };
 
 public:
     enum RenderingTechnique {
@@ -589,6 +589,7 @@ private:
     const ModToggle::Ptr m_decoupled_pitch{ ModToggle::create(generate_name("DecoupledPitch"), false) };
     const ModToggle::Ptr m_clear_before_framewarp{ModToggle::create(generate_name("ClearBeforeFramewarp"), false)};
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
+    const ModToggle::Ptr m_enable_volumetric_fix{ModToggle::create(generate_name("EnableVolumetricFix"), false)};
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
     const ModSlider::Ptr m_ignore_motion_threshold{ModSlider::create(generate_name("IgnoreMotionThreshold"), 1.0f, 100.0f, 2.5f)};
 

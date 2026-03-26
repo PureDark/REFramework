@@ -293,7 +293,6 @@ void TemporalUpscaler::on_early_present() {
         //if (GetAsyncKeyState(VK_NUMPAD4) == 0 && btn4 == true) {
         //    btn4 = false;
         //    //debug2 = !debug2;
-        //    VR::get()->enableMVCorrection = !VR::get()->enableMVCorrection;
         //}
         static TextureDesc hudlessDesc{};
         static TextureDesc finalColorDesc{};
