@@ -41,6 +41,14 @@ public:
     sdk::renderer::TargetState* motionVectorsState = NULL;
     std::array<uint32_t, 2> motionVectorsTargetSize{};
 
+    ID3D12Resource* finalColorTex = NULL;
+    ID3D12Resource* hudlessTex = NULL;
+    sdk::intrusive_ptr<sdk::renderer::Texture> uiTargetEngineTex = NULL;
+    sdk::intrusive_ptr<sdk::renderer::Texture> finalColorEngineTex = NULL;
+    sdk::intrusive_ptr<sdk::renderer::Texture> hudlessEngineTex = NULL;
+    std::array<uint32_t, 2> hudlessTargetSize{};
+    std::array<uint32_t, 2> finalColorTargetSize{};
+
 public:
     static std::shared_ptr<VR>& get();
 
@@ -229,6 +237,8 @@ private:
 
     bool on_pre_overlay_layer_update(sdk::renderer::layer::Overlay* layer, void* render_context) override;
     bool on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_context) override;
+
+    bool on_pre_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer, void* render_context) override;
 
     bool on_pre_post_effect_layer_update(sdk::renderer::layer::PostEffect* layer, void* render_context) override;
     bool on_pre_post_effect_layer_draw(sdk::renderer::layer::PostEffect* layer, void* render_context) override;
@@ -508,13 +518,13 @@ private:
     const ModKey::Ptr m_set_standing_key{ ModKey::create(generate_name("SetStandingOriginKey")) };
     const ModKey::Ptr m_recenter_view_key{ ModKey::create(generate_name("RecenterViewKey")) };
     const ModToggle::Ptr m_decoupled_pitch{ ModToggle::create(generate_name("DecoupledPitch"), false) };
-    const ModToggle::Ptr m_use_afw{ModToggle::create(generate_name("AlternateFrameWrapping"), false)};
+    const ModToggle::Ptr m_use_afw{ModToggle::create(generate_name("AlternateFrameWrapping"), true)};
     const ModToggle::Ptr m_clear_before_framewarp{ModToggle::create(generate_name("ClearBeforeFramewarp"), false)};
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
     const ModSlider::Ptr m_ignore_motion_threshold{ModSlider::create(generate_name("IgnoreMotionThreshold"), 1.0f, 100.0f, 2.5f)};
 
-    const ModCombo::Ptr m_framewarp_mode{ModCombo::create(generate_name("Framewarp Mode"),
+    const ModCombo::Ptr m_framewarp_mode{ModCombo::create(generate_name("FramewarpMode"),
         {
             "None",
             "AlternateEyeWarping",
@@ -567,7 +577,7 @@ private:
         *m_set_standing_key,
         *m_recenter_view_key,
         *m_decoupled_pitch,
-        *m_use_afw,
+        //*m_use_afw,
         *m_use_custom_view_distance,
         *m_hmd_oriented_audio,
         *m_view_distance,

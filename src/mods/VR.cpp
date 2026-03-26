@@ -449,13 +449,10 @@ bool VR::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* r
     //            if (motionVectorsBackupEngineTex == NULL || 
     //                motionVectorsTargetSize[0] != desc->width ||
     //                motionVectorsTargetSize[1] != desc->height) {
-
     //                motionVectorsBackupEngineTex = motionVectorsEngineTex->clone();
     //                motionVectorsTargetSize[0] = desc->width;
     //                motionVectorsTargetSize[1] = desc->height;
-
     //                const auto internal_resource = motionVectorsBackupEngineTex->get_d3d12_resource_container();
-
     //                if (internal_resource != nullptr) {
     //                    motionVectorsBackupTex = internal_resource->get_native_resource();
     //                }
@@ -466,6 +463,44 @@ bool VR::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* r
     //        }
     //    }
     //}
+
+    
+    // [PureDark] For fixing blurry UI caused by upscaling
+    if (m_enable_ui_fix->value()) {
+        auto uiTarget = layer->get_ui_target();
+        auto rtv = uiTarget->get_rtv(0);
+        if (rtv != nullptr) {
+            uiTargetEngineTex = rtv->get_texture_d3d12();
+            if (uiTargetEngineTex != nullptr) {
+                auto desc = uiTargetEngineTex->get_desc();
+                if (hudlessEngineTex == NULL || hudlessTargetSize[0] != desc->width || hudlessTargetSize[1] != desc->height) {
+                    hudlessEngineTex = uiTargetEngineTex->clone();
+                    hudlessTargetSize[0] = desc->width;
+                    hudlessTargetSize[1] = desc->height;
+
+                    const auto internal_resource = hudlessEngineTex->get_d3d12_resource_container();
+
+                    if (internal_resource != nullptr) {
+                        hudlessTex = internal_resource->get_native_resource();
+                    }
+                }
+                if (finalColorEngineTex == NULL || finalColorTargetSize[0] != desc->width || finalColorTargetSize[1] != desc->height) {
+                    finalColorEngineTex = uiTargetEngineTex->clone();
+                    finalColorTargetSize[0] = desc->width;
+                    finalColorTargetSize[1] = desc->height;
+
+                    const auto internal_resource = finalColorEngineTex->get_d3d12_resource_container();
+
+                    if (internal_resource != nullptr) {
+                        finalColorTex = internal_resource->get_native_resource();
+                    }
+                }
+                auto context = (sdk::renderer::RenderContext*)render_ctx;
+                hudlessTex->SetName(L"hudlessTex");
+                context->copy_texture(hudlessEngineTex, uiTargetEngineTex);
+            }
+        }
+    }
 
     // just don't render anything at all.
     // overlays just seem to break stuff in VR.
@@ -486,6 +521,22 @@ bool VR::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* r
 }
 
 bool VR::on_pre_overlay_layer_update(sdk::renderer::layer::Overlay* layer, void* render_ctx) {
+    return true;
+}
+
+bool VR::on_pre_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer, void* render_context) {
+    auto context = (sdk::renderer::RenderContext*)render_context;
+    auto scene_layer = (sdk::renderer::layer::Scene*)layer->get_parent();
+
+    if (scene_layer == nullptr)
+        return true;
+
+    // [PureDark] Copying the hudless back to the final buffer does work well with the extracted UI
+    if (m_enable_ui_fix->value() && uiTargetEngineTex && hudlessEngineTex && finalColorEngineTex) {
+        finalColorTex->SetName(L"finalColorTex");
+        context->copy_texture(finalColorEngineTex, uiTargetEngineTex);
+        context->copy_texture(uiTargetEngineTex, hudlessEngineTex);
+    }
     return true;
 }
 
@@ -3300,7 +3351,7 @@ void VR::on_pre_begin_rendering(void* entry) {
     }
     
     // Call WaitGetPoses
-    if (!inside_on_end && m_frame_count % 2 == m_left_eye_interval || is_using_afw()) {
+    if (!inside_on_end && (m_frame_count % 2 == m_left_eye_interval || is_using_afw())) {
         runtime->consume_events(nullptr);
         update_hmd_state();
     }

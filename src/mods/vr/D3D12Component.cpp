@@ -406,7 +406,7 @@ void D3D12Component::setup() {
     //#############################
     static uint32_t lastSize[2]{0, 0};
     static DXGI_FORMAT lastFormat = DXGI_FORMAT_UNKNOWN;
-    if (VR::get()->is_using_afw() && (lastSize[0] != backbuffer_desc.Width || lastSize[1] != backbuffer_desc.Height || lastFormat != rt_desc.Format)) {
+    if ((lastSize[0] != backbuffer_desc.Width || lastSize[1] != backbuffer_desc.Height || lastFormat != rt_desc.Format)) {
         FrameWarpInitParams params = {backbuffer_desc.Width, backbuffer_desc.Height, rt_desc.Format};
         m_eyeFrameBuffers = InitFrameWarp(params);
     }
