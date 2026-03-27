@@ -147,10 +147,12 @@ namespace pd {
 		virtual D3D12_CPU_DESCRIPTOR_HANDLE GetCPUDescriptorHandle(int pos) = 0;
 		virtual D3D12_GPU_DESCRIPTOR_HANDLE GetGPUDescriptorHandle(int pos) = 0;
 		virtual D3D12_GPU_DESCRIPTOR_HANDLE GetSamplerHandle(int pos) = 0;
+		virtual void                        SetupTextureDesc(TextureDesc& srcDesc) = 0;
 		virtual bool                        CreateTexture(int nWidth, int nHeight, DXGI_FORMAT format, D3D12_RESOURCE_STATES initialState, TextureDesc& textureDesc, bool createUAV) = 0;
 		virtual bool                        CreateFrameBuffer(int nWidth, int nHeight, FrameBufferDesc& framebufferDesc, bool createUAV) = 0;
 		virtual void                        Blit(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, D3D12_VIEWPORT viewPort, bool enableBlend = false) = 0;
 		virtual void                        Copy(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc) = 0;
+		virtual void                        Sharpen(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, float sharpness) = 0;
 		virtual void                        Tonemap(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, TonemapParams params) = 0;
 		virtual TextureDesc&                ExtractUI(ID3D12GraphicsCommandList* cmdList, TextureDesc& hudlessDesc, TextureDesc& finalColorWithUI) = 0;
 		virtual TextureDesc&                CorrectMotionVectors(ID3D12GraphicsCommandList* cmdList, CorrectMotionVectorsParams& params) = 0;

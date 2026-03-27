@@ -77,15 +77,13 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         if (texDesc[texIndex].pTexture != eye_texture.Get()) {
             texDesc[texIndex].pTexture = eye_texture.Get();
             texDesc[texIndex].initialState = D3D12_RESOURCE_STATE_PRESENT;
-            texDesc[texIndex].srvPos = vr->d3d12Renderer->CreateSRV(texDesc[texIndex].pTexture, texDesc[texIndex].srvPos);
-            texDesc[texIndex].shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(texDesc[texIndex].srvPos);
+            vr->d3d12Renderer->SetupTextureDesc(texDesc[texIndex]);
         }
         static TextureDesc depthDesc;
         if (depthDesc.pTexture != vr->depthTex) {
             depthDesc.pTexture = vr->depthTex;
             depthDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-            depthDesc.srvPos = vr->d3d12Renderer->CreateSRV(depthDesc.pTexture, depthDesc.srvPos);
-            depthDesc.shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(depthDesc.srvPos);
+            vr->d3d12Renderer->SetupTextureDesc(depthDesc);
         }
         static TextureDesc motionVectorsDesc;
         //if (motionVectorsDesc.pTexture != vr->motionVectorsTex) {
@@ -105,9 +103,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         if (vr->m_enable_ui_fix->value() && uiBufferDesc.pTexture != vr->uiBufferTex) {
             uiBufferDesc.pTexture = vr->uiBufferTex;
             uiBufferDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-            uiBufferDesc.srvPos = vr->d3d12Renderer->CreateSRV(uiBufferDesc.pTexture, uiBufferDesc.srvPos);
-            uiBufferDesc.shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(uiBufferDesc.srvPos);
-            uiBufferDesc.renderTargetViewHandle = vr->d3d12Renderer->GetRTV(uiBufferDesc.pTexture);
+            vr->d3d12Renderer->SetupTextureDesc(uiBufferDesc);
         }
         static FrameBufferDesc s_CurrentEyeFrameBuffer{};
 
@@ -116,6 +112,14 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         s_CurrentEyeFrameBuffer.motionVectors = motionVectorsDesc;
 
         auto cmdList = vr->d3d12Renderer->BeginCommandList(backbuffer_index);
+
+        // Sharpening
+        if (vr->is_enable_sharpening() && vr->get_sharpness() > 0) {
+            auto eyeFrameBuffer = (nEye == vr::Eye_Left) ? m_eyeFrameBuffers.eyeFrameBuffers[0] : m_eyeFrameBuffers.eyeFrameBuffers[1];
+            vr->d3d12Renderer->Sharpen(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vr->get_sharpness());
+            s_CurrentEyeFrameBuffer.color = eyeFrameBuffer.color;
+        }
+
         params.InCmdList = cmdList;
         params.InEyeFrameBuffer = &s_CurrentEyeFrameBuffer;
         if (vr->m_enable_ui_fix->value() && vr->uiBufferTex) {
@@ -406,7 +410,7 @@ void D3D12Component::setup() {
     //#############################
     static uint32_t lastSize[2]{0, 0};
     static DXGI_FORMAT lastFormat = DXGI_FORMAT_UNKNOWN;
-    if ((lastSize[0] != backbuffer_desc.Width || lastSize[1] != backbuffer_desc.Height || lastFormat != rt_desc.Format)) {
+    if (VR::get()->is_using_afw() && (lastSize[0] != backbuffer_desc.Width || lastSize[1] != backbuffer_desc.Height || lastFormat != rt_desc.Format)) {
         FrameWarpInitParams params = {backbuffer_desc.Width, backbuffer_desc.Height, rt_desc.Format};
         m_eyeFrameBuffers = InitFrameWarp(params);
     }

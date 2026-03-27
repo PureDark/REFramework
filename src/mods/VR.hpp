@@ -36,18 +36,14 @@ public:
     ID3D12Resource* motionVectorsBackupTex = NULL;
     ID3D12Resource* uiBufferTex = NULL;
     D3D12RendererAPI* d3d12Renderer = nullptr;
-    sdk::renderer::Texture* motionVectorsEngineTex = NULL;
-    sdk::renderer::Texture* motionVectorsBackupEngineTex = NULL;
-    sdk::renderer::TargetState* motionVectorsState = NULL;
-    std::array<uint32_t, 2> motionVectorsTargetSize{};
 
-    ID3D12Resource* finalColorTex = NULL;
-    ID3D12Resource* hudlessTex = NULL;
-    sdk::intrusive_ptr<sdk::renderer::Texture> uiTargetEngineTex = NULL;
-    sdk::intrusive_ptr<sdk::renderer::Texture> finalColorEngineTex = NULL;
-    sdk::intrusive_ptr<sdk::renderer::Texture> hudlessEngineTex = NULL;
-    std::array<uint32_t, 2> hudlessTargetSize{};
-    std::array<uint32_t, 2> finalColorTargetSize{};
+    int last_update_camera_data_frame_count = 0;
+    void update_camera_data(int frame_count);
+    void get_camera_data();
+
+    bool is_enable_sharpening() { return m_enable_sharpening->value(); };
+    float get_sharpness() { return m_sharpness->value(); };
+    int get_vr_frame_count() { return m_frame_count; };
 
 public:
     static std::shared_ptr<VR>& get();
@@ -237,8 +233,6 @@ private:
 
     bool on_pre_overlay_layer_update(sdk::renderer::layer::Overlay* layer, void* render_context) override;
     bool on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_context) override;
-
-    bool on_pre_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer, void* render_context) override;
 
     bool on_pre_post_effect_layer_update(sdk::renderer::layer::PostEffect* layer, void* render_context) override;
     bool on_pre_post_effect_layer_draw(sdk::renderer::layer::PostEffect* layer, void* render_context) override;
@@ -521,6 +515,9 @@ private:
     const ModToggle::Ptr m_use_afw{ModToggle::create(generate_name("AlternateFrameWrapping"), true)};
     const ModToggle::Ptr m_clear_before_framewarp{ModToggle::create(generate_name("ClearBeforeFramewarp"), false)};
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
+    const ModToggle::Ptr m_enable_sharpening{ModToggle::create(generate_name("EnableSharpening"), false)};
+    const ModToggle::Ptr m_fix_dlss{ModToggle::create(generate_name("FixDLSS"), false)};
+    const ModSlider::Ptr m_sharpness{ModSlider::create(generate_name("Sharpness"), 0.0f, 1.0f, 0.0f)};
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
     const ModSlider::Ptr m_ignore_motion_threshold{ModSlider::create(generate_name("IgnoreMotionThreshold"), 1.0f, 100.0f, 2.5f)};
 
@@ -598,7 +595,9 @@ private:
         *m_resolution_scale,
         *m_desktop_fix,
         *m_desktop_fix_skip_present,
-        *m_enable_asynchronous_rendering
+        *m_enable_asynchronous_rendering,
+        *m_enable_sharpening,
+        *m_sharpness
     };
 
     bool m_use_rotation{true};

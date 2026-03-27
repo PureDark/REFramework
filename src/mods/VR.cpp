@@ -464,44 +464,6 @@ bool VR::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* r
     //    }
     //}
 
-    
-    // [PureDark] For fixing blurry UI caused by upscaling
-    if (m_enable_ui_fix->value()) {
-        auto uiTarget = layer->get_ui_target();
-        auto rtv = uiTarget->get_rtv(0);
-        if (rtv != nullptr) {
-            uiTargetEngineTex = rtv->get_texture_d3d12();
-            if (uiTargetEngineTex != nullptr) {
-                auto desc = uiTargetEngineTex->get_desc();
-                if (hudlessEngineTex == NULL || hudlessTargetSize[0] != desc->width || hudlessTargetSize[1] != desc->height) {
-                    hudlessEngineTex = uiTargetEngineTex->clone();
-                    hudlessTargetSize[0] = desc->width;
-                    hudlessTargetSize[1] = desc->height;
-
-                    const auto internal_resource = hudlessEngineTex->get_d3d12_resource_container();
-
-                    if (internal_resource != nullptr) {
-                        hudlessTex = internal_resource->get_native_resource();
-                    }
-                }
-                if (finalColorEngineTex == NULL || finalColorTargetSize[0] != desc->width || finalColorTargetSize[1] != desc->height) {
-                    finalColorEngineTex = uiTargetEngineTex->clone();
-                    finalColorTargetSize[0] = desc->width;
-                    finalColorTargetSize[1] = desc->height;
-
-                    const auto internal_resource = finalColorEngineTex->get_d3d12_resource_container();
-
-                    if (internal_resource != nullptr) {
-                        finalColorTex = internal_resource->get_native_resource();
-                    }
-                }
-                auto context = (sdk::renderer::RenderContext*)render_ctx;
-                hudlessTex->SetName(L"hudlessTex");
-                context->copy_texture(hudlessEngineTex, uiTargetEngineTex);
-            }
-        }
-    }
-
     // just don't render anything at all.
     // overlays just seem to break stuff in VR.
     if (!is_hmd_active()) {
@@ -521,22 +483,6 @@ bool VR::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* r
 }
 
 bool VR::on_pre_overlay_layer_update(sdk::renderer::layer::Overlay* layer, void* render_ctx) {
-    return true;
-}
-
-bool VR::on_pre_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer, void* render_context) {
-    auto context = (sdk::renderer::RenderContext*)render_context;
-    auto scene_layer = (sdk::renderer::layer::Scene*)layer->get_parent();
-
-    if (scene_layer == nullptr)
-        return true;
-
-    // [PureDark] Copying the hudless back to the final buffer does work well with the extracted UI
-    if (m_enable_ui_fix->value() && uiTargetEngineTex && hudlessEngineTex && finalColorEngineTex) {
-        finalColorTex->SetName(L"finalColorTex");
-        context->copy_texture(finalColorEngineTex, uiTargetEngineTex);
-        context->copy_texture(uiTargetEngineTex, hudlessEngineTex);
-    }
     return true;
 }
 
@@ -756,6 +702,7 @@ typedef struct NVSDK_NGX_Parameter {
 } NVSDK_NGX_Parameter;
 
 static NVSDK_NGX_Handle* DLSSHandle = NULL;
+//static NVSDK_NGX_Handle* vrDLSSHandle[2] = { NULL, NULL};
 
 using NVSDK_NGX_D3D12_CreateFeature_t = NVSDK_NGX_Result (*)(ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_Feature InFeatureID,
     const NVSDK_NGX_Parameter* InParameters, NVSDK_NGX_Handle** OutHandle);
@@ -764,10 +711,14 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_CreateFeature(
     ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_Feature InFeatureID, NVSDK_NGX_Parameter* InParameters, NVSDK_NGX_Handle** OutHandle) {
     spdlog::info("hk_NVSDK_NGX_D3D12_CreateFeature FeatureID {}", (int)InFeatureID);
     auto result = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, OutHandle);
+    spdlog::info("hk_NVSDK_NGX_D3D12_CreateFeature 0x{0:x}", (INT64)result);
     if (InFeatureID == NVSDK_NGX_Feature_SuperSampling) {
         DLSSHandle = *OutHandle;
+        //vrDLSSHandle[0] = DLSSHandle;
+        //spdlog::info("Creating additional DLSS instance");
+        //auto result2 = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, &vrDLSSHandle[1]);
+        //spdlog::info("Additional DLSS instance create result 0x{0:x}", (INT64)result2);
     }
-    spdlog::info("hk_NVSDK_NGX_D3D12_CreateFeature 0x{0:x}", (INT64)result);
     return result;
 }
 
@@ -779,6 +730,13 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_ReleaseFeature(NVSDK_NGX_Handle* InHandle) {
     spdlog::info("hk_NVSDK_NGX_D3D12_ReleaseFeature 0x{0:x}", (INT64)result);
     if (DLSSHandle == InHandle) {
         DLSSHandle = NULL;
+        //vrDLSSHandle[0] = NULL;
+        //if (vrDLSSHandle[1] != NULL) {
+        //    spdlog::info("Releasing additional DLSS instance");
+        //    auto result2 = o_NVSDK_NGX_D3D12_ReleaseFeature(vrDLSSHandle[1]);
+        //    spdlog::info("Additional DLSS instance release result 0x{0:x}", (INT64)result2);
+        //    vrDLSSHandle[1] = NULL;
+        //}
     }
     return result;
 }
@@ -790,18 +748,24 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCommandList* I
     if (InFeatureHandle == DLSSHandle) {
         ID3D12Resource* temp;
         InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, &temp);
-        if (temp && VR::get()->motionVectorsTex) {
-            TextureDesc src, dest;
-            src.pTexture = temp;
-            dest.pTexture = VR::get()->motionVectorsTex;
-            VR::get()->d3d12Renderer->Copy(InCmdList, dest, src);
-            auto desc1 = src.pTexture->GetDesc();
-            auto desc2 = dest.pTexture->GetDesc();
+        auto vr = VR::get();
+        if (temp && vr->motionVectorsTex) {
+            auto desc1 = temp->GetDesc();
+            auto desc2 = vr->motionVectorsTex->GetDesc();
             if ((desc1.Width != desc2.Width || desc1.Height != desc2.Height || desc1.Format != desc2.Format)) {
                 spdlog::error("hk_NVSDK_NGX_D3D12_EvaluateFeature motionVectorsTex mistmatch! Desc1:{}x{} {}  Desc2:{}x{} {}", desc1.Width,
                     desc1.Height, (int)desc1.Format, desc2.Width, desc2.Height, (int)desc2.Format);
             }
+            else {
+                TextureDesc src, dest;
+                src.pTexture = temp;
+                dest.pTexture = vr->motionVectorsTex;
+                vr->d3d12Renderer->Copy(InCmdList, dest, src);
+            }
         }
+        //auto frame_count = vr->get_vr_frame_count();
+        //vr->update_camera_data(frame_count);
+        //EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
     }
     auto result = o_NVSDK_NGX_D3D12_EvaluateFeature(InCmdList, InFeatureHandle, InParameters, InCallback);
     return result;
@@ -2466,6 +2430,36 @@ glm::mat4 to_reverseZ(const glm::mat4& proj) {
     return transformMat * proj;
 }
 
+void VR::get_camera_data() {
+}
+
+void VR::update_camera_data(int frame_count) {
+
+    if (last_update_camera_data_frame_count < frame_count) {
+        last_update_camera_data_frame_count = frame_count;
+
+        EyeIndex nEye = (m_render_frame_count % 2 == m_left_eye_interval) ? EyeLeft : EyeRight;
+        EyeIndex nEyeOther = (m_render_frame_count % 2 == m_left_eye_interval) ? EyeRight : EyeLeft;
+
+        glm::mat4 matEyePosRender = get_current_eye_transform(false);
+        glm::mat4 matEyePosProj = get_current_eye_transform(true);
+
+        cameraData[nEye].camWorldToViewMatrix = glm::inverse(m_original_camera_matrix);
+        cameraData[nEye].camViewToWorldMatrix = m_original_camera_matrix;
+        cameraData[nEye].destViewToWorldMatrix = m_render_camera_matrix * matEyePosProj;
+        cameraData[nEye].srcViewToWorldMatrix = m_render_camera_matrix * matEyePosRender;
+        cameraData[nEye].destWorldToViewMatrix = glm::inverse(cameraData[nEye].destViewToWorldMatrix);
+        cameraData[nEye].srcWorldToViewMatrix = glm::inverse(cameraData[nEye].srcViewToWorldMatrix);
+
+        cameraData[nEye].destViewToClipMatrix = to_reverseZ(get_current_projection_matrix(true));
+        cameraData[nEye].destClipToViewMatrix = glm::inverse(cameraData[nEye].destViewToClipMatrix);
+        cameraData[nEye].srcViewToClipMatrix = to_reverseZ(get_current_projection_matrix(false));
+        cameraData[nEye].srcClipToViewMatrix = glm::inverse(cameraData[nEye].srcViewToClipMatrix);
+        cameraData[nEye].camViewToClipMatrix = cameraData[nEye].srcViewToClipMatrix;
+        cameraData[nEye].camClipToViewMatrix = cameraData[nEye].srcClipToViewMatrix;
+    }
+}
+
 void VR::on_present() {
     if ((m_render_frame_count + 1) % 2 == m_left_eye_interval || is_using_afw()) {
         ResetEvent(m_present_finished_event);
@@ -2517,24 +2511,23 @@ void VR::on_present() {
     std::scoped_lock _{m_openvr_mtx};
     m_submitted = false;
 
-	static bool btn4 = false;
-    if (GetAsyncKeyState(VK_NUMPAD4) < 0 && btn4 == false) {
-        btn4 = true;
-    }
-    if (GetAsyncKeyState(VK_NUMPAD4) == 0 && btn4 == true) {
-        btn4 = false;
-        m_clear_before_framewarp->toggle();
-    }
-    
-	static bool btn5 = false;
-    if (GetAsyncKeyState(VK_NUMPAD5) < 0 && btn5 == false) {
-        btn5 = true;
-    }
-    if (GetAsyncKeyState(VK_NUMPAD5) == 0 && btn5 == true) {
-        btn5 = false;
-        int32_t& value = m_framewarp_mode->value();
-        value = (value + 1) % 4; 
-    }
+    //static bool btn4 = false;
+    //if (GetAsyncKeyState(VK_NUMPAD4) < 0 && btn4 == false) {
+    //    btn4 = true;
+    //}
+    //if (GetAsyncKeyState(VK_NUMPAD4) == 0 && btn4 == true) {
+    //    btn4 = false;
+    //    m_clear_before_framewarp->toggle();
+    //}
+    //static bool btn5 = false;
+    //if (GetAsyncKeyState(VK_NUMPAD5) < 0 && btn5 == false) {
+    //    btn5 = true;
+    //}
+    //if (GetAsyncKeyState(VK_NUMPAD5) == 0 && btn5 == true) {
+    //    btn5 = false;
+    //    int32_t& value = m_framewarp_mode->value();
+    //    value = (value + 1) % 4; 
+    //}
     static bool btn6 = false;
     if (GetAsyncKeyState(VK_NUMPAD6) < 0 && btn6 == false) {
         btn6 = true;
@@ -2551,13 +2544,6 @@ void VR::on_present() {
         btn7 = false;
         m_use_afw->toggle();
     }
-    static bool btn8 = false;
-    if (GetAsyncKeyState(VK_NUMPAD8) < 0 && btn8 == false) {
-        btn8 = true;
-    }
-    if (GetAsyncKeyState(VK_NUMPAD8) == 0 && btn8 == true) {
-        btn8 = false;
-    }
     static bool btn9 = false;
     if (GetAsyncKeyState(VK_NUMPAD9) < 0 && btn9 == false) {
         btn9 = true;
@@ -2566,26 +2552,33 @@ void VR::on_present() {
         btn9 = false;
         m_enable_ui_fix->toggle();
     }
-
-    EyeIndex nEye = (m_render_frame_count % 2 == m_left_eye_interval) ? EyeLeft : EyeRight;
-    EyeIndex nEyeOther = (m_render_frame_count % 2 == m_left_eye_interval) ? EyeRight : EyeLeft;
-
-    glm::mat4 matEyePosRender = get_current_eye_transform(false);
-    glm::mat4 matEyePosProj = get_current_eye_transform(true);
-
-    cameraData[nEye].camWorldToViewMatrix = glm::inverse(m_original_camera_matrix);
-    cameraData[nEye].camViewToWorldMatrix = m_original_camera_matrix;
-    cameraData[nEye].destViewToWorldMatrix = m_render_camera_matrix * matEyePosProj;
-    cameraData[nEye].srcViewToWorldMatrix = m_render_camera_matrix * matEyePosRender;
-    cameraData[nEye].destWorldToViewMatrix = glm::inverse(cameraData[nEye].destViewToWorldMatrix);
-    cameraData[nEye].srcWorldToViewMatrix = glm::inverse(cameraData[nEye].srcViewToWorldMatrix);
-
-    cameraData[nEye].destViewToClipMatrix = to_reverseZ(get_current_projection_matrix(true));
-    cameraData[nEye].destClipToViewMatrix = glm::inverse(cameraData[nEye].destViewToClipMatrix);
-    cameraData[nEye].srcViewToClipMatrix = to_reverseZ(get_current_projection_matrix(false));
-    cameraData[nEye].srcClipToViewMatrix = glm::inverse(cameraData[nEye].srcViewToClipMatrix);
-    cameraData[nEye].camViewToClipMatrix = cameraData[nEye].srcViewToClipMatrix;
-    cameraData[nEye].camClipToViewMatrix = cameraData[nEye].srcClipToViewMatrix;
+    static bool btnAdd = false;
+    if (GetAsyncKeyState(VK_ADD) < 0 && btnAdd == false) {
+        btnAdd = true;
+    }
+    if (GetAsyncKeyState(VK_ADD) == 0 && btnAdd == true) {
+        btnAdd = false;
+        auto& sharpness = m_sharpness->value();
+        sharpness += 0.05f;
+    }
+    static bool btnSub = false;
+    if (GetAsyncKeyState(VK_SUBTRACT) < 0 && btnSub == false) {
+        btnSub = true;
+    }
+    if (GetAsyncKeyState(VK_SUBTRACT) == 0 && btnSub == true) {
+        btnSub = false;
+        auto& sharpness = m_sharpness->value();
+        sharpness -= 0.05f;
+    }
+    static bool btnMul = false;
+    if (GetAsyncKeyState(VK_MULTIPLY) < 0 && btnMul == false) {
+        btnMul = true;
+    }
+    if (GetAsyncKeyState(VK_MULTIPLY) == 0 && btnMul == true) {
+        btnMul = false;
+        m_enable_sharpening->toggle();
+    }
+    update_camera_data(m_render_frame_count);
 
     const auto renderer = g_framework->get_renderer_type();
     vr::EVRCompositorError e = vr::EVRCompositorError::VRCompositorError_None;
@@ -4119,11 +4112,14 @@ void VR::on_draw_ui() {
 
     ImGui::Separator();
 
-    m_use_afw->draw("Use AFR");
+    m_use_afw->draw("Use Alternate Frame Warping");
     if (m_use_afw->value()) {
         m_clear_before_framewarp->draw("Clear Before Framewarp");
         m_framewarp_debug->draw("Debug Framewarp");
         m_enable_ui_fix->draw("Enable Framewarp UI Fix");
+        m_enable_sharpening->draw("Enable Sharpening");
+        m_sharpness->draw("Sharpness");
+        m_fix_dlss->draw("Fix DLSS");
         m_ignore_motion_threshold->draw("Ignore Motion Threshold");
         m_framewarp_mode->draw("Framewarp Mode");
     }    ImGui::Separator();
