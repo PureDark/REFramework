@@ -31,11 +31,18 @@ class REManagedObject;
 class VR : public Mod {
 public:
     CameraData cameraData[2];
+    CameraDataMVCorrection cameraDataForMV[2];
     ID3D12Resource* depthTex = NULL;
     ID3D12Resource* motionVectorsTex = NULL;
-    ID3D12Resource* motionVectorsBackupTex = NULL;
     ID3D12Resource* uiBufferTex = NULL;
     D3D12RendererAPI* d3d12Renderer = nullptr;
+
+    TextureDesc depthDesc;
+    TextureDesc motionVectorsDesc;
+
+    bool mDebug1 = false;
+    bool mDebug2 = false;
+    bool mDebug3 = false;
 
     int last_update_camera_data_frame_count = 0;
     void update_camera_data(int frame_count);
@@ -259,7 +266,9 @@ private:
         Matrix4x4f view_projection_matrix{};
     };
 
-    std::array<SceneLayerData, 5> m_scene_layer_data {};
+    std::array<SceneLayerData, 5> m_scene_layer_data{};
+    std::array<std::array<Matrix4x4f, 6>, 2> m_old_view_matrix{};
+    std::array<std::array<Matrix4x4f, 6>, 2> m_old_projection_matrix{};
 
     static void wwise_listener_update_hook(void* listener);
 

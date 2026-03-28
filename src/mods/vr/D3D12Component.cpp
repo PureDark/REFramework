@@ -79,25 +79,17 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             texDesc[texIndex].initialState = D3D12_RESOURCE_STATE_PRESENT;
             vr->d3d12Renderer->SetupTextureDesc(texDesc[texIndex]);
         }
-        static TextureDesc depthDesc;
-        if (depthDesc.pTexture != vr->depthTex) {
-            depthDesc.pTexture = vr->depthTex;
-            depthDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-            vr->d3d12Renderer->SetupTextureDesc(depthDesc);
+        if (vr->depthDesc.pTexture != vr->depthTex) {
+            vr->depthDesc.pTexture = vr->depthTex;
+            vr->depthDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            vr->d3d12Renderer->SetupTextureDesc(vr->depthDesc);
         }
-        static TextureDesc motionVectorsDesc;
-        //if (motionVectorsDesc.pTexture != vr->motionVectorsTex) {
-        //    motionVectorsDesc.pTexture = vr->motionVectorsTex;
-        //    motionVectorsDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-        //    motionVectorsDesc.srvPos = vr->d3d12Renderer->CreateSRV(motionVectorsDesc.pTexture, motionVectorsDesc.srvPos);
-        //    motionVectorsDesc.shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(motionVectorsDesc.srvPos);
-        //}
         auto desc = vr->depthTex->GetDesc();
         if (vr->depthTex && (vr->motionVectorsTex == NULL || vr->motionVectorsTex->GetDesc().Width != desc.Width ||
                                 vr->motionVectorsTex->GetDesc().Height != desc.Height)) {
-            vr->d3d12Renderer->CreateTexture(
-                desc.Width, desc.Height, DXGI_FORMAT_R16G16_FLOAT, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, motionVectorsDesc, false);
-            vr->motionVectorsTex = motionVectorsDesc.pTexture;
+            vr->d3d12Renderer->CreateTexture(desc.Width, desc.Height, DXGI_FORMAT_R16G16_FLOAT, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                vr->motionVectorsDesc, false);
+            vr->motionVectorsTex = vr->motionVectorsDesc.pTexture;
         }
         static TextureDesc uiBufferDesc;
         if (vr->m_enable_ui_fix->value() && uiBufferDesc.pTexture != vr->uiBufferTex) {
@@ -108,8 +100,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         static FrameBufferDesc s_CurrentEyeFrameBuffer{};
 
         s_CurrentEyeFrameBuffer.color = texDesc[texIndex];
-        s_CurrentEyeFrameBuffer.depth = depthDesc;
-        s_CurrentEyeFrameBuffer.motionVectors = motionVectorsDesc;
+        s_CurrentEyeFrameBuffer.depth = vr->depthDesc;
+        s_CurrentEyeFrameBuffer.motionVectors = vr->motionVectorsDesc;
 
         auto cmdList = vr->d3d12Renderer->BeginCommandList(backbuffer_index);
 

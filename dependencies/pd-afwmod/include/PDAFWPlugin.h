@@ -96,6 +96,25 @@ namespace pd {
 		glm::mat4 camClipToViewMatrix;   // but it's usually harder to render UI to reprojected image yourself.
 	};
 
+	// dest -> current eye previous frame
+	// src -> current eye current frame (rendered)
+	// srcPrev -> other eye previous farme (rendered)
+	struct CameraDataMVCorrection
+	{
+		glm::mat4 destWorldToViewMatrix;
+		glm::mat4 destViewToWorldMatrix;
+		glm::mat4 destViewToClipMatrix;
+		glm::mat4 destClipToViewMatrix;
+		glm::mat4 srcWorldToViewMatrix;
+		glm::mat4 srcViewToWorldMatrix;
+		glm::mat4 srcViewToClipMatrix;
+		glm::mat4 srcClipToViewMatrix;
+		glm::mat4 srcWorldToViewMatrixPrev;
+		glm::mat4 srcViewToWorldMatrixPrev;
+		glm::mat4 srcViewToClipMatrixPrev;
+		glm::mat4 srcClipToViewMatrixPrev;
+	};
+
 	struct FrameWarpEvaluateParams
 	{
 		void*            InCmdList = NULL;            // optional, leave it NULL to use the built-in command list, which will execute immediately so better to submit your own command lists before calling
@@ -127,7 +146,7 @@ namespace pd {
 	{
 		TextureDesc* inMotionVectors;
 		TextureDesc* inDepth;
-		CameraData*  cameraData;
+		CameraDataMVCorrection*  cameraData;
 		float        InMotionScale[2] = { 0.0f, 0.0f };
 	};
 

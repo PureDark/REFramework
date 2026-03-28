@@ -440,30 +440,6 @@ bool VR::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* r
 
     uiBufferTex = layer->get_ui_buffer_tex_d3d12();
 
-    //if (motionVectorsState) {
-    //    auto rtv = motionVectorsState->get_rtv(0);
-    //    if (rtv != nullptr) {
-    //        motionVectorsEngineTex = rtv->get_texture_d3d12();
-    //        if (motionVectorsEngineTex != nullptr) {
-    //            auto desc = motionVectorsEngineTex->get_desc();
-    //            if (motionVectorsBackupEngineTex == NULL || 
-    //                motionVectorsTargetSize[0] != desc->width ||
-    //                motionVectorsTargetSize[1] != desc->height) {
-    //                motionVectorsBackupEngineTex = motionVectorsEngineTex->clone();
-    //                motionVectorsTargetSize[0] = desc->width;
-    //                motionVectorsTargetSize[1] = desc->height;
-    //                const auto internal_resource = motionVectorsBackupEngineTex->get_d3d12_resource_container();
-    //                if (internal_resource != nullptr) {
-    //                    motionVectorsBackupTex = internal_resource->get_native_resource();
-    //                }
-    //            }
-    //            auto context = (sdk::renderer::RenderContext*)render_ctx;
-    //            motionVectorsBackupTex->SetName(L"motionVectorsBackupTex");
-    //            //context->copy_texture(motionVectorsEngineTex, motionVectorsBackupEngineTex);
-    //        }
-    //    }
-    //}
-
     // just don't render anything at all.
     // overlays just seem to break stuff in VR.
     if (!is_hmd_active()) {
@@ -551,7 +527,6 @@ bool VR::on_pre_scene_layer_update(sdk::renderer::layer::Scene* layer, void* ren
     if (!is_hmd_active()) {
         return true;
     }
-
     if (m_disable_temporal_fix) {
         return true;
     }
@@ -562,12 +537,12 @@ bool VR::on_pre_scene_layer_update(sdk::renderer::layer::Scene* layer, void* ren
     auto jitter_disable_scene_info = layer->get_jitter_disable_scene_info();
     auto z_prepass_scene_info = layer->get_z_prepass_scene_info();
 
-    m_scene_layer_data = std::array<SceneLayerData, 5> {
-        SceneLayerData{ scene_info },
-        SceneLayerData{ depth_distortion_scene_info },
-        SceneLayerData{ filter_scene_info },
-        SceneLayerData{ jitter_disable_scene_info },
-        SceneLayerData{ z_prepass_scene_info },
+    m_scene_layer_data = std::array<SceneLayerData, 5>{
+        SceneLayerData{scene_info},
+        SceneLayerData{depth_distortion_scene_info},
+        SceneLayerData{filter_scene_info},
+        SceneLayerData{jitter_disable_scene_info},
+        SceneLayerData{z_prepass_scene_info},
     };
 
     m_set_next_scene_layer_data = true;
@@ -579,18 +554,57 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
         return;
     }
 
-    if (m_disable_temporal_fix) {
+    // Other layers appear when using scopes or mirrors are displayed
+    if (!layer->is_fully_rendered() || !layer->has_main_camera()) {
         return;
     }
 
-    if (m_set_next_scene_layer_data) {
-        for (auto& d : m_scene_layer_data) {
-            if (d.scene_info != nullptr) {
-                d.scene_info->old_view_projection_matrix = d.view_projection_matrix;
-            }
-        }
+    if (m_fix_dlss->value()) {
+        auto eye_index = m_frame_count % 2 == m_left_eye_interval ? EyeLeft : EyeRight;
+        auto other_eye_index = m_frame_count % 2 == m_left_eye_interval ? EyeRight : EyeLeft;
 
-        m_set_next_scene_layer_data = false;
+        auto scene_info = layer->get_scene_info();
+        auto depth_distortion_scene_info = layer->get_depth_distortion_scene_info();
+        auto filter_scene_info = layer->get_filter_scene_info();
+        auto jitter_disable_scene_info = layer->get_jitter_disable_scene_info();
+        auto jitter_disable_post_scene_info = layer->get_jitter_disable_post_scene_info();
+        auto z_prepass_scene_info = layer->get_z_prepass_scene_info();
+
+        update_camera_data(m_frame_count);
+        glm::mat4 matEyePosRender = get_current_eye_transform(false);
+        glm::mat4 matEyePosProj = get_current_eye_transform(true);
+
+        auto fix_motion_vectors = [&](int32_t i, sdk::renderer::SceneInfo* scene_info) {
+            if (scene_info == nullptr) {
+                return;
+            }
+            auto old_view_matrix = this->m_old_view_matrix[other_eye_index][i];
+
+            // get view matrix for the other eye
+            auto new_view_matrix = matEyePosProj * matEyePosProj * old_view_matrix;
+            auto old_projection_matrix = this->m_old_projection_matrix[other_eye_index][i];
+            old_projection_matrix[2][0] = 0;
+            old_projection_matrix[2][1] = 0;
+            scene_info->old_view_projection_matrix = old_projection_matrix * new_view_matrix;
+            this->m_old_view_matrix[eye_index][i] = scene_info->view_matrix;
+            this->m_old_projection_matrix[eye_index][i] = scene_info->projection_matrix;
+        };
+        fix_motion_vectors(0, scene_info);
+        fix_motion_vectors(1, depth_distortion_scene_info);
+        fix_motion_vectors(2, filter_scene_info);
+        fix_motion_vectors(3, jitter_disable_scene_info);
+        fix_motion_vectors(4, jitter_disable_post_scene_info);
+        fix_motion_vectors(5, z_prepass_scene_info);
+    } else if (!m_disable_temporal_fix) {
+        if (m_set_next_scene_layer_data) {
+            for (auto& d : m_scene_layer_data) {
+                if (d.scene_info != nullptr) {
+                    d.scene_info->old_view_projection_matrix = d.view_projection_matrix;
+                }
+            }
+
+            m_set_next_scene_layer_data = false;
+        }
     }
 }
 
@@ -701,9 +715,9 @@ typedef struct NVSDK_NGX_Parameter {
     virtual void Reset() = 0;
 } NVSDK_NGX_Parameter;
 
-static NVSDK_NGX_Handle* DLSSHandle = NULL;
-//static NVSDK_NGX_Handle* vrDLSSHandle[2] = { NULL, NULL};
+static NVSDK_NGX_Handle* vrDLSSHandle[2] = { NULL, NULL};
 
+#define NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags "DLSS.Feature.Create.Flags"
 using NVSDK_NGX_D3D12_CreateFeature_t = NVSDK_NGX_Result (*)(ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_Feature InFeatureID,
     const NVSDK_NGX_Parameter* InParameters, NVSDK_NGX_Handle** OutHandle);
 static NVSDK_NGX_D3D12_CreateFeature_t o_NVSDK_NGX_D3D12_CreateFeature = nullptr;
@@ -711,13 +725,14 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_CreateFeature(
     ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_Feature InFeatureID, NVSDK_NGX_Parameter* InParameters, NVSDK_NGX_Handle** OutHandle) {
     spdlog::info("hk_NVSDK_NGX_D3D12_CreateFeature FeatureID {}", (int)InFeatureID);
     auto result = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, OutHandle);
-    spdlog::info("hk_NVSDK_NGX_D3D12_CreateFeature 0x{0:x}", (INT64)result);
+    int flag;
+    InParameters->Get(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags, &flag);
+    spdlog::info("hk_NVSDK_NGX_D3D12_CreateFeature 0x{0:x}", (INT64)result, flag);
     if (InFeatureID == NVSDK_NGX_Feature_SuperSampling) {
-        DLSSHandle = *OutHandle;
-        //vrDLSSHandle[0] = DLSSHandle;
-        //spdlog::info("Creating additional DLSS instance");
-        //auto result2 = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, &vrDLSSHandle[1]);
-        //spdlog::info("Additional DLSS instance create result 0x{0:x}", (INT64)result2);
+        vrDLSSHandle[0] = *OutHandle;
+        spdlog::info("Creating additional DLSS instance");
+        auto result2 = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, &vrDLSSHandle[1]);
+        spdlog::info("Additional DLSS instance create result 0x{0:x}", (INT64)result2);
     }
     return result;
 }
@@ -728,44 +743,51 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_ReleaseFeature(NVSDK_NGX_Handle* InHandle) {
     spdlog::info("hk_NVSDK_NGX_D3D12_ReleaseFeature Starts");
     auto result = o_NVSDK_NGX_D3D12_ReleaseFeature(InHandle);
     spdlog::info("hk_NVSDK_NGX_D3D12_ReleaseFeature 0x{0:x}", (INT64)result);
-    if (DLSSHandle == InHandle) {
-        DLSSHandle = NULL;
-        //vrDLSSHandle[0] = NULL;
-        //if (vrDLSSHandle[1] != NULL) {
-        //    spdlog::info("Releasing additional DLSS instance");
-        //    auto result2 = o_NVSDK_NGX_D3D12_ReleaseFeature(vrDLSSHandle[1]);
-        //    spdlog::info("Additional DLSS instance release result 0x{0:x}", (INT64)result2);
-        //    vrDLSSHandle[1] = NULL;
-        //}
+    if (vrDLSSHandle[0] == InHandle) {
+        vrDLSSHandle[0] = NULL;
+        if (vrDLSSHandle[1] != NULL) {
+            spdlog::info("Releasing additional DLSS instance");
+            auto result2 = o_NVSDK_NGX_D3D12_ReleaseFeature(vrDLSSHandle[1]);
+            spdlog::info("Additional DLSS instance release result 0x{0:x}", (INT64)result2);
+            vrDLSSHandle[1] = NULL;
+        }
     }
     return result;
 }
 
 #define NVSDK_NGX_Parameter_MotionVectors "MotionVectors"
-using NVSDK_NGX_D3D12_EvaluateFeature_t = NVSDK_NGX_Result (*)(ID3D12GraphicsCommandList* InCmdList, const NVSDK_NGX_Handle* InFeatureHandle, const NVSDK_NGX_Parameter* InParameters, void* InCallback);
+using NVSDK_NGX_D3D12_EvaluateFeature_t = NVSDK_NGX_Result (*)(ID3D12GraphicsCommandList* InCmdList, const NVSDK_NGX_Handle* InFeatureHandle, NVSDK_NGX_Parameter* InParameters, void* InCallback);
 static NVSDK_NGX_D3D12_EvaluateFeature_t o_NVSDK_NGX_D3D12_EvaluateFeature = nullptr;
-NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCommandList* InCmdList, const NVSDK_NGX_Handle* InFeatureHandle,  const NVSDK_NGX_Parameter* InParameters, void* InCallback) {
-    if (InFeatureHandle == DLSSHandle) {
+NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCommandList* InCmdList, const NVSDK_NGX_Handle* InFeatureHandle,  NVSDK_NGX_Parameter* InParameters, void* InCallback) {
+    if (InFeatureHandle == vrDLSSHandle[0]) {
         ID3D12Resource* temp;
         InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, &temp);
         auto vr = VR::get();
-        if (temp && vr->motionVectorsTex) {
+        if (vr->is_hmd_active() && temp && vr->motionVectorsTex) {
             auto desc1 = temp->GetDesc();
             auto desc2 = vr->motionVectorsTex->GetDesc();
-            if ((desc1.Width != desc2.Width || desc1.Height != desc2.Height || desc1.Format != desc2.Format)) {
-                spdlog::error("hk_NVSDK_NGX_D3D12_EvaluateFeature motionVectorsTex mistmatch! Desc1:{}x{} {}  Desc2:{}x{} {}", desc1.Width,
-                    desc1.Height, (int)desc1.Format, desc2.Width, desc2.Height, (int)desc2.Format);
-            }
-            else {
+            if ((desc1.Width == desc2.Width && desc1.Height == desc2.Height && desc1.Format == desc2.Format)) {
                 TextureDesc src, dest;
                 src.pTexture = temp;
                 dest.pTexture = vr->motionVectorsTex;
                 vr->d3d12Renderer->Copy(InCmdList, dest, src);
+                if (vr->mDebug3) {
+                    EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
+                    CorrectMotionVectorsParams mvparams;
+                    mvparams.inMotionVectors = &vr->motionVectorsDesc;
+                    mvparams.inDepth = &vr->depthDesc;
+                    mvparams.cameraData = &vr->cameraDataForMV[nEye];
+                    mvparams.InMotionScale[0] = {float(desc1.Width)};
+                    mvparams.InMotionScale[1] = {float(desc1.Height)};
+                    auto correctedMV = vr->d3d12Renderer->CorrectMotionVectors(InCmdList, mvparams);
+                    InParameters->Set(NVSDK_NGX_Parameter_MotionVectors, (ID3D12Resource*)correctedMV.pTexture);
+                }
+            }
+            else {
+                spdlog::error("hk_NVSDK_NGX_D3D12_EvaluateFeature motionVectorsTex mistmatch! Desc1:{}x{} {}  Desc2:{}x{} {}", desc1.Width,
+                    desc1.Height, (int)desc1.Format, desc2.Width, desc2.Height, (int)desc2.Format);
             }
         }
-        //auto frame_count = vr->get_vr_frame_count();
-        //vr->update_camera_data(frame_count);
-        //EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
     }
     auto result = o_NVSDK_NGX_D3D12_EvaluateFeature(InCmdList, InFeatureHandle, InParameters, InCallback);
     return result;
@@ -2457,10 +2479,63 @@ void VR::update_camera_data(int frame_count) {
         cameraData[nEye].srcClipToViewMatrix = glm::inverse(cameraData[nEye].srcViewToClipMatrix);
         cameraData[nEye].camViewToClipMatrix = cameraData[nEye].srcViewToClipMatrix;
         cameraData[nEye].camClipToViewMatrix = cameraData[nEye].srcClipToViewMatrix;
+
+        // dest -> current eye previous frame (reprojected)
+        // src -> current eye current frame (rendered)
+        // srcPrev -> other eye previous farme (rendered)
+
+        cameraDataForMV[nEye].destViewToWorldMatrix = cameraData[nEyeOther].destViewToWorldMatrix;
+        cameraDataForMV[nEye].destWorldToViewMatrix = cameraData[nEyeOther].destWorldToViewMatrix;
+        cameraDataForMV[nEye].destViewToClipMatrix = cameraData[nEyeOther].destViewToClipMatrix;
+        cameraDataForMV[nEye].destClipToViewMatrix = cameraData[nEyeOther].destClipToViewMatrix;
+
+        cameraDataForMV[nEye].srcViewToWorldMatrix = cameraData[nEye].srcViewToWorldMatrix;
+        cameraDataForMV[nEye].srcWorldToViewMatrix = cameraData[nEye].srcWorldToViewMatrix;
+        cameraDataForMV[nEye].srcViewToClipMatrix = cameraData[nEye].srcViewToClipMatrix;
+        cameraDataForMV[nEye].srcClipToViewMatrix = cameraData[nEye].srcClipToViewMatrix;
+
+        cameraDataForMV[nEye].srcViewToWorldMatrixPrev = cameraData[nEyeOther].srcViewToWorldMatrix;
+        cameraDataForMV[nEye].srcWorldToViewMatrixPrev = cameraData[nEyeOther].srcWorldToViewMatrix;
+        cameraDataForMV[nEye].srcViewToClipMatrixPrev = cameraData[nEyeOther].srcViewToClipMatrix;
+        cameraDataForMV[nEye].srcClipToViewMatrixPrev = cameraData[nEyeOther].srcClipToViewMatrix;
     }
 }
 
 void VR::on_present() {
+
+    static bool btn1 = false;
+    if (GetAsyncKeyState(VK_NUMPAD1) < 0 && btn1 == false) {
+        btn1 = true;
+    }
+    if (GetAsyncKeyState(VK_NUMPAD1) == 0 && btn1 == true) {
+        btn1 = false;
+        mDebug1 = !mDebug1;
+    }
+    static bool btn2 = false;
+    if (GetAsyncKeyState(VK_NUMPAD2) < 0 && btn2 == false) {
+        btn2 = true;
+    }
+    if (GetAsyncKeyState(VK_NUMPAD2) == 0 && btn2 == true) {
+        btn2 = false;
+        mDebug2 = !mDebug2;
+    }
+    static bool btn3 = false;
+    if (GetAsyncKeyState(VK_NUMPAD3) < 0 && btn3 == false) {
+        btn3 = true;
+    }
+    if (GetAsyncKeyState(VK_NUMPAD3) == 0 && btn3 == true) {
+        btn3 = false;
+        mDebug3 = !mDebug3;
+    }
+    static bool btn4 = false;
+    if (GetAsyncKeyState(VK_NUMPAD4) < 0 && btn4 == false) {
+        btn4 = true;
+    }
+    if (GetAsyncKeyState(VK_NUMPAD4) == 0 && btn4 == true) {
+        btn4 = false;
+        m_fix_dlss->toggle();
+    }
+
     if ((m_render_frame_count + 1) % 2 == m_left_eye_interval || is_using_afw()) {
         ResetEvent(m_present_finished_event);
     }
@@ -2510,15 +2585,6 @@ void VR::on_present() {
     // attempt to fix crash when reinitializing openvr
     std::scoped_lock _{m_openvr_mtx};
     m_submitted = false;
-
-    //static bool btn4 = false;
-    //if (GetAsyncKeyState(VK_NUMPAD4) < 0 && btn4 == false) {
-    //    btn4 = true;
-    //}
-    //if (GetAsyncKeyState(VK_NUMPAD4) == 0 && btn4 == true) {
-    //    btn4 = false;
-    //    m_clear_before_framewarp->toggle();
-    //}
     //static bool btn5 = false;
     //if (GetAsyncKeyState(VK_NUMPAD5) < 0 && btn5 == false) {
     //    btn5 = true;
