@@ -868,7 +868,7 @@ void RenderContext::copy_texture(Texture* dest, Texture* src, Fence& fence) {
 
     func(this, dest, src, fence);
 #else
-    using CopyTexFn = void (*)(RenderContext*, Texture*, void*, Texture*, void*, Fence&);
+    using CopyTexFn = void (*)(RenderContext*, Texture*, int32_t, Texture*, int32_t, Fence&);
     static auto func = []() -> CopyTexFn {
         spdlog::info("Searching for RenderContext::copy_texture (>= TDB82)");
 
@@ -894,9 +894,9 @@ void RenderContext::copy_texture(Texture* dest, Texture* src, Fence& fence) {
     }();
 
     // src, src_subresource, dst, dst_subresource, fence
-    func(this, src, nullptr, dest, nullptr, fence);
+    func(this, src, -1, dest, -1, fence);
 #endif
-    //#endif
+//#endif
 }
 
 std::optional<uint32_t> Renderer::get_render_frame() const {
