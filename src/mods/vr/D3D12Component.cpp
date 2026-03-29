@@ -71,7 +71,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     if (vr->is_using_afw() && (!m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture || !m_eyeFrameBuffers.eyeFrameBuffers[1].color.pTexture))
         force_reset();
 
-    if (vr->is_using_afw() && m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture && vr->depthTex && vr->m_framewarp_mode->value() > 0) {
+    if (vr->is_using_afw() && m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture && vr->depthTex) {
         static TextureDesc texDesc[4];
         int texIndex = m_backbuffer_is_8bit ? backbuffer_index : 3;
         if (texDesc[texIndex].pTexture != eye_texture.Get()) {

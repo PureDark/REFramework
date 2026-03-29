@@ -3017,7 +3017,7 @@ bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_conte
                         auto camera_transform = camera_object->transform;
 
                         const auto& camera_matrix = m_original_camera_matrix;
-                        const auto& camera_position = camera_matrix[3];
+                        auto camera_position = camera_matrix[3];
 
                         glm::quat wanted_rotation{};
                         
@@ -3122,6 +3122,13 @@ bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_conte
                         }
 
                         const auto wanted_rotation_mat = Matrix4x4f{wanted_rotation};
+
+#if defined(RE9)
+                        if (is_using_afw() && name_hash == "Gui_ui2010"_fnv) {
+                            const auto eye_camera_matrix = m_original_camera_matrix * get_current_eye_transform(true);
+                            camera_position = eye_camera_matrix[3];
+                        }
+ #endif
 
                         gui_matrix = wanted_rotation_mat;
                         gui_matrix[3] = camera_position + (wanted_rotation_mat[2] * ui_distance) + (wanted_rotation_mat[0] * right_world_adjust);

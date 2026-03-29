@@ -525,9 +525,9 @@ private:
     const ModToggle::Ptr m_use_afw{ModToggle::create(generate_name("AlternateFrameWrapping"), true)};
     const ModToggle::Ptr m_clear_before_framewarp{ModToggle::create(generate_name("ClearBeforeFramewarp"), false)};
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
-    const ModToggle::Ptr m_enable_sharpening{ModToggle::create(generate_name("EnableSharpening"), false)};
-    const ModToggle::Ptr m_fix_dlss{ModToggle::create(generate_name("FixDLSS"), false)};
-    const ModSlider::Ptr m_sharpness{ModSlider::create(generate_name("Sharpness"), 0.0f, 1.0f, 0.0f)};
+    const ModToggle::Ptr m_enable_sharpening{ModToggle::create(generate_name("EnableSharpening"), true)};
+    const ModToggle::Ptr m_fix_dlss{ModToggle::create(generate_name("FixDLSS"), true)};
+    const ModSlider::Ptr m_sharpness{ModSlider::create(generate_name("Sharpness"), 0.0f, 1.0f, 0.6f)};
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
     const ModSlider::Ptr m_ignore_motion_threshold{ModSlider::create(generate_name("IgnoreMotionThreshold"), 1.0f, 100.0f, 2.5f)};
 
@@ -607,7 +607,8 @@ private:
         *m_desktop_fix_skip_present,
         *m_enable_asynchronous_rendering,
         *m_enable_sharpening,
-        *m_sharpness
+        *m_sharpness,
+        *m_fix_dlss
     };
 
     bool m_use_rotation{true};
