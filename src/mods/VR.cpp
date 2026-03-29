@@ -570,22 +570,15 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
         auto jitter_disable_post_scene_info = layer->get_jitter_disable_post_scene_info();
         auto z_prepass_scene_info = layer->get_z_prepass_scene_info();
 
-        update_camera_data(m_frame_count);
-        glm::mat4 matEyePosRender = get_current_eye_transform(false);
-        glm::mat4 matEyePosProj = get_current_eye_transform(true);
-
         auto fix_motion_vectors = [&](int32_t i, sdk::renderer::SceneInfo* scene_info) {
             if (scene_info == nullptr) {
                 return;
             }
-            auto old_view_matrix = this->m_old_view_matrix[other_eye_index][i];
-
-            // get view matrix for the other eye
-            auto new_view_matrix = matEyePosProj * matEyePosProj * old_view_matrix;
-            auto old_projection_matrix = this->m_old_projection_matrix[other_eye_index][i];
+            auto old_view_matrix = this->m_old_view_matrix[eye_index][i];
+            auto old_projection_matrix = this->m_old_projection_matrix[eye_index][i];
             old_projection_matrix[2][0] = 0;
             old_projection_matrix[2][1] = 0;
-            scene_info->old_view_projection_matrix = old_projection_matrix * new_view_matrix;
+            scene_info->old_view_projection_matrix = old_projection_matrix * old_view_matrix;
             this->m_old_view_matrix[eye_index][i] = scene_info->view_matrix;
             this->m_old_projection_matrix[eye_index][i] = scene_info->projection_matrix;
         };
@@ -727,7 +720,7 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_CreateFeature(
     auto result = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, OutHandle);
     int flag;
     InParameters->Get(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags, &flag);
-    spdlog::info("hk_NVSDK_NGX_D3D12_CreateFeature 0x{0:x}", (INT64)result, flag);
+    spdlog::info("hk_NVSDK_NGX_D3D12_CreateFeature 0x{0:x}", (INT64)result);
     if (InFeatureID == NVSDK_NGX_Feature_SuperSampling) {
         vrDLSSHandle[0] = *OutHandle;
         spdlog::info("Creating additional DLSS instance");
@@ -755,32 +748,64 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_ReleaseFeature(NVSDK_NGX_Handle* InHandle) {
     return result;
 }
 
+#define NVSDK_NGX_SUCCEED(value) (((value) & 0xFFF00000) != 0xBAD00000)
+#define NVSDK_NGX_FAILED(value) (((value) & 0xFFF00000) == 0xBAD00000)
+#define NVSDK_NGX_Parameter_Color "Color"
+#define NVSDK_NGX_Parameter_Depth "Depth"
 #define NVSDK_NGX_Parameter_MotionVectors "MotionVectors"
+#define NVSDK_NGX_Parameter_Output "Output"
+#define NVSDK_NGX_Parameter_MV_Scale_X "MV.Scale.X"
+#define NVSDK_NGX_Parameter_MV_Scale_Y "MV.Scale.Y"
 using NVSDK_NGX_D3D12_EvaluateFeature_t = NVSDK_NGX_Result (*)(ID3D12GraphicsCommandList* InCmdList, const NVSDK_NGX_Handle* InFeatureHandle, NVSDK_NGX_Parameter* InParameters, void* InCallback);
 static NVSDK_NGX_D3D12_EvaluateFeature_t o_NVSDK_NGX_D3D12_EvaluateFeature = nullptr;
 NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCommandList* InCmdList, const NVSDK_NGX_Handle* InFeatureHandle,  NVSDK_NGX_Parameter* InParameters, void* InCallback) {
     if (InFeatureHandle == vrDLSSHandle[0]) {
-        ID3D12Resource* temp;
-        InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, &temp);
+        ID3D12Resource* color;
+        ID3D12Resource* depth;
+        ID3D12Resource* motionVectors;
+        ID3D12Resource* output;
+        InParameters->Get(NVSDK_NGX_Parameter_Color, &color);
+        InParameters->Get(NVSDK_NGX_Parameter_Depth, &depth);
+        InParameters->Get(NVSDK_NGX_Parameter_MotionVectors, &motionVectors);
+        InParameters->Get(NVSDK_NGX_Parameter_Output, &output);
+        float mvScaleX;
+        float mvScaleY;
+        InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_X, &mvScaleX);
+        InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &mvScaleY);
         auto vr = VR::get();
-        if (vr->is_hmd_active() && temp && vr->motionVectorsTex) {
-            auto desc1 = temp->GetDesc();
+        if (vr->is_hmd_active() && motionVectors && vr->motionVectorsTex) {
+            auto desc1 = motionVectors->GetDesc();
             auto desc2 = vr->motionVectorsTex->GetDesc();
             if ((desc1.Width == desc2.Width && desc1.Height == desc2.Height && desc1.Format == desc2.Format)) {
                 TextureDesc src, dest;
-                src.pTexture = temp;
+                src.pTexture = motionVectors;
                 dest.pTexture = vr->motionVectorsTex;
                 vr->d3d12Renderer->Copy(InCmdList, dest, src);
-                if (vr->mDebug3) {
+
+                if (vr->is_fix_dlss()) {
                     EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
-                    CorrectMotionVectorsParams mvparams;
-                    mvparams.inMotionVectors = &vr->motionVectorsDesc;
-                    mvparams.inDepth = &vr->depthDesc;
-                    mvparams.cameraData = &vr->cameraDataForMV[nEye];
-                    mvparams.InMotionScale[0] = {float(desc1.Width)};
-                    mvparams.InMotionScale[1] = {float(desc1.Height)};
-                    auto correctedMV = vr->d3d12Renderer->CorrectMotionVectors(InCmdList, mvparams);
-                    InParameters->Set(NVSDK_NGX_Parameter_MotionVectors, (ID3D12Resource*)correctedMV.pTexture);
+                    EyeIndex nEyeOther = (nEye == EyeLeft) ? EyeRight : EyeLeft;
+                    auto currHandle = (nEye == EyeLeft) ? vrDLSSHandle[0] : vrDLSSHandle[1];
+                    auto otherHandle = (nEye == EyeLeft) ? vrDLSSHandle[1] : vrDLSSHandle[0];
+
+                    //if (vr->mDebug3) {
+                    //    EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
+                    //    CorrectMotionVectorsParams mvparams;
+                    //    mvparams.inMotionVectors = &vr->motionVectorsDesc;
+                    //    mvparams.inDepth = &vr->depthDesc;
+                    //    mvparams.cameraData = &vr->cameraDataForMV[nEye];
+                    //    mvparams.InMotionScale[0] = mvScaleX;
+                    //    mvparams.InMotionScale[1] = mvScaleY;
+                    //    auto correctedMV = vr->d3d12Renderer->CorrectMotionVectors(InCmdList, mvparams);
+                    //    InParameters->Set(NVSDK_NGX_Parameter_MotionVectors, correctedMV.pTexture);
+                    //}
+
+                    // current rendered eye
+                    auto result = o_NVSDK_NGX_D3D12_EvaluateFeature(InCmdList, currHandle, InParameters, InCallback);
+                    if (NVSDK_NGX_FAILED(result)) {
+                        spdlog::error("Failed DLSS 00, code = 0x{0:x}", result);
+                    }
+                    return result;
                 }
             }
             else {

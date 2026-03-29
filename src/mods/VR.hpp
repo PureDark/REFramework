@@ -48,6 +48,7 @@ public:
     void update_camera_data(int frame_count);
     void get_camera_data();
 
+    bool is_fix_dlss() { return m_fix_dlss->value(); };
     bool is_enable_sharpening() { return m_enable_sharpening->value(); };
     float get_sharpness() { return m_sharpness->value(); };
     int get_vr_frame_count() { return m_frame_count; };

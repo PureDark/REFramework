@@ -109,6 +109,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         if (vr->is_enable_sharpening() && vr->get_sharpness() > 0) {
             auto eyeFrameBuffer = (nEye == vr::Eye_Left) ? m_eyeFrameBuffers.eyeFrameBuffers[0] : m_eyeFrameBuffers.eyeFrameBuffers[1];
             vr->d3d12Renderer->Sharpen(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vr->get_sharpness());
+            vr->d3d12Renderer->Copy(cmdList, s_CurrentEyeFrameBuffer.color, eyeFrameBuffer.color);
             s_CurrentEyeFrameBuffer.color = eyeFrameBuffer.color;
         }
 
@@ -122,7 +123,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             params.IsHudlessColor = true;
         }
         auto colorDesc = s_CurrentEyeFrameBuffer.color.pTexture->GetDesc();
-        params.IsMotionVectorsOtherEye = true;
+        params.IsMotionVectorsOtherEye = !vr->is_fix_dlss();
         //params.InMotionScale[0] = (float)colorDesc.Width / 2.0f;
         //params.InMotionScale[1] = -1.0f * ((float)colorDesc.Height / 2.0f);
         params.InMotionScale[0] = (float)colorDesc.Width;
@@ -171,7 +172,6 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             }
             if (vr->is_using_afw()) {
                 //auto& ctx = m_openvr.acquire_right();
-                //m_openvr.copy_right(eye_texture.Get());
                 //if (params.OutEyeColor && vr->m_use_reprojection->value()) {
                 //    ctx.commands.copy((ID3D12Resource*)params.OutEyeColor, ctx.texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                 //}
@@ -225,7 +225,6 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             }
             if (vr->is_using_afw()) {
                 //auto& ctx = m_openvr.acquire_left();
-                //m_openvr.copy_left(eye_texture.Get());
                 //if (params.OutEyeColor && vr->m_use_reprojection->value()) {
                 //    ctx.commands.copy((ID3D12Resource*)params.OutEyeColor, ctx.texture.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                 //}
