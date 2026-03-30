@@ -35,7 +35,7 @@ Mods::Mods() {
     m_mods.emplace_back(Hooks::get());
     m_mods.emplace_back(LooseFileLoader::get());
 
-#if defined(MHWILDS)
+#if TDB_VER >= 81
     m_mods.emplace_back(FaultyFileDetector::get());
 #endif
 

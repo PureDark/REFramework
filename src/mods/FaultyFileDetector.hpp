@@ -41,6 +41,7 @@ public:
     std::optional<std::string> on_initialize() override;
     void on_config_load(const utility::Config& cfg) override;
     void on_config_save(utility::Config& cfg) override;
+    void on_frame() override;
     void on_draw_ui() override;
 
     static void early_init();
@@ -81,6 +82,20 @@ private:
     uint8_t m_resource_open_failed_register{0};
     bool m_initialized{false};
 
+    struct Notification {
+        std::string text;
+        FaultyReason reason;
+        float elapsed{0.0f};
+        bool started{false}; // false until first on_frame processes it
+    };
+
+    std::deque<Notification> m_notifications{};
+    static constexpr float NOTIFICATION_DURATION = 5.0f;
+    static constexpr float NOTIFICATION_FADE_IN = 0.3f;
+    static constexpr float NOTIFICATION_FADE_OUT = 0.5f;
+    static constexpr float NOTIFICATION_HEIGHT = 30.0f;
+    static constexpr float NOTIFICATION_PADDING = 8.0f;
+    static constexpr float NOTIFICATION_MARGIN = 4.0f;
     ModToggle::Ptr m_enabled{ ModToggle::create(generate_name("Enabled"), true) };
     ModInt32::Ptr m_max_recent_files{ ModInt32::create(generate_name("MaxRecentFiles"), 100) };
 

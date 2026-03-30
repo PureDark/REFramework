@@ -2137,7 +2137,7 @@ void IntegrityCheckBypass::re9_heartbeat_bypass() {
         static std::vector<uintptr_t> candidates{};
         static uint32_t last_scan_frame = 0;
         static int confirmation_count = 0;
-        static constexpr int CONFIRMATIONS_NEEDED = 5;
+        static constexpr int CONFIRMATIONS_NEEDED = 3;
         static constexpr int32_t MAX_DISTANCE = 1000;
         static constexpr size_t HEARTBEAT_COUNT = 6;
 
@@ -2150,29 +2150,50 @@ void IntegrityCheckBypass::re9_heartbeat_bypass() {
                 heartbeat_offset_start[i] = frame_count;
             }
         } else if (frame_count > 100 && frame_count != last_scan_frame) {
+            // Debug for RE9 (known to be at 0x3328)
+#if 0
+            for (size_t i = 0; i < HEARTBEAT_COUNT; i++) {
+                auto val = *(uint32_t*)(renderer_addr + 0x3328 + i * 4);
+                spdlog::info("[IntegrityCheckBypass] Heartbeat candidate {}: {} (diff: {}), actual: {}", i, val, frame_count - val, frame_count);
+            }
+#endif
+
             last_scan_frame = frame_count;
 
-            // Scan renderer struct for runs of 6 consecutive DWORDs all within
-            // MAX_DISTANCE of frame_count (and <= frame_count).
+            // Two detection modes for the heartbeat cluster:
+            // Normal: sentinel(1), 6 valid heartbeats, sentinel(0)
+            // Early:  sentinel(1), 0 (heartbeat not yet written), 5 valid, sentinel(0)
+            // In RE9, heartbeat[0] doesn't get its first write until ~frame 930.
+            // The anti-tamper starts corrupting job pointers well before that.
             std::vector<uintptr_t> this_frame{};
             for (size_t i = 0x2000; i + HEARTBEAT_COUNT * 4 <= 0x4000; i += sizeof(uint32_t)) {
                 try {
                     auto* ints = reinterpret_cast<uint32_t*>(renderer_addr + i);
                     if (ints[-1] != 1) {
-                        continue; // the DWORD immediately preceding the 6 we care about should be 1, it's used as a sentinel for the start of the heartbeat cluster.
+                        continue; // sentinel before cluster must be 1
                     }
                     if (ints[HEARTBEAT_COUNT] != 0) {
-                        continue; // the DWORD immediately following the 6 we care about should be 0, it's used as a sentinel for the end of the heartbeat cluster.
+                        continue; // sentinel after cluster must be 0
                     }
-                    bool ok = true;
+
+                    // Check if all 6 are valid heartbeats
+                    bool all_valid = true;
+                    // Check if ints[0] == 0 (unwritten) and ints[1..5] are valid
+                    bool early_detect = (ints[0] == 0);
+
                     for (size_t j = 0; j < HEARTBEAT_COUNT; j++) {
                         auto val = ints[j];
-                        if (val < 100 || val > frame_count || (frame_count - val) >= MAX_DISTANCE) {
-                            ok = false;
-                            break;
+                        bool in_range = val > 0 && val <= frame_count && (frame_count - val) < (uint32_t)MAX_DISTANCE;
+                        if (!in_range) {
+                            all_valid = false;
+                        }
+                        // For early detect: ints[1..5] must all be in range
+                        if (j > 0 && !in_range) {
+                            early_detect = false;
                         }
                     }
-                    if (ok) {
+
+                    if (all_valid || early_detect) {
                         this_frame.push_back(renderer_addr + i);
                     }
                 } catch (...) {}

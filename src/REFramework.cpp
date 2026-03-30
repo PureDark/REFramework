@@ -504,7 +504,7 @@ REFramework::REFramework(HMODULE reframework_module)
     startup_lookup_thread->detach();
 #endif
 
-#if defined(MHWILDS)
+#if TDB_VER >= 81
     FaultyFileDetector::early_init();
 #endif
 
