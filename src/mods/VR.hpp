@@ -43,6 +43,7 @@ public:
     bool mDebug1 = false;
     bool mDebug2 = false;
     bool mDebug3 = false;
+    int mDebug5 = 0;
 
     int last_update_camera_data_frame_count = 0;
     void update_camera_data(int frame_count);

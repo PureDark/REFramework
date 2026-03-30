@@ -247,7 +247,17 @@ void VR::on_camera_get_projection_matrix(REManagedObject* camera, Matrix4x4f* re
 
     // Get the projection matrix for the correct eye
     // For some reason we need to flip the projection matrix here?
-    *result = get_current_projection_matrix(false);
+
+    if (is_using_afw()) {
+        std::shared_lock _{get_runtime()->eyes_mtx};
+        auto eye_index = (m_render_frame_count+1) % 2 == m_left_eye_interval ? EyeLeft : EyeRight;
+        if (eye_index == EyeLeft) {
+            eye_index = m_frame_count % 2 == m_left_eye_interval ? EyeLeft : EyeRight;
+        }
+        *result = get_runtime()->projections[eye_index];
+    } else {
+        *result = get_current_projection_matrix(false);
+    }
 }
 
 Matrix4x4f* VR::gui_camera_get_projection_matrix_hook(REManagedObject* camera, Matrix4x4f* result) {
@@ -575,9 +585,10 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
                 return;
             }
             auto old_view_matrix = this->m_old_view_matrix[eye_index][i];
-            auto old_projection_matrix = this->m_old_projection_matrix[eye_index][i];
-            old_projection_matrix[2][0] = 0;
-            old_projection_matrix[2][1] = 0;
+            //auto old_projection_matrix = this->m_old_projection_matrix[eye_index][i];
+            //old_projection_matrix[2][0] = 0;
+            //old_projection_matrix[2][1] = 0;
+            auto old_projection_matrix = get_current_projection_matrix(false);
             scene_info->old_view_projection_matrix = old_projection_matrix * old_view_matrix;
             this->m_old_view_matrix[eye_index][i] = scene_info->view_matrix;
             this->m_old_projection_matrix[eye_index][i] = scene_info->projection_matrix;
@@ -2610,15 +2621,14 @@ void VR::on_present() {
     // attempt to fix crash when reinitializing openvr
     std::scoped_lock _{m_openvr_mtx};
     m_submitted = false;
-    //static bool btn5 = false;
-    //if (GetAsyncKeyState(VK_NUMPAD5) < 0 && btn5 == false) {
-    //    btn5 = true;
-    //}
-    //if (GetAsyncKeyState(VK_NUMPAD5) == 0 && btn5 == true) {
-    //    btn5 = false;
-    //    int32_t& value = m_framewarp_mode->value();
-    //    value = (value + 1) % 4; 
-    //}
+    static bool btn5 = false;
+    if (GetAsyncKeyState(VK_NUMPAD5) < 0 && btn5 == false) {
+        btn5 = true;
+    }
+    if (GetAsyncKeyState(VK_NUMPAD5) == 0 && btn5 == true) {
+        btn5 = false;
+        mDebug5 = (mDebug5 + 1) & 3;
+    }
     static bool btn6 = false;
     if (GetAsyncKeyState(VK_NUMPAD6) < 0 && btn6 == false) {
         btn6 = true;
