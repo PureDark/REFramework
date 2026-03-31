@@ -10,6 +10,7 @@
 
 #include <safetyhook/mid_hook.hpp>
 #include "REFramework.hpp"
+#include "DisasmUtils.hpp"
 
 std::shared_ptr<FaultyFileDetector> g_faulty_detector_instance = nullptr;
 
@@ -66,28 +67,6 @@ void FaultyFileDetector::resource_parse_open_stream_failed_hook_wrapper(safetyho
     s_instance->resource_parse_open_stream_failed_hook(ctx);
 }
 
-template <typename T>
-T* get_register_value(safetyhook::Context& ctx, uint8_t reg) {
-    switch (reg) {
-        case NDR_RAX: return reinterpret_cast<T*>(ctx.rax);
-        case NDR_RBX: return reinterpret_cast<T*>(ctx.rbx);
-        case NDR_RCX: return reinterpret_cast<T*>(ctx.rcx);
-        case NDR_RDX: return reinterpret_cast<T*>(ctx.rdx);
-        case NDR_RSI: return reinterpret_cast<T*>(ctx.rsi);
-        case NDR_RDI: return reinterpret_cast<T*>(ctx.rdi);
-        case NDR_RBP: return reinterpret_cast<T*>(ctx.rbp);
-        case NDR_RSP: return reinterpret_cast<T*>(ctx.rsp);
-        case NDR_R8:  return reinterpret_cast<T*>(ctx.r8);
-        case NDR_R9:  return reinterpret_cast<T*>(ctx.r9);
-        case NDR_R10: return reinterpret_cast<T*>(ctx.r10);
-        case NDR_R11: return reinterpret_cast<T*>(ctx.r11);
-        case NDR_R12: return reinterpret_cast<T*>(ctx.r12);
-        case NDR_R13: return reinterpret_cast<T*>(ctx.r13);
-        case NDR_R14: return reinterpret_cast<T*>(ctx.r14);
-        case NDR_R15: return reinterpret_cast<T*>(ctx.r15);
-        default: return nullptr;
-    }
-}
 
 FaultyFileDetector::FaultyFileDetector() {
     if (s_instance == nullptr) {
@@ -224,31 +203,29 @@ bool FaultyFileDetector::scan_resource_process_parse_and_hook() {
                 if (instr->Instruction == ND_INS_CALLNI) {
                     if (instr->OperandsCount >= 1 && instr->Operands[0].Type == ND_OP_MEM) {
                         auto mem_operand = instr->Operands[0].Info.Memory;
-                        if (mem_operand.Base == NDR_RAX) {
+                        if (mem_operand.HasBase && mem_operand.Base == NDR_RAX) {
                             if (mem_operand.Disp == first_call_vtable_offset && !found[0]) {
                                 // First call found
                                 current_calls_found++;
-                                start_searching_resource_access_ptr = after_call_ptr + instr->Length;
+                                start_searching_resource_access_ptr = (uint8_t*)(ctx.addr + instr->Length); // The instruction that accesses resource after the call is usually right after the call instruction, so we can start searching from there
                                 found[0] = true;
-                                spdlog::info("[FaultyFileDetector]: Found first call at 0x{:X}", (uintptr_t)after_call_ptr);
+                                spdlog::info("[FaultyFileDetector]: Found first call at 0x{:X}", (uintptr_t)ctx.addr);
                             } else if (mem_operand.Disp == second_call_vtable_offset && !found[1]) {
                                 // Second call found
                                 current_calls_found++;
-                                parse_call_ptr = after_call_ptr;
-                                parse_call_return_address = after_call_ptr + instr->Length;
+                                parse_call_ptr = (uint8_t*)(ctx.addr);
+                                parse_call_return_address = (uint8_t*)(ctx.addr + instr->Length);
                                 found[1] = true;
-                                spdlog::info("[FaultyFileDetector]: Found second call at 0x{:X}", (uintptr_t)after_call_ptr);
+                                spdlog::info("[FaultyFileDetector]: Found second call at 0x{:X}", (uintptr_t)ctx.addr);
                             } else if (mem_operand.Disp == third_call_vtable_offset && !found[2]) {
                                 // Third call found
                                 current_calls_found++;
                                 found[2] = true;
-                                spdlog::info("[FaultyFileDetector]: Found third call at 0x{:X}", (uintptr_t)after_call_ptr);
+                                spdlog::info("[FaultyFileDetector]: Found third call at 0x{:X}", (uintptr_t)ctx.addr);
                             }
                         }
                     }
                 }
-
-                after_call_ptr += instr->Length;
 
                 // step over calls.
                 if (instr->Category == ND_CAT_CALL) {
@@ -269,23 +246,30 @@ bool FaultyFileDetector::scan_resource_process_parse_and_hook() {
                 std::uint8_t *resource_argument_assigned_ptr = nullptr;
 
                 // Very fragile way, but it works for now
-                for (int i = 0; i < resource_register_search_max_num_instructions; i++) {
-                    auto instrux = utility::decode_one(instr_ptr);
-                    if (instrux && std::string_view(instrux->Mnemonic).starts_with("MOV")) {
+                //for (int i = 0; i < resource_register_search_max_num_instructions; i++) {
+                    //auto instrux = utility::decode_one(instr_ptr);
+                utility::exhaustive_decode((uint8_t*)start_searching_resource_access_ptr, resource_register_search_max_num_instructions, [&](utility::ExhaustionContext& ctx) -> utility::ExhaustionResult {
+                    if (resource_argument_assigned_ptr != nullptr) {
+                        return utility::ExhaustionResult::BREAK;
+                    }
+
+                    auto instrux = &ctx.instrux;
+                    if (std::string_view(instrux->Mnemonic).starts_with("MOV")) {
                         bool is_first_operator_first_arg = instrux->OperandsCount >= 1 && instrux->Operands[0].Type == ND_OP_REG && instrux->Operands[0].Info.Register.Reg == NDR_RCX;
                         bool is_second_operator_register = instrux->OperandsCount >= 2 && instrux->Operands[1].Type == ND_OP_REG;
                         // Seen in RE9
                         bool is_second_operator_rsp_based = instrux->OperandsCount >= 2 && instrux->Operands[1].Type == ND_OP_MEM && instrux->Operands[1].Info.Memory.Base == NDR_RSP;
 
                         if (is_first_operator_first_arg && (is_second_operator_register || is_second_operator_rsp_based)) {
-                            resource_argument_assigned_ptr = instr_ptr + instrux->Length;
+                            resource_argument_assigned_ptr = (uint8_t*)(ctx.addr + instrux->Length); // The instruction that uses the resource argument is the next instruction after the assignment
                             spdlog::info("[FaultyFileDetector]: Found resource argument assign at 0x{:x}, hooking to extract it at: 0x{:x}", (uintptr_t)instr_ptr, (uintptr_t)resource_argument_assigned_ptr);
 
-                            break;
+                            return utility::ExhaustionResult::BREAK;
                         }
                     }
-                    instr_ptr += instrux ? instrux->Length : 1;
-                }
+
+                    return utility::ExhaustionResult::CONTINUE;
+                });
 
                 if (resource_argument_assigned_ptr == nullptr) {
                     spdlog::warn("[FaultyFileDetector]: Failed to find resource argument assign from 0x{:X}", (uintptr_t)parse_call_ptr);
@@ -400,7 +384,7 @@ void FaultyFileDetector::resource_parse_open_stream_failed_hook(safetyhook::Cont
         return;
     }
 
-    REResource_Via_Raw* resource = get_register_value<REResource_Via_Raw>(ctx, m_resource_open_failed_register);
+    REResource_Via_Raw* resource = disasm_utils::get_register_value<REResource_Via_Raw*>(ctx, m_resource_open_failed_register);
 
     if (resource) {
         try_add_to_faulty_list(resource->path, FaultyTier::Severe, FaultyReason::MissingFile);

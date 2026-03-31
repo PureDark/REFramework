@@ -35,7 +35,7 @@ Mods::Mods() {
     m_mods.emplace_back(Hooks::get());
     m_mods.emplace_back(LooseFileLoader::get());
 
-#if TDB_VER >= 81
+#if FAULTY_FILE_DETECTOR_ENABLED
     m_mods.emplace_back(FaultyFileDetector::get());
 #endif
 

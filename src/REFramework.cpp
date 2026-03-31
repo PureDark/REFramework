@@ -504,7 +504,7 @@ REFramework::REFramework(HMODULE reframework_module)
     startup_lookup_thread->detach();
 #endif
 
-#if TDB_VER >= 81
+#if FAULTY_FILE_DETECTOR_ENABLED
     FaultyFileDetector::early_init();
 #endif
 
@@ -571,7 +571,7 @@ REFramework::REFramework(HMODULE reframework_module)
         auto& loader = LooseFileLoader::get(); // Initialize this really early
         auto &integrity_bypass = IntegrityCheckBypass::get_shared_instance();
 
-#if defined(MHWILDS)
+#if FAULTY_FILE_DETECTOR_ENABLED
         auto& faulty_file_detector = FaultyFileDetector::get();
 #endif
 
@@ -580,7 +580,7 @@ REFramework::REFramework(HMODULE reframework_module)
             utility::Config cfg{ config_path };
             loader->on_config_load(cfg);
 
-#if defined(MHWILDS)
+#if FAULTY_FILE_DETECTOR_ENABLED
             faulty_file_detector->on_config_load(cfg);
 #endif
             integrity_bypass->on_config_load(cfg);
