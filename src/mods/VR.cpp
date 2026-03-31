@@ -537,7 +537,7 @@ bool VR::on_pre_scene_layer_update(sdk::renderer::layer::Scene* layer, void* ren
     if (!is_hmd_active()) {
         return true;
     }
-    if (m_disable_temporal_fix) {
+    if (m_disable_temporal_fix || m_fix_dlss->value()) {
         return true;
     }
 
@@ -695,6 +695,7 @@ float VR::get_sharpness_hook(void* tonemapping) {
 typedef int NVSDK_NGX_Result;
 typedef enum NVSDK_NGX_Feature {
     NVSDK_NGX_Feature_SuperSampling = 1,
+    NVSDK_NGX_Feature_RayReconstruction = 13,
 } NVSDK_NGX_Feature;
 typedef struct NVSDK_NGX_Handle { unsigned int Id; } NVSDK_NGX_Handle;
 typedef struct NVSDK_NGX_Parameter {
@@ -732,7 +733,7 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_CreateFeature(
     int flag;
     InParameters->Get(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags, &flag);
     spdlog::info("hk_NVSDK_NGX_D3D12_CreateFeature 0x{0:x}", (INT64)result);
-    if (InFeatureID == NVSDK_NGX_Feature_SuperSampling) {
+    if (InFeatureID == NVSDK_NGX_Feature_SuperSampling || InFeatureID == NVSDK_NGX_Feature_RayReconstruction) {
         vrDLSSHandle[0] = *OutHandle;
         spdlog::info("Creating additional DLSS instance");
         auto result2 = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, &vrDLSSHandle[1]);
@@ -2600,7 +2601,7 @@ void VR::on_present() {
             }
 
             openvr->is_hmd_active = hmd_active;
-            openvr->is_hmd_active = true;
+            //openvr->is_hmd_active = true;
 
             // upon headset re-entry, reinitialize OpenVR
             if (openvr->is_hmd_active && !openvr->was_hmd_active) {
