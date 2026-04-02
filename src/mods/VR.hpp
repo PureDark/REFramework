@@ -45,11 +45,13 @@ public:
     bool mDebug3 = false;
     int mDebug5 = 0;
 
+    std::unordered_map<UINT64, int> m_ui_last_frame_counts = {};
+
     int last_update_camera_data_frame_count = 0;
     void update_camera_data(int frame_count);
     void get_camera_data();
 
-    bool is_fix_dlss() { return m_fix_dlss->value(); };
+    bool is_fix_dlss() { return m_fix_upscalers_wobbling->value(); };
     bool is_enable_sharpening() { return m_enable_sharpening->value(); };
     float get_sharpness() { return m_sharpness->value(); };
     int get_vr_frame_count() { return m_frame_count; };
@@ -154,6 +156,7 @@ public:
 
     bool is_hmd_active() const {
         return get_runtime()->ready();
+        //return mDebug3;
     }
     
     bool is_openvr_loaded() const {
@@ -527,7 +530,8 @@ private:
     const ModToggle::Ptr m_clear_before_framewarp{ModToggle::create(generate_name("ClearBeforeFramewarp"), false)};
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
     const ModToggle::Ptr m_enable_sharpening{ModToggle::create(generate_name("EnableSharpening"), true)};
-    const ModToggle::Ptr m_fix_dlss{ModToggle::create(generate_name("FixDLSS"), true)};
+    const ModToggle::Ptr m_fix_upscalers_wobbling{ModToggle::create(generate_name("UpscalersWobblingFix"), true)};
+    const ModToggle::Ptr m_fix_item_inspection{ModToggle::create(generate_name("FixItemInspection"), true)};
     const ModSlider::Ptr m_sharpness{ModSlider::create(generate_name("Sharpness"), 0.0f, 1.0f, 0.6f)};
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
     const ModSlider::Ptr m_ignore_motion_threshold{ModSlider::create(generate_name("IgnoreMotionThreshold"), 1.0f, 100.0f, 2.5f)};
@@ -609,7 +613,8 @@ private:
         *m_enable_asynchronous_rendering,
         *m_enable_sharpening,
         *m_sharpness,
-        *m_fix_dlss
+        *m_fix_upscalers_wobbling,
+        *m_fix_item_inspection
     };
 
     bool m_use_rotation{true};
