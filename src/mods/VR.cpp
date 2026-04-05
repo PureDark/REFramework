@@ -540,7 +540,7 @@ bool VR::on_pre_scene_layer_update(sdk::renderer::layer::Scene* layer, void* ren
     if (!is_hmd_active()) {
         return true;
     }
-    if (m_disable_temporal_fix || m_fix_upscalers_wobbling->value()) {
+    if (m_disable_temporal_fix || (is_using_afw() && m_fix_upscalers_wobbling->value())) {
         return true;
     }
 
@@ -572,7 +572,7 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
         return;
     }
 
-    if (m_fix_upscalers_wobbling->value()) {
+    if (is_using_afw() && m_fix_upscalers_wobbling->value()) {
         auto eye_index = m_frame_count % 2 == m_left_eye_interval ? EyeLeft : EyeRight;
         auto other_eye_index = m_frame_count % 2 == m_left_eye_interval ? EyeRight : EyeLeft;
 
@@ -695,6 +695,7 @@ float VR::get_sharpness_hook(void* tonemapping) {
 }
 */
 
+
 typedef int NVSDK_NGX_Result;
 typedef enum NVSDK_NGX_Feature {
     NVSDK_NGX_Feature_SuperSampling = 1,
@@ -753,6 +754,10 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_ReleaseFeature(NVSDK_NGX_Handle* InHandle) {
     spdlog::info("hk_NVSDK_NGX_D3D12_ReleaseFeature 0x{0:x}", (INT64)result);
     if (vrDLSSHandle[0] == InHandle) {
         vrDLSSHandle[0] = NULL;
+        VR::get()->depthDesc.pTexture = NULL;
+        VR::get()->depthDesc.depthStencilViewHandle.ptr = NULL;
+        VR::get()->renderDepthDesc.pTexture = NULL;
+        VR::get()->renderDepthDesc.depthStencilViewHandle.ptr = NULL;
         if (vrDLSSHandle[1] != NULL) {
             spdlog::info("Releasing additional DLSS instance");
             auto result2 = o_NVSDK_NGX_D3D12_ReleaseFeature(vrDLSSHandle[1]);
@@ -789,6 +794,14 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCommandList* I
         InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &mvScaleY);
         auto vr = VR::get();
         if (vr->is_hmd_active() && motionVectors && vr->motionVectorsTex) {
+
+            if (vr->renderDepthDesc.pTexture != depth) {
+                vr->renderDepthDesc.pTexture = depth;
+                vr->renderDepthDesc.initialState = D3D12_RESOURCE_STATE_DEPTH_READ;
+                vr->d3d12Renderer->SetupTextureDesc(vr->renderDepthDesc);
+                vr->renderDepthDesc.type = Depth;
+            }
+
             auto desc1 = motionVectors->GetDesc();
             auto desc2 = vr->motionVectorsTex->GetDesc();
             if ((desc1.Width == desc2.Width && desc1.Height == desc2.Height && desc1.Format == desc2.Format)) {
@@ -804,6 +817,8 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCommandList* I
                     auto otherHandle = (nEye == EyeLeft) ? vrDLSSHandle[1] : vrDLSSHandle[0];
 
                     // current rendered eye
+                    bool enableVRS = false;
+                    InCmdList->SetPrivateData(GUID_VRSData, sizeof(bool), &enableVRS);
                     auto result = o_NVSDK_NGX_D3D12_EvaluateFeature(InCmdList, currHandle, InParameters, InCallback);
                     if (NVSDK_NGX_FAILED(result)) {
                         spdlog::error("Failed DLSS 00, code = 0x{0:x}", result);
@@ -817,6 +832,8 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCommandList* I
             }
         }
     }
+    bool enableVRS = false;
+    InCmdList->SetPrivateData(GUID_VRSData, sizeof(bool), &enableVRS);
     auto result = o_NVSDK_NGX_D3D12_EvaluateFeature(InCmdList, InFeatureHandle, InParameters, InCallback);
     return result;
 }
@@ -943,6 +960,94 @@ ffxReturnCode_t hk_ffxDispatch(ffxContext* context, const ffxDispatchDescHeader*
     return o_ffxDispatch(context, desc);
 }
 
+static std::unordered_map<SIZE_T, ID3D12Resource*> gDSVResourceMap = {};
+
+decltype(&ID3D12Device::CreateDepthStencilView) ptrCreateDepthStencilView; // 21
+void WINAPI hk_ID3D12Device_CreateDepthStencilView(ID3D12Device* This, ID3D12Resource* pResource, const D3D12_DEPTH_STENCIL_VIEW_DESC* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) {
+    (This->*ptrCreateDepthStencilView)(pResource, pDesc, DestDescriptor);
+    if (pResource && pDesc->Flags == 0 ) {
+        gDSVResourceMap[DestDescriptor.ptr] = pResource;
+    }
+}
+
+decltype(&ID3D12GraphicsCommandList::ClearDepthStencilView) ptrClearDepthStencilView; // 47
+void WINAPI hk_ID3D12GraphicsCommandList_ClearDepthStencilView(ID3D12GraphicsCommandList* This,
+    D3D12_CPU_DESCRIPTOR_HANDLE DepthStencilView, D3D12_CLEAR_FLAGS ClearFlags, FLOAT Depth, UINT8 Stencil, UINT NumRects,
+    const D3D12_RECT* pRects) {
+    (This->*ptrClearDepthStencilView)(DepthStencilView, ClearFlags, Depth, Stencil, NumRects, pRects);
+    const auto vr = VR::get();
+    // 如果是UI使用的depth，则更改RenderTarget让UI渲染到指定的新纹理上
+    if (vr->is_enable_hidden_area_mesh() && gDSVResourceMap.contains(DepthStencilView.ptr) && vr->renderDepthDesc.pTexture) {
+        auto depth = gDSVResourceMap[DepthStencilView.ptr];
+        auto desc = depth->GetDesc();
+        auto desc2 = vr->renderDepthDesc.pTexture->GetDesc();
+        if (desc.Width == desc2.Width && desc.Height == desc2.Height) {
+            if (vr->get_runtime()->hiddenAreaMeshVextexBuffer[0].pVextexBuffer &&
+                vr->get_runtime()->hiddenAreaMeshVextexBuffer[1].pVextexBuffer) {
+                EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
+                CD3DX12_VIEWPORT vp(vr->renderDepthDesc.pTexture);
+                TextureDesc tempDepthDesc;
+                tempDepthDesc.type = pd::ImageType::Depth;
+                tempDepthDesc.pTexture = depth;
+                tempDepthDesc.depthStencilViewHandle = DepthStencilView;
+                tempDepthDesc.initialState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+                vr->d3d12Renderer->ApplyHiddenAreaMesh(This, tempDepthDesc, vp, vr->get_runtime()->hiddenAreaMeshVextexBuffer[nEye]);
+            }
+        }
+    }
+}
+
+decltype(&ID3D12GraphicsCommandList::Reset) ptrReset; // 10
+void WINAPI hk_ID3D12GraphicsCommandList_Reset(
+    ID3D12GraphicsCommandList* This, ID3D12CommandAllocator* pAllocator, ID3D12PipelineState* pInitialState) {
+    (This->*ptrReset)(pAllocator, pInitialState);
+    UINT size = sizeof(int);
+    bool enableVRS = 0;
+    auto hr = This->GetPrivateData(GUID_VRSData, &size, &enableVRS);
+    enableVRS = VR::get()->mDebug2;
+    This->SetPrivateData(GUID_VRSData, sizeof(bool), &enableVRS);
+    //if (VR::get()->mDebug2) {
+    //    D3D12_SHADING_RATE_COMBINER d3d12Combiners[D3D12_RS_SET_SHADING_RATE_COMBINER_COUNT];
+    //    d3d12Combiners[0] = D3D12_SHADING_RATE_COMBINER_OVERRIDE;
+    //    d3d12Combiners[1] = D3D12_SHADING_RATE_COMBINER_OVERRIDE;
+    //    ((ID3D12GraphicsCommandList5*)This)->RSSetShadingRate(D3D12_SHADING_RATE_4X4, d3d12Combiners);
+    //    ((ID3D12GraphicsCommandList5*)This)->RSSetShadingRateImage(vr->m_VRSImageDesc.pTexture);
+    //}
+}
+
+decltype(&ID3D12GraphicsCommandList::OMSetRenderTargets) ptrOMSetRenderTargets; // 46
+void WINAPI hk_ID3D12GraphicsCommandList_OMSetRenderTargets(ID3D12GraphicsCommandList* This, UINT NumRenderTargetDescriptors,
+    const D3D12_CPU_DESCRIPTOR_HANDLE* pRenderTargetDescriptors, BOOL RTsSingleHandleToDescriptorRange,
+    const D3D12_CPU_DESCRIPTOR_HANDLE* pDepthStencilDescriptor) {
+    (This->*ptrOMSetRenderTargets)(
+        NumRenderTargetDescriptors, pRenderTargetDescriptors, RTsSingleHandleToDescriptorRange, pDepthStencilDescriptor);
+    UINT size = sizeof(int);
+    bool enableVRS = 0;
+    auto hr = This->GetPrivateData(GUID_VRSData, &size, &enableVRS);
+    if (enableVRS) {
+        D3D12_SHADING_RATE_COMBINER d3d12Combiners[D3D12_RS_SET_SHADING_RATE_COMBINER_COUNT];
+        d3d12Combiners[0] = D3D12_SHADING_RATE_COMBINER_OVERRIDE;
+        d3d12Combiners[1] = D3D12_SHADING_RATE_COMBINER_OVERRIDE;
+        ((ID3D12GraphicsCommandList5*)This)->RSSetShadingRate(D3D12_SHADING_RATE_4X4, d3d12Combiners);
+        ((ID3D12GraphicsCommandList5*)This)->RSSetShadingRateImage(VR::get()->m_VRSImageDesc.pTexture);
+    } else {
+        D3D12_SHADING_RATE_COMBINER d3d12Combiners[D3D12_RS_SET_SHADING_RATE_COMBINER_COUNT];
+        d3d12Combiners[0] = D3D12_SHADING_RATE_COMBINER_PASSTHROUGH;
+        d3d12Combiners[1] = D3D12_SHADING_RATE_COMBINER_PASSTHROUGH;
+        ((ID3D12GraphicsCommandList5*)This)->RSSetShadingRate(D3D12_SHADING_RATE_1X1, d3d12Combiners);
+        ((ID3D12GraphicsCommandList5*)This)->RSSetShadingRateImage(nullptr);
+    }
+}
+
+uintptr_t hookVtable(void* target, int index, void* detours) {
+    uintptr_t* pVTable = *(uintptr_t**)target;
+    DWORD dwOldProct = 0;
+    BOOL bRet = ::VirtualProtect(pVTable, 4, PAGE_READWRITE, &dwOldProct);
+    auto origFunc = pVTable[index];
+    pVTable[index] = (uintptr_t)detours;
+    return origFunc;
+}
+
 // Called when the mod is initialized
 std::optional<std::string> VR::on_initialize_d3d_thread() try {
 
@@ -955,12 +1060,21 @@ std::optional<std::string> VR::on_initialize_d3d_thread() try {
     params.d3d12Device = hook->get_device();
     params.d3d12Queue = hook->get_command_queue();
     d3d12Renderer = InitDevice(params);
+    m_VRSInfo = d3d12Renderer->GetVRSInfo();
+
+    *(uintptr_t*)&ptrCreateDepthStencilView = hookVtable(params.d3d12Device, 21, hk_ID3D12Device_CreateDepthStencilView);
+
+    auto cmdList = d3d12Renderer->BeginCommandList(0);
+    *(uintptr_t*)&ptrOMSetRenderTargets = hookVtable(cmdList, 46, hk_ID3D12GraphicsCommandList_OMSetRenderTargets);
+    *(uintptr_t*)&ptrClearDepthStencilView = hookVtable(cmdList, 47, hk_ID3D12GraphicsCommandList_ClearDepthStencilView);
+    *(uintptr_t*)&ptrReset = hookVtable(cmdList, 10, hk_ID3D12GraphicsCommandList_Reset);
+    d3d12Renderer->EndCommandList(0);
 
     if (auto mr = MH_Initialize(); mr != MH_OK) {
         spdlog::error("MH_Initialize failed: {}", (INT)mr);
     }
     
-	auto dllNGX = GetModuleHandle("_nvngx.dll");
+    auto dllNGX = GetModuleHandle("_nvngx.dll");
     if (!dllNGX)
         dllNGX = GetModuleHandle("nvngx.dll");
     if (!dllNGX) {
@@ -2765,7 +2879,7 @@ void VR::on_present() {
     }
     if (GetAsyncKeyState(VK_NUMPAD5) == 0 && btn5 == true) {
         btn5 = false;
-        m_fix_item_inspection->toggle();
+        m_enable_hidden_area_mesh->toggle();
     }
     static bool btn6 = false;
     if (GetAsyncKeyState(VK_NUMPAD6) < 0 && btn6 == false) {
@@ -2913,7 +3027,7 @@ thread_local std::vector<std::unique_ptr<GUIRestoreData>> g_elements_to_reset{};
 bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_context) {
     inside_gui_draw = true;
 
-    if (!get_runtime()->ready()|| mDebug1) {
+    if (!get_runtime()->ready()) {
         return true;
     }
 
@@ -4377,9 +4491,10 @@ void VR::on_draw_ui() {
         m_sharpness->draw("Sharpness");
         m_fix_upscalers_wobbling->draw("Fix Upscalers Wobbling");
         m_fix_item_inspection->draw("Fix Item Inspection Double Vision");
+        m_enable_hidden_area_mesh->draw("Enable Hidden Area Mesh");
         m_ignore_motion_threshold->draw("Ignore Motion Threshold");
         m_framewarp_mode->draw("Framewarp Mode");
-    }    ImGui::Separator();
+    }   ImGui::Separator();
 
     m_decoupled_pitch->draw("Decoupled Camera Pitch");
 

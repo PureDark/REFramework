@@ -25,6 +25,10 @@ VRRuntime::Error OpenXR::synchronize_frame() {
         return VRRuntime::Error::SUCCESS;
     }
 
+    if (!hiddenAreaMesh[0].pVertexData) {
+        update_hidden_area_mesh();
+    }
+
     this->begin_profile();
 
     XrFrameWaitInfo frame_wait_info{XR_TYPE_FRAME_WAIT_INFO};

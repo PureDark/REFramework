@@ -36,6 +36,8 @@ struct OpenVR final : public VRRuntime {
 
     void destroy() override;
 
+    Error update_hidden_area_mesh() override;
+
     bool is_hmd_active{false};
     bool was_hmd_active{true};
 

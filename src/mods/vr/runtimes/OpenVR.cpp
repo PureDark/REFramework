@@ -7,7 +7,9 @@ VRRuntime::Error OpenVR::synchronize_frame() {
     if (this->got_first_poses && !this->is_hmd_active) {
         return VRRuntime::Error::SUCCESS;
     }
-
+    if (!hiddenAreaMesh[0].pVertexData) {
+        update_hidden_area_mesh();
+    }
     vr::VRCompositor()->SetTrackingSpace(vr::TrackingUniverseStanding);
     auto ret = vr::VRCompositor()->WaitGetPoses(this->real_render_poses.data(), vr::k_unMaxTrackedDeviceCount, this->real_game_poses.data(), vr::k_unMaxTrackedDeviceCount);
 
@@ -105,5 +107,16 @@ void OpenVR::destroy() {
         vr::VR_Shutdown();
     }
 }
+
+VRRuntime::Error OpenVR::update_hidden_area_mesh() {
+    auto hiddenAreaMeshLeft = this->hmd->GetHiddenAreaMesh(vr::EVREye::Eye_Left);
+    auto hiddenAreaMeshRight = this->hmd->GetHiddenAreaMesh(vr::EVREye::Eye_Right);
+    hiddenAreaMesh[0].pVertexData = (float*)hiddenAreaMeshLeft.pVertexData;
+    hiddenAreaMesh[0].unTriangleCount = hiddenAreaMeshLeft.unTriangleCount;
+    hiddenAreaMesh[1].pVertexData = (float*)hiddenAreaMeshRight.pVertexData;
+    hiddenAreaMesh[1].unTriangleCount = hiddenAreaMeshRight.unTriangleCount;
+    return VRRuntime::Error::SUCCESS;
+}
+
 }
 

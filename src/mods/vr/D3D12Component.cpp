@@ -83,6 +83,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             vr->depthDesc.pTexture = vr->depthTex;
             vr->depthDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
             vr->d3d12Renderer->SetupTextureDesc(vr->depthDesc);
+            vr->depthDesc.type = Depth;
         }
         auto desc = vr->depthTex->GetDesc();
         if (vr->depthTex && (vr->motionVectorsTex == NULL || vr->motionVectorsTex->GetDesc().Width != desc.Width ||
@@ -104,6 +105,35 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         s_CurrentEyeFrameBuffer.motionVectors = vr->motionVectorsDesc;
 
         auto cmdList = vr->d3d12Renderer->BeginCommandList(backbuffer_index);
+        bool enableVRS = false;
+        cmdList->SetPrivateData(GUID_VRSData, sizeof(bool), &enableVRS);
+
+        if (vr->mDebug2) {
+            auto desc1 = s_CurrentEyeFrameBuffer.depth.pTexture->GetDesc();
+            vr->m_VRSParams.vrsAlgorithm = Foveated;
+            vr->m_VRSParams.tileSize = vr->m_VRSInfo.MaxTileSize[0];
+            vr->m_VRSParams.renderSize[0] = desc1.Width;
+            vr->m_VRSParams.renderSize[1] = desc1.Height;
+            vr->m_VRSParams.foveationCenter[0] = 0.5f;
+            vr->m_VRSParams.foveationCenter[1] = 0.5f;
+            // vr->m_VRSParams.foveationRadius.radius1x1 = 0.15f;
+            // vr->m_VRSParams.foveationRadius.radius1x2 = 0.25f;
+            // vr->m_VRSParams.foveationRadius.radius2x2 = 0.35f;
+            // vr->m_VRSParams.foveationRadius.radius2x4 = 0.45f;
+            vr->m_VRSParams.foveationRadius.radius1x1 = 0.00f;
+            vr->m_VRSParams.foveationRadius.radius1x2 = 0.00f;
+            vr->m_VRSParams.foveationRadius.radius2x2 = 0.00f;
+            vr->m_VRSParams.foveationRadius.radius2x4 = 0.00f;
+            vr->d3d12Renderer->GenerateVRSImage(cmdList, vr->m_VRSImageDesc, vr->m_VRSParams);
+        }
+
+	    if (!vr->get_runtime()->hiddenAreaMeshVextexBuffer[0].pVextexBuffer && vr->get_runtime()->hiddenAreaMesh[0].pVertexData) {
+            UINT vertexSize = sizeof(vr::HmdVector2_t);
+            vr->d3d12Renderer->CreateVertexBuffer(cmdList, vr->get_runtime()->hiddenAreaMeshVextexBuffer[0], vr->get_runtime()->hiddenAreaMesh[0].unTriangleCount * 3, vertexSize,
+                (float*)vr->get_runtime()->hiddenAreaMesh[0].pVertexData);
+            vr->d3d12Renderer->CreateVertexBuffer(cmdList, vr->get_runtime()->hiddenAreaMeshVextexBuffer[1], vr->get_runtime()->hiddenAreaMesh[1].unTriangleCount * 3, vertexSize,
+                (float*)vr->get_runtime()->hiddenAreaMesh[1].pVertexData);
+        }
 
         // Sharpening
         if (vr->is_enable_sharpening() && vr->get_sharpness() > 0) {
@@ -135,6 +165,35 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         params.IgnoreMotionThreshold = vr->m_ignore_motion_threshold->value();
         params.Debug = vr->m_framewarp_debug->value();
         EvaluateFrameWarp(params);
+        if (vr->mDebug2 && vr->mDebug3) {
+            vr->d3d12Renderer->ShowVRSOverlay(cmdList, params.OutEyeFrameBuffer->color, vr->m_VRSImageDesc);
+        }
+        vr->d3d12Renderer->EndCommandList(backbuffer_index);
+    } else {
+        auto cmdList = vr->d3d12Renderer->BeginCommandList(backbuffer_index);
+
+        if (vr->mDebug2 && vr->depthDesc.pTexture) {
+            auto desc1 = vr->depthDesc.pTexture->GetDesc();
+            vr->m_VRSParams.vrsAlgorithm = Foveated;
+            vr->m_VRSParams.tileSize = vr->m_VRSInfo.MaxTileSize[0];
+            vr->m_VRSParams.renderSize[0] = desc1.Width;
+            vr->m_VRSParams.renderSize[1] = desc1.Height;
+            vr->m_VRSParams.foveationCenter[0] = 0.5f;
+            vr->m_VRSParams.foveationCenter[1] = 0.5f;
+            //vr->m_VRSParams.foveationRadius.radius1x1 = 0.15f;
+            //vr->m_VRSParams.foveationRadius.radius1x2 = 0.25f;
+            //vr->m_VRSParams.foveationRadius.radius2x2 = 0.35f;
+            //vr->m_VRSParams.foveationRadius.radius2x4 = 0.45f;
+            vr->m_VRSParams.foveationRadius.radius1x1 = 0.00f;
+            vr->m_VRSParams.foveationRadius.radius1x2 = 0.00f;
+            vr->m_VRSParams.foveationRadius.radius2x2 = 0.00f;
+            vr->m_VRSParams.foveationRadius.radius2x4 = 0.00f;
+            vr->d3d12Renderer->GenerateVRSImage(cmdList, vr->m_VRSImageDesc, vr->m_VRSParams);
+        }
+        vr->m_VRSParams.foveationRadius.radius2x4 = 0.00f;
+        if (vr->mDebug2 && vr->mDebug3) {
+            vr->d3d12Renderer->ShowVRSOverlay(cmdList, m_eyeFrameBuffers.eyeFrameBuffers[nEye].color, vr->m_VRSImageDesc);
+        }
         vr->d3d12Renderer->EndCommandList(backbuffer_index);
     }
     //#############################

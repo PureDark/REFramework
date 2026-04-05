@@ -26,6 +26,9 @@
 
 #include "PDAFWPlugin.h"
 
+// {450629EB-4BF8-4CC5-8B1B-7F344C5ED6EB}
+DEFINE_GUID(GUID_VRSData, 0x450629eb, 0x4bf8, 0x4cc5, 0x8b, 0x1b, 0x7f, 0x34, 0x4c, 0x5e, 0xd6, 0xeb);
+
 class REManagedObject;
 
 class VR : public Mod {
@@ -37,8 +40,15 @@ public:
     ID3D12Resource* uiBufferTex = NULL;
     D3D12RendererAPI* d3d12Renderer = nullptr;
 
+    TextureDesc renderDepthDesc;
+
     TextureDesc depthDesc;
     TextureDesc motionVectorsDesc;
+
+    VRSInfo m_VRSInfo;
+    TextureDesc m_VRSImageDesc{};
+    VRSParams m_VRSParams{};
+    bool m_bVRSParamsInited = false;
 
     bool mDebug1 = false;
     bool mDebug2 = false;
@@ -51,6 +61,7 @@ public:
     void update_camera_data(int frame_count);
     void get_camera_data();
 
+    bool is_enable_hidden_area_mesh() { return m_enable_hidden_area_mesh->value(); };
     bool is_fix_dlss() { return m_fix_upscalers_wobbling->value(); };
     bool is_enable_sharpening() { return m_enable_sharpening->value(); };
     float get_sharpness() { return m_sharpness->value(); };
@@ -533,6 +544,7 @@ private:
     const ModToggle::Ptr m_fix_upscalers_wobbling{ModToggle::create(generate_name("UpscalersWobblingFix"), true)};
     const ModToggle::Ptr m_fix_item_inspection{ModToggle::create(generate_name("FixItemInspection"), true)};
     const ModSlider::Ptr m_sharpness{ModSlider::create(generate_name("Sharpness"), 0.0f, 1.0f, 0.6f)};
+    const ModToggle::Ptr m_enable_hidden_area_mesh{ModToggle::create(generate_name("EnableHiddenAreaMesh"), false)};
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
     const ModSlider::Ptr m_ignore_motion_threshold{ModSlider::create(generate_name("IgnoreMotionThreshold"), 1.0f, 100.0f, 2.5f)};
 

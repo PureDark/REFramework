@@ -11,6 +11,8 @@
 #include <spdlog/spdlog.h>
 #include <sdk/Math.hpp>
 
+#include <PDAFWPlugin.h>
+
 struct VRRuntime {
     enum class Error : int64_t {
         UNSPECIFIED = -1,
@@ -102,6 +104,10 @@ struct VRRuntime {
         return this->type() == Type::OPENVR;
     }
 
+    virtual Error update_hidden_area_mesh() {
+        return Error::SUCCESS;
+    }
+
     bool loaded{false};
     bool wants_reinitialize{false};
     bool dll_missing{false};
@@ -128,4 +134,12 @@ struct VRRuntime {
     Vector4f raw_projections[2]{};
 
     SynchronizeStage custom_stage{SynchronizeStage::EARLY};
+
+    struct HiddenAreaMesh {
+        float* pVertexData = NULL;
+        uint32_t unTriangleCount = 0;
+    };
+
+    HiddenAreaMesh hiddenAreaMesh[2];
+    VextexBufferDesc hiddenAreaMeshVextexBuffer[2];
 };
