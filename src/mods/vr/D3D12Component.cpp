@@ -67,18 +67,26 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     //#############################
     EyeIndex nEye = (frame_count % 2 == vr->m_left_eye_interval) ? EyeLeft : EyeRight;
     EyeIndex nEyeOther = (frame_count % 2 == vr->m_left_eye_interval) ? EyeRight : EyeLeft;
+    auto eyeFrameBuffer = (nEye == vr::Eye_Left) ? m_eyeFrameBuffers.eyeFrameBuffers[0] : m_eyeFrameBuffers.eyeFrameBuffers[1];
+    auto otherEyeFrameBuffer = (nEye == vr::Eye_Left) ? m_eyeFrameBuffers.eyeFrameBuffers[1] : m_eyeFrameBuffers.eyeFrameBuffers[0];
     FrameWarpEvaluateParams params;
     if (vr->is_using_afw() && (!m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture || !m_eyeFrameBuffers.eyeFrameBuffers[1].color.pTexture))
         force_reset();
 
+    static int prev_backbuffer_index = 0;
+    static TextureDesc texDesc[4];
+    int texIndex = m_backbuffer_is_8bit ? backbuffer_index : 3;
+    if (texDesc[texIndex].pTexture != eye_texture.Get()) {
+        texDesc[texIndex].pTexture = eye_texture.Get();
+        texDesc[texIndex].initialState = D3D12_RESOURCE_STATE_PRESENT;
+        vr->d3d12Renderer->SetupTextureDesc(texDesc[texIndex]);
+    }
+    if (texDesc[backbuffer_index].pTexture != backbuffer.Get()) {
+        texDesc[backbuffer_index].pTexture = backbuffer.Get();
+        texDesc[backbuffer_index].initialState = D3D12_RESOURCE_STATE_PRESENT;
+        vr->d3d12Renderer->SetupTextureDesc(texDesc[backbuffer_index]);
+    }
     if (vr->is_using_afw() && m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture && vr->depthTex) {
-        static TextureDesc texDesc[4];
-        int texIndex = m_backbuffer_is_8bit ? backbuffer_index : 3;
-        if (texDesc[texIndex].pTexture != eye_texture.Get()) {
-            texDesc[texIndex].pTexture = eye_texture.Get();
-            texDesc[texIndex].initialState = D3D12_RESOURCE_STATE_PRESENT;
-            vr->d3d12Renderer->SetupTextureDesc(texDesc[texIndex]);
-        }
         if (vr->depthDesc.pTexture != vr->depthTex) {
             vr->depthDesc.pTexture = vr->depthTex;
             vr->depthDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
@@ -105,27 +113,6 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         s_CurrentEyeFrameBuffer.motionVectors = vr->motionVectorsDesc;
 
         auto cmdList = vr->d3d12Renderer->BeginCommandList(backbuffer_index);
-        bool enableVRS = false;
-        cmdList->SetPrivateData(GUID_VRSData, sizeof(bool), &enableVRS);
-
-        if (vr->mDebug2) {
-            auto desc1 = s_CurrentEyeFrameBuffer.depth.pTexture->GetDesc();
-            vr->m_VRSParams.vrsAlgorithm = Foveated;
-            vr->m_VRSParams.tileSize = vr->m_VRSInfo.MaxTileSize[0];
-            vr->m_VRSParams.renderSize[0] = desc1.Width;
-            vr->m_VRSParams.renderSize[1] = desc1.Height;
-            vr->m_VRSParams.foveationCenter[0] = 0.5f;
-            vr->m_VRSParams.foveationCenter[1] = 0.5f;
-            // vr->m_VRSParams.foveationRadius.radius1x1 = 0.15f;
-            // vr->m_VRSParams.foveationRadius.radius1x2 = 0.25f;
-            // vr->m_VRSParams.foveationRadius.radius2x2 = 0.35f;
-            // vr->m_VRSParams.foveationRadius.radius2x4 = 0.45f;
-            vr->m_VRSParams.foveationRadius.radius1x1 = 0.00f;
-            vr->m_VRSParams.foveationRadius.radius1x2 = 0.00f;
-            vr->m_VRSParams.foveationRadius.radius2x2 = 0.00f;
-            vr->m_VRSParams.foveationRadius.radius2x4 = 0.00f;
-            vr->d3d12Renderer->GenerateVRSImage(cmdList, vr->m_VRSImageDesc, vr->m_VRSParams);
-        }
 
 	    if (!vr->get_runtime()->hiddenAreaMeshVextexBuffer[0].pVextexBuffer && vr->get_runtime()->hiddenAreaMesh[0].pVertexData) {
             UINT vertexSize = sizeof(vr::HmdVector2_t);
@@ -136,12 +123,11 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         }
 
         // Sharpening
-        if (vr->is_enable_sharpening() && vr->get_sharpness() > 0) {
-            auto eyeFrameBuffer = (nEye == vr::Eye_Left) ? m_eyeFrameBuffers.eyeFrameBuffers[0] : m_eyeFrameBuffers.eyeFrameBuffers[1];
-            vr->d3d12Renderer->Sharpen(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vr->get_sharpness());
-            vr->d3d12Renderer->Copy(cmdList, s_CurrentEyeFrameBuffer.color, eyeFrameBuffer.color);
-            s_CurrentEyeFrameBuffer.color = eyeFrameBuffer.color;
-        }
+        //if (vr->is_enable_sharpening() && vr->get_sharpness() > 0) {
+        //    vr->d3d12Renderer->Sharpen(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vr->get_sharpness());
+        //    vr->d3d12Renderer->Copy(cmdList, s_CurrentEyeFrameBuffer.color, eyeFrameBuffer.color);
+        //    s_CurrentEyeFrameBuffer.color = eyeFrameBuffer.color;
+        //}
 
         params.InCmdList = cmdList;
         params.InEyeFrameBuffer = &s_CurrentEyeFrameBuffer;
@@ -152,10 +138,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             params.InUIColorAlpha = NULL;
             params.IsHudlessColor = true;
         }
-        auto colorDesc = s_CurrentEyeFrameBuffer.color.pTexture->GetDesc();
+        auto colorDesc = eyeFrameBuffer.color.pTexture->GetDesc();
         params.IsMotionVectorsOtherEye = !vr->is_fix_dlss();
-        //params.InMotionScale[0] = (float)colorDesc.Width / 2.0f;
-        //params.InMotionScale[1] = -1.0f * ((float)colorDesc.Height / 2.0f);
         params.InMotionScale[0] = (float)colorDesc.Width;
         params.InMotionScale[1] = (float)colorDesc.Height;
         params.Mode = (FrameWarpMode)vr->m_framewarp_mode->value();
@@ -164,47 +148,50 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         params.CameraData = &vr->cameraData[nEye];
         params.IgnoreMotionThreshold = vr->m_ignore_motion_threshold->value();
         params.Debug = vr->m_framewarp_debug->value();
-        EvaluateFrameWarp(params);
-        if (vr->mDebug2 && vr->mDebug3) {
-            vr->d3d12Renderer->ShowVRSOverlay(cmdList, params.OutEyeFrameBuffer->color, vr->m_VRSImageDesc);
+        if (!vr->is_foveated_rendering()) {
+            EvaluateFrameWarp(params);
+        } else if (!vr->m_is_second_rendered_frame) {
+            CD3DX12_VIEWPORT vp(eyeFrameBuffer.color.pTexture);
+            if (!vr->mDebug2) {
+                vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vp, false);
+            }
         }
+        else {
+            auto foveatedVP = vr->get_runtime()->foveated_viewports[nEye];
+            D3D12_VIEWPORT vp;
+            vp.TopLeftX = foveatedVP.TopLeftX * colorDesc.Width;
+            vp.TopLeftY = foveatedVP.TopLeftY * colorDesc.Height;
+            vp.Width = foveatedVP.Width * colorDesc.Width;
+            vp.Height = foveatedVP.Height * colorDesc.Height;
+            vp.MinDepth = 0;
+            vp.MaxDepth = 1;
+            if (!vr->mDebug3)
+                vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vp, false);
+        }
+
         vr->d3d12Renderer->EndCommandList(backbuffer_index);
     } else {
         auto cmdList = vr->d3d12Renderer->BeginCommandList(backbuffer_index);
-
-        if (vr->mDebug2 && vr->depthDesc.pTexture) {
-            auto desc1 = vr->depthDesc.pTexture->GetDesc();
-            vr->m_VRSParams.vrsAlgorithm = Foveated;
-            vr->m_VRSParams.tileSize = vr->m_VRSInfo.MaxTileSize[0];
-            vr->m_VRSParams.renderSize[0] = desc1.Width;
-            vr->m_VRSParams.renderSize[1] = desc1.Height;
-            vr->m_VRSParams.foveationCenter[0] = 0.5f;
-            vr->m_VRSParams.foveationCenter[1] = 0.5f;
-            //vr->m_VRSParams.foveationRadius.radius1x1 = 0.15f;
-            //vr->m_VRSParams.foveationRadius.radius1x2 = 0.25f;
-            //vr->m_VRSParams.foveationRadius.radius2x2 = 0.35f;
-            //vr->m_VRSParams.foveationRadius.radius2x4 = 0.45f;
-            vr->m_VRSParams.foveationRadius.radius1x1 = 0.00f;
-            vr->m_VRSParams.foveationRadius.radius1x2 = 0.00f;
-            vr->m_VRSParams.foveationRadius.radius2x2 = 0.00f;
-            vr->m_VRSParams.foveationRadius.radius2x4 = 0.00f;
-            vr->d3d12Renderer->GenerateVRSImage(cmdList, vr->m_VRSImageDesc, vr->m_VRSParams);
-        }
-        vr->m_VRSParams.foveationRadius.radius2x4 = 0.00f;
-        if (vr->mDebug2 && vr->mDebug3) {
-            vr->d3d12Renderer->ShowVRSOverlay(cmdList, m_eyeFrameBuffers.eyeFrameBuffers[nEye].color, vr->m_VRSImageDesc);
-        }
+        CD3DX12_VIEWPORT vp(eyeFrameBuffer.color.pTexture);
+        vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, texDesc[texIndex], vp, false);
         vr->d3d12Renderer->EndCommandList(backbuffer_index);
     }
     //#############################
     //#Frame Warp Module End
     //#############################
 
+    bool submitFrame = (vr->is_using_sf() || vr->is_using_afw() && (!vr->is_foveated_rendering() || (vr->m_is_second_rendered_frame)));
+
+    if (!submitFrame) {
+        hook->ignore_next_present();
+        return vr::EVRCompositorError::VRCompositorError_None;
+    }
+
     // If m_frame_count is even, we're rendering the left eye.
     if (frame_count % 2 == vr->m_left_eye_interval) {
         // OpenXR texture
         if (runtime->is_openxr() && vr->m_openxr->ready()) {
-            m_openxr.copy(0, eye_texture.Get());
+            m_openxr.copy(0, m_openvr.get_left().texture.Get());
             if (vr->is_using_afw()) {
                 m_openxr.copy(1, m_openvr.get_right().texture.Get());
             }
@@ -213,7 +200,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         // OpenVR texture
         // Copy the back buffer to the left eye texture (m_left_eye_tex0 holds the intermediate frame).
         if (runtime->is_openvr()) {
-            m_openvr.copy_left(eye_texture.Get());
+            //m_openvr.copy_left(eye_texture.Get());
 
             vr::D3D12TextureData_t left {
                 m_openvr.get_left().texture.Get(),
@@ -255,7 +242,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     } else {
         // OpenXR texture
         if (runtime->is_openxr() && vr->m_openxr->ready()) {
-            m_openxr.copy(1, eye_texture.Get());
+            m_openxr.copy(1, m_openvr.get_right().texture.Get());
             if (vr->is_using_afw()) {
                 m_openxr.copy(0, m_openvr.get_left().texture.Get());
             }
@@ -264,7 +251,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         // OpenVR texture
         // Copy the back buffer to the right eye texture.
         if (runtime->is_openvr()) {
-            m_openvr.copy_right(eye_texture.Get());
+            //m_openvr.copy_right(eye_texture.Get());
 
             vr::D3D12TextureData_t right {
                 m_openvr.get_right().texture.Get(),
@@ -363,6 +350,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     }
 
     m_prev_backbuffer = backbuffer;
+    prev_backbuffer_index = backbuffer_index;
 
     return e;
 }
@@ -458,11 +446,14 @@ void D3D12Component::setup() {
     //#############################
     //#Frame Warp Module Start
     //#############################
+    auto const vr = VR::get();
     static uint32_t lastSize[2]{0, 0};
     static DXGI_FORMAT lastFormat = DXGI_FORMAT_UNKNOWN;
-    if (VR::get()->is_using_afw() && (lastSize[0] != backbuffer_desc.Width || lastSize[1] != backbuffer_desc.Height || lastFormat != rt_desc.Format)) {
-        FrameWarpInitParams params = {backbuffer_desc.Width, backbuffer_desc.Height, rt_desc.Format};
+    if (VR::get()->is_using_afw() && (lastSize[0] != vr->get_hmd_width() || lastSize[1] != vr->get_hmd_height() || lastFormat != rt_desc.Format)) {
+        FrameWarpInitParams params = {vr->get_hmd_width(), vr->get_hmd_height(), rt_desc.Format};
         m_eyeFrameBuffers = InitFrameWarp(params);
+        lastSize[0] = vr->get_hmd_width();
+        lastSize[1] = vr->get_hmd_height();
     }
     //#############################
     //#Frame Warp Module End

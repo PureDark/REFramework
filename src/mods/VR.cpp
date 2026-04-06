@@ -146,14 +146,20 @@ void VR::on_view_get_size(REManagedObject* scene_view, float* result) {
                 g_previous_size = regenny::via::Size{ (float)window->width, (float)window->height };
             }
 #endif
-            window_width = get_hmd_width();
-            window_height = get_hmd_height();
+
+            bool isFR = (is_using_afw() && is_foveated_rendering());
+            uint32_t render_width = (isFR) ? round(get_hmd_width() * get_foveated_ratio()) : get_hmd_width();
+            uint32_t render_height = (isFR) ? round(get_hmd_height() * get_foveated_ratio()) : get_hmd_height();
+
+            window_width = render_width;
+            window_height = render_height;
+
 
             if (m_is_d3d12 && m_d3d12.is_initialized()) {
                 const auto& backbuffer_size = m_d3d12.get_backbuffer_size();
 
                 if (backbuffer_size[0] > 0 && backbuffer_size[1] > 0) {
-                    if (std::abs((int)backbuffer_size[0] - (int)window_width) > 50 || std::abs((int)backbuffer_size[1] - (int)window_height) > 50) {
+                    if (std::abs((int)backbuffer_size[0] - (int)render_width) > 50 || std::abs((int)backbuffer_size[1] - (int)render_height) > 50) {
                         const auto now = get_game_frame_count();
 
                         if (!m_backbuffer_inconsistency) {
@@ -165,11 +171,15 @@ void VR::on_view_get_size(REManagedObject* scene_view, float* result) {
 
                         if (is_true_inconsistency) {
                             // Force a reset of the backbuffer size
-                            window_width = get_hmd_width() + 1;
-                            window_height = get_hmd_height() + 1;
+                            window_width = render_width + 1;
+                            window_height = render_height + 1;
 
                             spdlog::info("[VR] Previous backbuffer size: {}x{}", backbuffer_size[0], backbuffer_size[1]);
-                            spdlog::info("[VR] Backbuffer size inconsistency detected, resetting backbuffer size to {}x{}", window_width, window_height);
+                            if (isFR)
+                                spdlog::info("[VR] Backbuffer size inconsistency detected, resetting backbuffer size to {}x{} for foveated rendering, target buffer size {}x{}",
+                                    render_width, render_height, window_width, window_height);
+                            else
+                                spdlog::info("[VR] Backbuffer size inconsistency detected, resetting backbuffer size to {}x{}", render_width, render_height);
 
                             // m_backbuffer_inconsistency gets set to false on device reset.
                         }
@@ -178,6 +188,9 @@ void VR::on_view_get_size(REManagedObject* scene_view, float* result) {
                     m_backbuffer_inconsistency = false;
                 }
             }
+
+            render_size[0] = window_width;
+            render_size[1] = window_height;
         } else {
             m_backbuffer_inconsistency = false;
 
@@ -254,10 +267,15 @@ void VR::on_camera_get_projection_matrix(REManagedObject* camera, Matrix4x4f* re
     } else if (is_using_afw()) {
         std::shared_lock _{get_runtime()->eyes_mtx};
         auto eye_index = (m_render_frame_count+1) % 2 == m_left_eye_interval ? EyeLeft : EyeRight;
-        if (eye_index == EyeLeft) {
-            eye_index = m_frame_count % 2 == m_left_eye_interval ? EyeLeft : EyeRight;
+        if (is_foveated_rendering() && !m_is_second_rendered_frame) {
+            *result = get_runtime()->foveated_projections[eye_index];
         }
-        *result = get_runtime()->projections[eye_index];
+        else {
+            if (eye_index == EyeLeft) {
+                eye_index = m_frame_count % 2 == m_left_eye_interval ? EyeLeft : EyeRight;
+            }
+            *result = get_runtime()->projections[eye_index];
+        }
     } else {
         *result = get_current_projection_matrix(false);
     }
@@ -817,8 +835,6 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCommandList* I
                     auto otherHandle = (nEye == EyeLeft) ? vrDLSSHandle[1] : vrDLSSHandle[0];
 
                     // current rendered eye
-                    bool enableVRS = false;
-                    InCmdList->SetPrivateData(GUID_VRSData, sizeof(bool), &enableVRS);
                     auto result = o_NVSDK_NGX_D3D12_EvaluateFeature(InCmdList, currHandle, InParameters, InCallback);
                     if (NVSDK_NGX_FAILED(result)) {
                         spdlog::error("Failed DLSS 00, code = 0x{0:x}", result);
@@ -832,8 +848,6 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCommandList* I
             }
         }
     }
-    bool enableVRS = false;
-    InCmdList->SetPrivateData(GUID_VRSData, sizeof(bool), &enableVRS);
     auto result = o_NVSDK_NGX_D3D12_EvaluateFeature(InCmdList, InFeatureHandle, InParameters, InCallback);
     return result;
 }
@@ -960,85 +974,6 @@ ffxReturnCode_t hk_ffxDispatch(ffxContext* context, const ffxDispatchDescHeader*
     return o_ffxDispatch(context, desc);
 }
 
-static std::unordered_map<SIZE_T, ID3D12Resource*> gDSVResourceMap = {};
-
-decltype(&ID3D12Device::CreateDepthStencilView) ptrCreateDepthStencilView; // 21
-void WINAPI hk_ID3D12Device_CreateDepthStencilView(ID3D12Device* This, ID3D12Resource* pResource, const D3D12_DEPTH_STENCIL_VIEW_DESC* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) {
-    (This->*ptrCreateDepthStencilView)(pResource, pDesc, DestDescriptor);
-    if (pResource && pDesc->Flags == 0 ) {
-        gDSVResourceMap[DestDescriptor.ptr] = pResource;
-    }
-}
-
-decltype(&ID3D12GraphicsCommandList::ClearDepthStencilView) ptrClearDepthStencilView; // 47
-void WINAPI hk_ID3D12GraphicsCommandList_ClearDepthStencilView(ID3D12GraphicsCommandList* This,
-    D3D12_CPU_DESCRIPTOR_HANDLE DepthStencilView, D3D12_CLEAR_FLAGS ClearFlags, FLOAT Depth, UINT8 Stencil, UINT NumRects,
-    const D3D12_RECT* pRects) {
-    (This->*ptrClearDepthStencilView)(DepthStencilView, ClearFlags, Depth, Stencil, NumRects, pRects);
-    const auto vr = VR::get();
-    // 如果是UI使用的depth，则更改RenderTarget让UI渲染到指定的新纹理上
-    if (vr->is_enable_hidden_area_mesh() && gDSVResourceMap.contains(DepthStencilView.ptr) && vr->renderDepthDesc.pTexture) {
-        auto depth = gDSVResourceMap[DepthStencilView.ptr];
-        auto desc = depth->GetDesc();
-        auto desc2 = vr->renderDepthDesc.pTexture->GetDesc();
-        if (desc.Width == desc2.Width && desc.Height == desc2.Height) {
-            if (vr->get_runtime()->hiddenAreaMeshVextexBuffer[0].pVextexBuffer &&
-                vr->get_runtime()->hiddenAreaMeshVextexBuffer[1].pVextexBuffer) {
-                EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
-                CD3DX12_VIEWPORT vp(vr->renderDepthDesc.pTexture);
-                TextureDesc tempDepthDesc;
-                tempDepthDesc.type = pd::ImageType::Depth;
-                tempDepthDesc.pTexture = depth;
-                tempDepthDesc.depthStencilViewHandle = DepthStencilView;
-                tempDepthDesc.initialState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-                vr->d3d12Renderer->ApplyHiddenAreaMesh(This, tempDepthDesc, vp, vr->get_runtime()->hiddenAreaMeshVextexBuffer[nEye]);
-            }
-        }
-    }
-}
-
-decltype(&ID3D12GraphicsCommandList::Reset) ptrReset; // 10
-void WINAPI hk_ID3D12GraphicsCommandList_Reset(
-    ID3D12GraphicsCommandList* This, ID3D12CommandAllocator* pAllocator, ID3D12PipelineState* pInitialState) {
-    (This->*ptrReset)(pAllocator, pInitialState);
-    UINT size = sizeof(int);
-    bool enableVRS = 0;
-    auto hr = This->GetPrivateData(GUID_VRSData, &size, &enableVRS);
-    enableVRS = VR::get()->mDebug2;
-    This->SetPrivateData(GUID_VRSData, sizeof(bool), &enableVRS);
-    //if (VR::get()->mDebug2) {
-    //    D3D12_SHADING_RATE_COMBINER d3d12Combiners[D3D12_RS_SET_SHADING_RATE_COMBINER_COUNT];
-    //    d3d12Combiners[0] = D3D12_SHADING_RATE_COMBINER_OVERRIDE;
-    //    d3d12Combiners[1] = D3D12_SHADING_RATE_COMBINER_OVERRIDE;
-    //    ((ID3D12GraphicsCommandList5*)This)->RSSetShadingRate(D3D12_SHADING_RATE_4X4, d3d12Combiners);
-    //    ((ID3D12GraphicsCommandList5*)This)->RSSetShadingRateImage(vr->m_VRSImageDesc.pTexture);
-    //}
-}
-
-decltype(&ID3D12GraphicsCommandList::OMSetRenderTargets) ptrOMSetRenderTargets; // 46
-void WINAPI hk_ID3D12GraphicsCommandList_OMSetRenderTargets(ID3D12GraphicsCommandList* This, UINT NumRenderTargetDescriptors,
-    const D3D12_CPU_DESCRIPTOR_HANDLE* pRenderTargetDescriptors, BOOL RTsSingleHandleToDescriptorRange,
-    const D3D12_CPU_DESCRIPTOR_HANDLE* pDepthStencilDescriptor) {
-    (This->*ptrOMSetRenderTargets)(
-        NumRenderTargetDescriptors, pRenderTargetDescriptors, RTsSingleHandleToDescriptorRange, pDepthStencilDescriptor);
-    UINT size = sizeof(int);
-    bool enableVRS = 0;
-    auto hr = This->GetPrivateData(GUID_VRSData, &size, &enableVRS);
-    if (enableVRS) {
-        D3D12_SHADING_RATE_COMBINER d3d12Combiners[D3D12_RS_SET_SHADING_RATE_COMBINER_COUNT];
-        d3d12Combiners[0] = D3D12_SHADING_RATE_COMBINER_OVERRIDE;
-        d3d12Combiners[1] = D3D12_SHADING_RATE_COMBINER_OVERRIDE;
-        ((ID3D12GraphicsCommandList5*)This)->RSSetShadingRate(D3D12_SHADING_RATE_4X4, d3d12Combiners);
-        ((ID3D12GraphicsCommandList5*)This)->RSSetShadingRateImage(VR::get()->m_VRSImageDesc.pTexture);
-    } else {
-        D3D12_SHADING_RATE_COMBINER d3d12Combiners[D3D12_RS_SET_SHADING_RATE_COMBINER_COUNT];
-        d3d12Combiners[0] = D3D12_SHADING_RATE_COMBINER_PASSTHROUGH;
-        d3d12Combiners[1] = D3D12_SHADING_RATE_COMBINER_PASSTHROUGH;
-        ((ID3D12GraphicsCommandList5*)This)->RSSetShadingRate(D3D12_SHADING_RATE_1X1, d3d12Combiners);
-        ((ID3D12GraphicsCommandList5*)This)->RSSetShadingRateImage(nullptr);
-    }
-}
-
 uintptr_t hookVtable(void* target, int index, void* detours) {
     uintptr_t* pVTable = *(uintptr_t**)target;
     DWORD dwOldProct = 0;
@@ -1060,15 +995,6 @@ std::optional<std::string> VR::on_initialize_d3d_thread() try {
     params.d3d12Device = hook->get_device();
     params.d3d12Queue = hook->get_command_queue();
     d3d12Renderer = InitDevice(params);
-    m_VRSInfo = d3d12Renderer->GetVRSInfo();
-
-    *(uintptr_t*)&ptrCreateDepthStencilView = hookVtable(params.d3d12Device, 21, hk_ID3D12Device_CreateDepthStencilView);
-
-    auto cmdList = d3d12Renderer->BeginCommandList(0);
-    *(uintptr_t*)&ptrOMSetRenderTargets = hookVtable(cmdList, 46, hk_ID3D12GraphicsCommandList_OMSetRenderTargets);
-    *(uintptr_t*)&ptrClearDepthStencilView = hookVtable(cmdList, 47, hk_ID3D12GraphicsCommandList_ClearDepthStencilView);
-    *(uintptr_t*)&ptrReset = hookVtable(cmdList, 10, hk_ID3D12GraphicsCommandList_Reset);
-    d3d12Renderer->EndCommandList(0);
 
     if (auto mr = MH_Initialize(); mr != MH_OK) {
         spdlog::error("MH_Initialize failed: {}", (INT)mr);
@@ -2823,7 +2749,12 @@ void VR::on_present() {
         m_fix_upscalers_wobbling->toggle();
     }
 
-    if ((m_render_frame_count + 1) % 2 == m_left_eye_interval || is_using_afw()) {
+    // case 1: sequential frames and rendered frame == right eye (every two frames)
+    // case 2: AFW and no foveated rendering (each frame)
+    // case 2: AFW and foveated rendering and rendered frame is FR frame
+    if ((is_using_sf() && m_render_frame_count % 2 == m_right_eye_interval) || 
+        (is_using_afw() && !is_foveated_rendering()) ||
+        (is_using_afw() && m_is_second_rendered_frame)) {
         ResetEvent(m_present_finished_event);
     }
 
@@ -2879,7 +2810,7 @@ void VR::on_present() {
     }
     if (GetAsyncKeyState(VK_NUMPAD5) == 0 && btn5 == true) {
         btn5 = false;
-        m_enable_hidden_area_mesh->toggle();
+        m_enable_foveated_rendering->toggle();
     }
     static bool btn6 = false;
     if (GetAsyncKeyState(VK_NUMPAD6) < 0 && btn6 == false) {
@@ -2931,7 +2862,10 @@ void VR::on_present() {
         btnMul = false;
         m_enable_sharpening->toggle();
     }
-    update_camera_data(m_render_frame_count);
+
+    // only update camera data when not rendering FR frame (which has lower FOV)
+    if (!m_is_second_rendered_frame)
+        update_camera_data(m_render_frame_count);
 
     const auto renderer = g_framework->get_renderer_type();
     vr::EVRCompositorError e = vr::EVRCompositorError::VRCompositorError_None;
@@ -2972,7 +2906,12 @@ void VR::on_present() {
         m_submitted = false;
     }
 
-    if ((m_render_frame_count + 1) % 2 == m_left_eye_interval || is_using_afw()) {
+    // case 1: sequential frames and rendered frame == right eye (every two frames)
+    // case 2: AFW and no foveated rendering (each frame)
+    // case 2: AFW and foveated rendering and rendered frame is FR frame
+    if ((is_using_sf() && m_render_frame_count % 2 == m_right_eye_interval) ||
+        (is_using_afw() && !is_foveated_rendering()) ||
+        (is_using_afw() && m_is_second_rendered_frame)) {
         SetEvent(m_present_finished_event);
     }
 }
@@ -3689,8 +3628,12 @@ void VR::on_pre_begin_rendering(void* entry) {
     detect_controllers();
 
     //actual_frame_count = get_game_frame_count();
-    m_frame_count++;
-    actual_frame_count = m_frame_count;
+    if (is_using_afw() && is_foveated_rendering() && inside_on_end) {
+        // don't add frame count if it's rendering the foveated image
+    } else {
+        m_frame_count++;
+        actual_frame_count = m_frame_count;
+    }
 
     /*if (!inside_on_end) {
         spdlog::info("VR: frame count: {}", m_frame_count);
@@ -3714,12 +3657,12 @@ void VR::on_pre_begin_rendering(void* entry) {
     }
     
     // Call WaitGetPoses
-    if (!inside_on_end && (m_frame_count % 2 == m_left_eye_interval || is_using_afw())) {
+    if (!inside_on_end && (is_left_eye() || is_using_afw())) {
         runtime->consume_events(nullptr);
         update_hmd_state();
     }
 
-    const auto should_update_camera = (m_frame_count % 2 == m_left_eye_interval) || is_using_afw();
+    const auto should_update_camera = is_left_eye() || is_using_afw();
 
     if (!inside_on_end && should_update_camera) {
         update_camera();
@@ -3743,7 +3686,7 @@ void VR::on_pre_end_rendering(void* entry) {
         return;
     }
 
-    if (runtime->ready() && (m_frame_count % 2 == m_left_eye_interval) || is_using_afw()) {
+    if (runtime->ready() && ((is_using_sf() && is_left_eye()) || (is_using_afw() && !inside_on_end))) {
         const auto stage = runtime->get_synchronize_stage();
 
         if (stage == VRRuntime::SynchronizeStage::LATE && runtime->synchronize_frame() == VRRuntime::Error::SUCCESS) {
@@ -3774,6 +3717,7 @@ void VR::on_end_rendering(void* entry) {
     // the frame count might get modified, screwing up our logic
     // so we need a render frame count to compare against
     m_render_frame_count = m_frame_count;
+    m_is_second_rendered_frame = inside_on_end;
 
     auto runtime = get_runtime();
 
@@ -3790,22 +3734,24 @@ void VR::on_end_rendering(void* entry) {
         return;
     }
 
-    if (is_using_afw() || inside_on_end) {
-        if (is_using_afw()) {
-            restore_camera();
-            m_in_render = false;
-        }
+    if ((is_using_afw() && !is_foveated_rendering())) {
+        restore_camera();
+        m_in_render = false;
+        return;
+    }
 
+    if (is_using_sf() && inside_on_end) {
         return;
     }
 
     // Only render again on even (left eye) frames
     // We're checking == 1 because at this point, the frame has finished.
     // Meaning the previous frame was a left eye frame.
-    if (!inside_on_end && m_render_frame_count % 2 == m_left_eye_interval) {
+    if (!inside_on_end && ((is_using_sf() && (m_render_frame_count % 2 == m_left_eye_interval)) || is_foveated_rendering())) {
         inside_on_end = true;
         
         // Try to render again for the right eye
+        // Or for the foveated part when using foveated rendering
         auto app = sdk::Application::get();
 
         static auto app_type = sdk::find_type_definition("via.Application");
@@ -3819,6 +3765,7 @@ void VR::on_end_rendering(void* entry) {
         }
 
         static auto chain = app->generate_chain("WaitRendering", "EndRendering");
+        static auto chain_for_fr = app->generate_chain("WaitRendering", "EndRendering");
         static bool do_once = true;
 
         if (do_once) {
@@ -3894,8 +3841,7 @@ void VR::on_end_rendering(void* entry) {
         }
 
         for (auto func : chain) {
-            //spdlog::info("Calling {}", func->description);
-
+            // spdlog::info("Calling {}", func->description);
             func->func(func->entry);
         }
 
@@ -3924,7 +3870,12 @@ void VR::on_wait_rendering(void* entry) {
     // to be signaled
     // only on the left eye interval because we need the right eye
     // to start render work as soon as possible
-    if (((m_frame_count + 1) % 2) == m_left_eye_interval || is_using_afw()) {
+    // case 1: sequential frames and rendered frame == right eye (every two frames)
+    // case 2: AFW and no foveated rendering (each frame)
+    // case 2: AFW and foveated rendering and rendered frame is FR frame
+    if ((is_using_sf() && m_frame_count % 2 == m_right_eye_interval) || 
+        (is_using_afw() && !is_foveated_rendering()) ||
+        (is_using_afw() && m_is_second_rendered_frame)) {
         if (WaitForSingleObject(m_present_finished_event, 333) == WAIT_TIMEOUT) {
             timed_out = true;
         }
@@ -4491,9 +4442,10 @@ void VR::on_draw_ui() {
         m_sharpness->draw("Sharpness");
         m_fix_upscalers_wobbling->draw("Fix Upscalers Wobbling");
         m_fix_item_inspection->draw("Fix Item Inspection Double Vision");
-        m_enable_hidden_area_mesh->draw("Enable Hidden Area Mesh");
         m_ignore_motion_threshold->draw("Ignore Motion Threshold");
         m_framewarp_mode->draw("Framewarp Mode");
+        m_enable_foveated_rendering->draw("Enable Foveated Rendering");
+        m_foveated_ratio->draw("Foveated Ratio");
     }   ImGui::Separator();
 
     m_decoupled_pitch->draw("Decoupled Camera Pitch");

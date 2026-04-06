@@ -26,9 +26,6 @@
 
 #include "PDAFWPlugin.h"
 
-// {450629EB-4BF8-4CC5-8B1B-7F344C5ED6EB}
-DEFINE_GUID(GUID_VRSData, 0x450629eb, 0x4bf8, 0x4cc5, 0x8b, 0x1b, 0x7f, 0x34, 0x4c, 0x5e, 0xd6, 0xeb);
-
 class REManagedObject;
 
 class VR : public Mod {
@@ -45,27 +42,25 @@ public:
     TextureDesc depthDesc;
     TextureDesc motionVectorsDesc;
 
-    VRSInfo m_VRSInfo;
-    TextureDesc m_VRSImageDesc{};
-    VRSParams m_VRSParams{};
-    bool m_bVRSParamsInited = false;
-
     bool mDebug1 = false;
     bool mDebug2 = false;
     bool mDebug3 = false;
     int mDebug5 = 0;
 
-    std::unordered_map<UINT64, int> m_ui_last_frame_counts = {};
+    uint32_t render_size[2] = {0, 0};
+
+    bool m_is_second_rendered_frame{false};
 
     int last_update_camera_data_frame_count = 0;
     void update_camera_data(int frame_count);
     void get_camera_data();
 
-    bool is_enable_hidden_area_mesh() { return m_enable_hidden_area_mesh->value(); };
     bool is_fix_dlss() { return m_fix_upscalers_wobbling->value(); };
     bool is_enable_sharpening() { return m_enable_sharpening->value(); };
     float get_sharpness() { return m_sharpness->value(); };
     int get_vr_frame_count() { return m_frame_count; };
+    bool is_left_eye() { return m_frame_count % 2 == m_left_eye_interval; };
+    float get_foveated_ratio() { return m_foveated_ratio->value(); };
 
 public:
     static std::shared_ptr<VR>& get();
@@ -137,6 +132,14 @@ public:
 
     bool is_using_afw() const {
         return m_use_afw->value();
+    }
+
+    bool is_using_sf() const {
+        return !m_use_afw->value();
+    }
+
+    bool is_foveated_rendering() const { 
+        return m_enable_foveated_rendering->value();
     }
 
     // Functions that generally use a mutex or have more complex logic
@@ -544,9 +547,10 @@ private:
     const ModToggle::Ptr m_fix_upscalers_wobbling{ModToggle::create(generate_name("UpscalersWobblingFix"), true)};
     const ModToggle::Ptr m_fix_item_inspection{ModToggle::create(generate_name("FixItemInspection"), true)};
     const ModSlider::Ptr m_sharpness{ModSlider::create(generate_name("Sharpness"), 0.0f, 1.0f, 0.6f)};
-    const ModToggle::Ptr m_enable_hidden_area_mesh{ModToggle::create(generate_name("EnableHiddenAreaMesh"), false)};
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
     const ModSlider::Ptr m_ignore_motion_threshold{ModSlider::create(generate_name("IgnoreMotionThreshold"), 1.0f, 100.0f, 2.5f)};
+    const ModToggle::Ptr m_enable_foveated_rendering{ModToggle::create(generate_name("EnableFoveatedRendering"), false)};
+    const ModSlider::Ptr m_foveated_ratio{ModSlider::create(generate_name("Sharpness"), 0.1f, 1.0f, 0.34f)};
 
     const ModCombo::Ptr m_framewarp_mode{ModCombo::create(generate_name("FramewarpMode"),
         {

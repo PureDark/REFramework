@@ -124,8 +124,18 @@ struct VRRuntime {
 
     std::optional<std::string> error{};
 
+    std::array<Matrix4x4f, 2> foveated_projections{};
     std::array<Matrix4x4f, 2> projections{};
     std::array<Matrix4x4f, 2> eyes{};
+
+    typedef struct ViewPort {
+        FLOAT TopLeftX;
+        FLOAT TopLeftY;
+        FLOAT Width;
+        FLOAT Height;
+    } ViewPort;
+
+    std::array<ViewPort, 2> foveated_viewports{};
 
     mutable std::shared_mutex projections_mtx{};
     mutable std::shared_mutex eyes_mtx{};

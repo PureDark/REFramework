@@ -84,20 +84,58 @@ VRRuntime::Error OpenVR::consume_events(std::function<void(void*)> callback) {
 
 VRRuntime::Error OpenVR::update_matrices(float nearz, float farz){
     std::unique_lock __{ this->eyes_mtx };
-    const auto local_left = this->hmd->GetEyeToHeadTransform(vr::Eye_Left);
-    const auto local_right = this->hmd->GetEyeToHeadTransform(vr::Eye_Right);
 
-    this->eyes[vr::Eye_Left] = glm::rowMajor4(Matrix4x4f{ *(Matrix3x4f*)&local_left } );
-    this->eyes[vr::Eye_Right] = glm::rowMajor4(Matrix4x4f{ *(Matrix3x4f*)&local_right } );
+    for (int i = 0; i < 2; i++) {
+        auto nEye = (vr::EVREye)i;
+        const auto local = this->hmd->GetEyeToHeadTransform(nEye);
 
-    auto pleft = this->hmd->GetProjectionMatrix(vr::Eye_Left, nearz, farz);
-    auto pright = this->hmd->GetProjectionMatrix(vr::Eye_Right, nearz, farz);
+        this->eyes[nEye] = glm::rowMajor4(Matrix4x4f{*(Matrix3x4f*)&local});
 
-    this->projections[vr::Eye_Left] = glm::rowMajor4(Matrix4x4f{ *(Matrix4x4f*)&pleft } );
-    this->projections[vr::Eye_Right] = glm::rowMajor4(Matrix4x4f{ *(Matrix4x4f*)&pright } );
+        auto projection = this->hmd->GetProjectionMatrix(nEye, nearz, farz);
 
-    this->hmd->GetProjectionRaw(vr::Eye_Left, &this->raw_projections[vr::Eye_Left][0], &this->raw_projections[vr::Eye_Left][1], &this->raw_projections[vr::Eye_Left][2], &this->raw_projections[vr::Eye_Left][3]);
-    this->hmd->GetProjectionRaw(vr::Eye_Right, &this->raw_projections[vr::Eye_Right][0], &this->raw_projections[vr::Eye_Right][1], &this->raw_projections[vr::Eye_Right][2], &this->raw_projections[vr::Eye_Right][3]);
+        this->projections[nEye] = glm::rowMajor4(Matrix4x4f{*(Matrix4x4f*)&projection});
+
+        this->hmd->GetProjectionRaw(nEye, &this->raw_projections[nEye][0], &this->raw_projections[nEye][1], &this->raw_projections[nEye][2], &this->raw_projections[nEye][3]);
+
+        XrFovf fov;
+        fov.angleLeft = this->raw_projections[nEye][0];
+        fov.angleRight = this->raw_projections[nEye][1];
+        fov.angleUp = this->raw_projections[nEye][2];
+        fov.angleDown = this->raw_projections[nEye][3];
+
+        float L_full = tan(fov.angleLeft);
+        float R_full = tan(fov.angleRight);
+        float U_full = tan(fov.angleUp);
+        float D_full = tan(fov.angleDown);
+
+        float scale_uv = VR::get()->get_foveated_ratio();
+        float gaze_uv_x = 0;
+        float gaze_uv_y = 0;
+
+        float L_fove = L_full * scale_uv + gaze_uv_x;
+        float R_fove = R_full * scale_uv + gaze_uv_x;
+        float U_fove = U_full * scale_uv + gaze_uv_y;
+        float D_fove = D_full * scale_uv + gaze_uv_y;
+        
+        XrMatrix4x4f_CreateProjection((XrMatrix4x4f*)&this->foveated_projections[i], GRAPHICS_D3D, L_fove, R_fove, U_fove, D_fove, nearz, farz);
+
+        float totalTanW = R_full - L_full;
+        float u0 = (L_fove - L_full) / totalTanW;
+        float u1 = (R_fove - L_full) / totalTanW;
+
+        // ´¹Ö± UV
+        float totalTanH = U_full - D_full;
+        float v0 = (D_fove - D_full) / totalTanH;
+        float v1 = (U_fove - D_full) / totalTanH;
+
+        ViewPort vp = {};
+        vp.TopLeftX = u0;
+        vp.TopLeftY = v0;
+        vp.Width = (u1 - u0);
+        vp.Height = (v1 - v0);
+
+        foveated_viewports[i] = vp;
+    }
 
     return VRRuntime::Error::SUCCESS;
 }

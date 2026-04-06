@@ -9,6 +9,7 @@
 #include "REFramework.hpp"
 
 #include "OpenXR.hpp"
+#include <mods/VR.hpp>
 
 using namespace nlohmann;
 
@@ -257,8 +258,41 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
         const auto& pose = this->views[i].pose;
         const auto& fov = this->views[i].fov;
 
+        float L_full = tan(fov.angleLeft);
+        float R_full = tan(fov.angleRight);
+        float U_full = tan(fov.angleUp);
+        float D_full = tan(fov.angleDown);
+
+        float scale_uv = VR::get()->get_foveated_ratio();
+        float gaze_uv_x = 0;
+        float gaze_uv_y = 0;
+
+        float L_fove = L_full * scale_uv + gaze_uv_x;
+        float R_fove = R_full * scale_uv + gaze_uv_x;
+        float U_fove = U_full * scale_uv + gaze_uv_y;
+        float D_fove = D_full * scale_uv + gaze_uv_y;
+
         // Update projection matrix
-        XrMatrix4x4f_CreateProjection((XrMatrix4x4f*)&this->projections[i], GRAPHICS_D3D, tan(fov.angleLeft), tan(fov.angleRight), tan(fov.angleUp), tan(fov.angleDown), nearz, farz);
+        XrMatrix4x4f_CreateProjection((XrMatrix4x4f*)&this->projections[i], GRAPHICS_D3D, L_full, R_full, U_full, D_full, nearz, farz);
+
+        XrMatrix4x4f_CreateProjection((XrMatrix4x4f*)&this->foveated_projections[i], GRAPHICS_D3D, L_fove, R_fove, U_fove, D_fove, nearz, farz);
+
+        float totalTanW = R_full - L_full;
+        float u0 = (L_fove - L_full) / totalTanW;
+        float u1 = (R_fove - L_full) / totalTanW;
+
+        // ´¹Ö± UV
+        float totalTanH = U_full - D_full;
+        float v0 = (D_fove - D_full) / totalTanH;
+        float v1 = (U_fove - D_full) / totalTanH;
+
+        ViewPort vp = {};
+        vp.TopLeftX = u0;
+        vp.TopLeftY = v0;
+        vp.Width = (u1 - u0);
+        vp.Height = (v1 - v0);
+
+        foveated_viewports[i] = vp;
 
         // Update view matrix
         this->eyes[i] = Matrix4x4f{*(glm::quat*)&pose.orientation};
