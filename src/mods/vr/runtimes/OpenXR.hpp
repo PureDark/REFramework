@@ -127,6 +127,12 @@ public:
     XrViewState stage_view_state{XR_TYPE_VIEW_STATE};
     XrFrameState frame_state{XR_TYPE_FRAME_STATE};
 
+    bool supportsEyeGazeInteraction{false};
+    XrActionSet eyeGazeActionSet{NULL};
+    XrAction eyeGazeAction{NULL};
+    XrSpace viewSpace{XR_NULL_HANDLE};
+    XrSpace gazeActionSpace{NULL};
+
     XrSessionState session_state{XR_SESSION_STATE_UNKNOWN};
 
     XrSpaceLocation view_space_location{XR_TYPE_SPACE_LOCATION};

@@ -1,4 +1,4 @@
-#include <chrono>
+ï»¿#include <chrono>
 #include <filesystem>
 #include <fstream>
 
@@ -10,6 +10,8 @@
 
 #include "OpenXR.hpp"
 #include <mods/VR.hpp>
+#include <openxr/openxr.h>
+#include <openxr/openxr_platform.h>
 
 using namespace nlohmann;
 
@@ -250,6 +252,66 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
     if (!this->session_ready || this->views.empty()) {
         return VRRuntime::Error::SUCCESS;
     }
+    float gaze_angle_x[2] = {0, 0};
+    float gaze_angle_y[2] = {0, 0};
+
+
+    if (eyeGazeActionSet != NULL) {
+        XrActiveActionSet activeActionSet{eyeGazeActionSet, XR_NULL_PATH};
+        XrTime time;
+        XrActionsSyncInfo syncInfo{XR_TYPE_ACTIONS_SYNC_INFO};
+        syncInfo.countActiveActionSets = 1;
+        syncInfo.activeActionSets = &activeActionSet;
+        xrSyncActions(session, &syncInfo);
+        XrActionStatePose actionStatePose{XR_TYPE_ACTION_STATE_POSE};
+        XrActionStateGetInfo getActionStateInfo{XR_TYPE_ACTION_STATE_GET_INFO};
+        getActionStateInfo.action = eyeGazeAction;
+        xrGetActionStatePose(session, &getActionStateInfo, &actionStatePose);
+        if (actionStatePose.isActive) {
+            XrEyeGazeSampleTimeEXT eyeGazeSampleTime{XR_TYPE_EYE_GAZE_SAMPLE_TIME_EXT};
+            XrSpaceLocation gazeLocation{XR_TYPE_SPACE_LOCATION, &eyeGazeSampleTime};
+            xrLocateSpace(gazeActionSpace, viewSpace, time, &gazeLocation);
+            XrQuaternionf q = gazeLocation.pose.orientation;
+
+            // ==============================================
+            // Final gaze direction by applying quaternion
+            // ==============================================
+            XrVector3f centerDir;
+            centerDir.x = -2 * (q.x * q.z + q.w * q.y);
+            centerDir.y = -2 * (q.y * q.z - q.w * q.x);
+            centerDir.z = -(1 - 2 * q.x * q.x - 2 * q.y * q.y);
+
+            // ==============================================
+            // Apply convergence
+            // ==============================================
+            float ipd = 0.063f;
+            float focus_dist = 5.0f;
+            float half_ipd = ipd * 0.5f;
+            float convergence_angle = atanf(half_ipd / focus_dist);
+
+            XrVector3f eyeDirs[2];
+            eyeDirs[0].x = centerDir.x + convergence_angle;
+            eyeDirs[1].x = centerDir.x - convergence_angle;
+
+            // ==============================================
+            // Get Yaw and Pitch from dirs
+            // ==============================================
+            
+            // Yaw
+            gaze_angle_x[0] = atan2(eyeDirs[0].x, -centerDir.z);
+            gaze_angle_x[1] = atan2(eyeDirs[1].x, -centerDir.z); 
+            // Pitch
+            gaze_angle_y[0] = asin(-centerDir.y);
+            gaze_angle_y[1] = asin(-centerDir.y);
+        }
+    }
+
+     if (VR::get()->mDebug1) {
+        gaze_angle_x[0] = -0.3f;
+        gaze_angle_y[0] = -0.3f;
+        gaze_angle_x[1] = -0.3f;
+        gaze_angle_y[1] = -0.3f;
+     }
 
     std::unique_lock __{ this->eyes_mtx };
     std::unique_lock ___{ this->pose_mtx };
@@ -262,33 +324,33 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
         float R_full = tan(fov.angleRight);
         float U_full = tan(fov.angleUp);
         float D_full = tan(fov.angleDown);
+        float totalTanW = R_full - L_full;
+        float totalTanH = U_full - D_full;
 
         float scale_uv = VR::get()->get_foveated_ratio();
-        float gaze_uv_x = 0;
-        float gaze_uv_y = 0;
 
-        float L_fove = L_full * scale_uv + gaze_uv_x;
-        float R_fove = R_full * scale_uv + gaze_uv_x;
-        float U_fove = U_full * scale_uv + gaze_uv_y;
-        float D_fove = D_full * scale_uv + gaze_uv_y;
+        float gaze_tan_x = tan(gaze_angle_x[i]);
+        float gaze_tan_y = tan(gaze_angle_y[i]);
+
+        float L_fove = L_full * scale_uv + gaze_tan_x;
+        float R_fove = R_full * scale_uv + gaze_tan_x;
+        float U_fove = U_full * scale_uv - gaze_tan_y;
+        float D_fove = D_full * scale_uv - gaze_tan_y;
 
         // Update projection matrix
         XrMatrix4x4f_CreateProjection((XrMatrix4x4f*)&this->projections[i], GRAPHICS_D3D, L_full, R_full, U_full, D_full, nearz, farz);
 
         XrMatrix4x4f_CreateProjection((XrMatrix4x4f*)&this->foveated_projections[i], GRAPHICS_D3D, L_fove, R_fove, U_fove, D_fove, nearz, farz);
 
-        float totalTanW = R_full - L_full;
         float u0 = (L_fove - L_full) / totalTanW;
         float u1 = (R_fove - L_full) / totalTanW;
 
-        // ´¹Ö± UV
-        float totalTanH = U_full - D_full;
         float v0 = (D_fove - D_full) / totalTanH;
         float v1 = (U_fove - D_full) / totalTanH;
 
         ViewPort vp = {};
         vp.TopLeftX = u0;
-        vp.TopLeftY = v0;
+        vp.TopLeftY = 1-v1;
         vp.Width = (u1 - u0);
         vp.Height = (v1 - v0);
 
@@ -791,8 +853,17 @@ std::optional<std::string> OpenXR::initialize_actions(const std::string& json_st
     spdlog::info("[VR] Attaching action set to session");
 
     XrSessionActionSetsAttachInfo action_sets_attach_info{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
-    action_sets_attach_info.countActionSets = 1;
-    action_sets_attach_info.actionSets = &this->action_set.handle;
+    if (supportsEyeGazeInteraction && eyeGazeActionSet != NULL) {
+        action_sets_attach_info.countActionSets = 2;
+        XrActionSet actionSets[] = {
+            {action_set.handle}, // controller set
+            {eyeGazeActionSet}   // eye gaze set
+        };
+        action_sets_attach_info.actionSets = actionSets;
+    } else {
+        action_sets_attach_info.countActionSets = 1;
+        action_sets_attach_info.actionSets = &this->action_set.handle;
+    }
 
     if (auto result = xrAttachSessionActionSets(this->session, &action_sets_attach_info); result != XR_SUCCESS) {
         return "xrAttachSessionActionSets failed: " + this->get_result_string(result);

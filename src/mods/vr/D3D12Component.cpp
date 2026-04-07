@@ -152,9 +152,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             EvaluateFrameWarp(params);
         } else if (!vr->m_is_second_rendered_frame) {
             CD3DX12_VIEWPORT vp(eyeFrameBuffer.color.pTexture);
-            if (!vr->mDebug2) {
-                vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vp, false);
-            }
+            vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vp, false);
         }
         else {
             auto foveatedVP = vr->get_runtime()->foveated_viewports[nEye];
@@ -165,8 +163,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             vp.Height = foveatedVP.Height * colorDesc.Height;
             vp.MinDepth = 0;
             vp.MaxDepth = 1;
-            if (!vr->mDebug3)
-                vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vp, false);
+            vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vp, false);
         }
 
         vr->d3d12Renderer->EndCommandList(backbuffer_index);

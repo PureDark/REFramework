@@ -550,7 +550,7 @@ private:
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
     const ModSlider::Ptr m_ignore_motion_threshold{ModSlider::create(generate_name("IgnoreMotionThreshold"), 1.0f, 100.0f, 2.5f)};
     const ModToggle::Ptr m_enable_foveated_rendering{ModToggle::create(generate_name("EnableFoveatedRendering"), false)};
-    const ModSlider::Ptr m_foveated_ratio{ModSlider::create(generate_name("Sharpness"), 0.1f, 1.0f, 0.34f)};
+    const ModSlider::Ptr m_foveated_ratio{ModSlider::create(generate_name("Sharpness"), 0.1f, 1.0f, 0.21f)};
 
     const ModCombo::Ptr m_framewarp_mode{ModCombo::create(generate_name("FramewarpMode"),
         {

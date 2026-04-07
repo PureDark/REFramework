@@ -266,9 +266,10 @@ void VR::on_camera_get_projection_matrix(REManagedObject* camera, Matrix4x4f* re
         return;
     } else if (is_using_afw()) {
         std::shared_lock _{get_runtime()->eyes_mtx};
-        auto eye_index = (m_render_frame_count+1) % 2 == m_left_eye_interval ? EyeLeft : EyeRight;
+        auto eye_index = (m_render_frame_count + 1) % 2 == m_left_eye_interval ? EyeLeft : EyeRight;
+        auto other_eye_index = (m_render_frame_count + 1) % 2 == m_left_eye_interval ? EyeRight : EyeLeft;
         if (is_foveated_rendering() && !m_is_second_rendered_frame) {
-            *result = get_runtime()->foveated_projections[eye_index];
+            *result = get_runtime()->foveated_projections[other_eye_index];
         }
         else {
             if (eye_index == EyeLeft) {
@@ -1356,6 +1357,29 @@ std::optional<std::string> VR::initialize_openxr() {
         } else {
             extensions.push_back(XR_KHR_D3D11_ENABLE_EXTENSION_NAME);
         }
+        XrResult res;
+        uint32_t extCount = 0;
+
+        res = xrEnumerateInstanceExtensionProperties(nullptr, 0, &extCount, nullptr);
+        assert(res == XR_SUCCESS);
+
+        std::vector<XrExtensionProperties> exts(extCount, {XR_TYPE_EXTENSION_PROPERTIES});
+        res = xrEnumerateInstanceExtensionProperties(nullptr, extCount, &extCount, exts.data());
+        assert(res == XR_SUCCESS);
+
+        bool supportsEyeGaze = false;
+        for (const auto& ext : exts) {
+            if (strcmp(ext.extensionName, XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME) == 0) {
+                supportsEyeGaze = true;
+                break;
+            }
+        }
+
+        if (!supportsEyeGaze) {
+            spdlog::info("[VR] OpenXR no eye gaze support!");
+        } else {
+            extensions.push_back(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME);
+        }
 
         XrInstanceCreateInfo instance_create_info{XR_TYPE_INSTANCE_CREATE_INFO};
         instance_create_info.next = nullptr;
@@ -1375,6 +1399,7 @@ std::optional<std::string> VR::initialize_openxr() {
 
             return std::nullopt;
         }
+
     } else {
         spdlog::info("[VR] Found existing openxr instance");
     }
@@ -1419,6 +1444,52 @@ std::optional<std::string> VR::initialize_openxr() {
         spdlog::error("[VR] {}", m_openxr->error.value());
 
         return std::nullopt;
+    }
+
+    XrSystemEyeGazeInteractionPropertiesEXT eyeGazeProps = {.type = XR_TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT, .next = nullptr};
+    XrSystemProperties systemProps = {.type = XR_TYPE_SYSTEM_PROPERTIES, .next = &eyeGazeProps};
+    xrGetSystemProperties(m_openxr->instance, m_openxr->system, &systemProps);
+    m_openxr->supportsEyeGazeInteraction = eyeGazeProps.supportsEyeGazeInteraction;
+    if (m_openxr->supportsEyeGazeInteraction) {
+        // Create action set
+        XrActionSetCreateInfo actionSetInfo{XR_TYPE_ACTION_SET_CREATE_INFO};
+        strcpy(actionSetInfo.actionSetName, "eyegaze");
+        strcpy(actionSetInfo.localizedActionSetName, "Eye Gaze");
+        actionSetInfo.priority = 0;
+        result = xrCreateActionSet(m_openxr->instance, &actionSetInfo, &m_openxr->eyeGazeActionSet);
+        // Create eye gaze action
+        XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
+        strcpy(actionInfo.actionName, "eye_gaze_pose");
+        actionInfo.actionType = XR_ACTION_TYPE_POSE_INPUT;
+        strcpy(actionInfo.localizedActionName, "Eye Gaze Pose");
+        result = xrCreateAction(m_openxr->eyeGazeActionSet, &actionInfo, &m_openxr->eyeGazeAction);
+        // Create suggested bindings
+        XrPath eyeGazeInteractionProfilePath;
+        result = xrStringToPath(m_openxr->instance, "/interaction_profiles/ext/eye_gaze_interaction", &eyeGazeInteractionProfilePath);
+        XrPath gazePosePath;
+        result = xrStringToPath(m_openxr->instance, "/user/eyes_ext/input/gaze_ext/pose", &gazePosePath);
+        XrActionSuggestedBinding bindings;
+        bindings.action = m_openxr->eyeGazeAction;
+        bindings.binding = gazePosePath;
+        XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+        suggestedBindings.interactionProfile = eyeGazeInteractionProfilePath;
+        suggestedBindings.suggestedBindings = &bindings;
+        suggestedBindings.countSuggestedBindings = 1;
+        result = xrSuggestInteractionProfileBindings(m_openxr->instance, &suggestedBindings);
+        //XrSessionActionSetsAttachInfo attachInfo{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
+        //attachInfo.countActionSets = 1;
+        //attachInfo.actionSets = &m_openxr->eyeGazeActionSet;
+        //result = xrAttachSessionActionSets(m_openxr->session, &attachInfo);
+        XrActionSpaceCreateInfo createActionSpaceInfo{XR_TYPE_ACTION_SPACE_CREATE_INFO};
+        createActionSpaceInfo.action = m_openxr->eyeGazeAction;
+        createActionSpaceInfo.poseInActionSpace = {};
+        createActionSpaceInfo.poseInActionSpace.orientation.w = 1.0f;
+        result = xrCreateActionSpace(m_openxr->session, &createActionSpaceInfo, &m_openxr->gazeActionSpace);
+        XrReferenceSpaceCreateInfo createReferenceSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+        createReferenceSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+        createReferenceSpaceInfo.poseInReferenceSpace = {};
+        createReferenceSpaceInfo.poseInReferenceSpace.orientation.w = 1.0f;
+        xrCreateReferenceSpace(m_openxr->session, &createReferenceSpaceInfo, &m_openxr->viewSpace);
     }
 
     // Step 4: Create a space
