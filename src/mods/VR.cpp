@@ -559,7 +559,7 @@ bool VR::on_pre_scene_layer_update(sdk::renderer::layer::Scene* layer, void* ren
     if (!is_hmd_active()) {
         return true;
     }
-    if (m_disable_temporal_fix || (is_using_afw() && m_fix_upscalers_wobbling->value())) {
+    if (m_disable_temporal_fix || (is_using_afw() && is_fix_dlss())) {
         return true;
     }
 
@@ -591,7 +591,7 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
         return;
     }
 
-    if (is_using_afw() && m_fix_upscalers_wobbling->value()) {
+    if (is_using_afw() && is_fix_dlss()) {
         auto eye_index = m_frame_count % 2 == m_left_eye_interval ? EyeLeft : EyeRight;
         auto other_eye_index = m_frame_count % 2 == m_left_eye_interval ? EyeRight : EyeLeft;
 
@@ -606,14 +606,17 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
             if (scene_info == nullptr) {
                 return;
             }
-            auto old_view_matrix = this->m_old_view_matrix[eye_index][i];
-            //auto old_projection_matrix = this->m_old_projection_matrix[eye_index][i];
-            //old_projection_matrix[2][0] = 0;
-            //old_projection_matrix[2][1] = 0;
-            auto old_projection_matrix = get_current_projection_matrix(false);
-            scene_info->old_view_projection_matrix = old_projection_matrix * old_view_matrix;
-            this->m_old_view_matrix[eye_index][i] = scene_info->view_matrix;
-            this->m_old_projection_matrix[eye_index][i] = scene_info->projection_matrix;
+            if (!is_foveated_rendering() || m_is_second_rendered_frame) {
+                auto old_view_matrix = this->m_old_view_matrix[eye_index][i];
+                auto old_projection_matrix = get_runtime()->projections[eye_index];
+                scene_info->old_view_projection_matrix = old_projection_matrix * old_view_matrix;
+                this->m_old_view_matrix[eye_index][i] = scene_info->view_matrix;
+            } else {
+                auto old_view_matrix = this->m_old_foveated_view_matrix[eye_index][i];
+                auto old_projection_matrix = get_runtime()->foveated_projections[eye_index];
+                scene_info->old_view_projection_matrix = old_projection_matrix * old_view_matrix;
+                this->m_old_foveated_view_matrix[eye_index][i] = scene_info->view_matrix;
+            }
         };
         fix_motion_vectors(0, scene_info);
         fix_motion_vectors(1, depth_distortion_scene_info);
@@ -743,7 +746,8 @@ typedef struct NVSDK_NGX_Parameter {
     virtual void Reset() = 0;
 } NVSDK_NGX_Parameter;
 
-static NVSDK_NGX_Handle* vrDLSSHandle[2] = { NULL, NULL};
+static NVSDK_NGX_Handle* vrDLSSHandle[2] = {NULL, NULL};
+static NVSDK_NGX_Handle* vrDLSSHandleFR[2] = {NULL, NULL};
 
 #define NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags "DLSS.Feature.Create.Flags"
 using NVSDK_NGX_D3D12_CreateFeature_t = NVSDK_NGX_Result (*)(ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_Feature InFeatureID,
@@ -761,6 +765,11 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_CreateFeature(
         spdlog::info("Creating additional DLSS instance");
         auto result2 = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, &vrDLSSHandle[1]);
         spdlog::info("Additional DLSS instance create result 0x{0:x}", (INT64)result2);
+        spdlog::info("Creating additional Foveated Rendering DLSS instance");
+        result2 = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, &vrDLSSHandleFR[0]);
+        spdlog::info("Additional Foveated Rendering DLSS instance create result 0x{0:x}", (INT64)result2);
+        result2 = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, &vrDLSSHandleFR[1]);
+        spdlog::info("Additional Foveated Rendering DLSS instance create result 0x{0:x}", (INT64)result2);
     }
     return result;
 }
@@ -782,6 +791,13 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_ReleaseFeature(NVSDK_NGX_Handle* InHandle) {
             auto result2 = o_NVSDK_NGX_D3D12_ReleaseFeature(vrDLSSHandle[1]);
             spdlog::info("Additional DLSS instance release result 0x{0:x}", (INT64)result2);
             vrDLSSHandle[1] = NULL;
+            spdlog::info("Releasing additional Foveated Rendering DLSS instance");
+            result2 = o_NVSDK_NGX_D3D12_ReleaseFeature(vrDLSSHandleFR[0]);
+            spdlog::info("Additional Foveated Rendering DLSS instance release result 0x{0:x}", (INT64)result2);
+            vrDLSSHandleFR[0] = NULL;
+            result2 = o_NVSDK_NGX_D3D12_ReleaseFeature(vrDLSSHandleFR[1]);
+            spdlog::info("Additional Foveated Rendering DLSS instance release result 0x{0:x}", (INT64)result2);
+            vrDLSSHandleFR[1] = NULL;
         }
     }
     return result;

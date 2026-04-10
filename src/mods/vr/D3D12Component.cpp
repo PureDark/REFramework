@@ -86,6 +86,12 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         texDesc[backbuffer_index].initialState = D3D12_RESOURCE_STATE_PRESENT;
         vr->d3d12Renderer->SetupTextureDesc(texDesc[backbuffer_index]);
     }
+    static TextureDesc uiBufferDesc;
+    if (vr->m_enable_ui_fix->value() && uiBufferDesc.pTexture != vr->uiBufferTex) {
+        uiBufferDesc.pTexture = vr->uiBufferTex;
+        uiBufferDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        vr->d3d12Renderer->SetupTextureDesc(uiBufferDesc);
+    }
     if (vr->is_using_afw() && m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture && vr->depthTex) {
         if (vr->depthDesc.pTexture != vr->depthTex) {
             vr->depthDesc.pTexture = vr->depthTex;
@@ -99,12 +105,6 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             vr->d3d12Renderer->CreateTexture(desc.Width, desc.Height, DXGI_FORMAT_R16G16_FLOAT, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
                 vr->motionVectorsDesc, false);
             vr->motionVectorsTex = vr->motionVectorsDesc.pTexture;
-        }
-        static TextureDesc uiBufferDesc;
-        if (vr->m_enable_ui_fix->value() && uiBufferDesc.pTexture != vr->uiBufferTex) {
-            uiBufferDesc.pTexture = vr->uiBufferTex;
-            uiBufferDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-            vr->d3d12Renderer->SetupTextureDesc(uiBufferDesc);
         }
         static FrameBufferDesc s_CurrentEyeFrameBuffer{};
 
@@ -152,7 +152,11 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             EvaluateFrameWarp(params);
         } else if (!vr->m_is_second_rendered_frame) {
             CD3DX12_VIEWPORT vp(eyeFrameBuffer.color.pTexture);
-            vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vp, false);
+            if (!vr->mDebug2) {
+                vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vp, false);
+                vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.depth, s_CurrentEyeFrameBuffer.depth, vp, false);
+                vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.motionVectors, s_CurrentEyeFrameBuffer.motionVectors, vp, false);
+            }
         }
         else {
             auto foveatedVP = vr->get_runtime()->foveated_viewports[nEye];
@@ -163,7 +167,26 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             vp.Height = foveatedVP.Height * colorDesc.Height;
             vp.MinDepth = 0;
             vp.MaxDepth = 1;
-            vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vp, false);
+            if (!vr->mDebug3) {
+                vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vp, false);
+            }
+            params.InEyeFrameBuffer = &eyeFrameBuffer;
+            EvaluateFrameWarp(params);
+        }
+
+        if (uiBufferDesc.pTexture) {
+		    D3D12_RESOURCE_BARRIER barriers1[] = {
+                CD3DX12_RESOURCE_BARRIER::Transition(uiBufferDesc.pTexture, uiBufferDesc.initialState, D3D12_RESOURCE_STATE_RENDER_TARGET)
+		    };
+	        FLOAT black[4] = { 0, 0, 0, 0 };
+		    cmdList->ResourceBarrier(_countof(barriers1), barriers1);
+
+            cmdList->ClearRenderTargetView(uiBufferDesc.renderTargetViewHandle, black, 0, NULL);
+
+		    D3D12_RESOURCE_BARRIER barriers2[] = {
+                CD3DX12_RESOURCE_BARRIER::Transition( uiBufferDesc.pTexture, D3D12_RESOURCE_STATE_RENDER_TARGET, uiBufferDesc.initialState)
+		    };
+		    cmdList->ResourceBarrier(_countof(barriers2), barriers2);
         }
 
         vr->d3d12Renderer->EndCommandList(backbuffer_index);
@@ -171,6 +194,18 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         auto cmdList = vr->d3d12Renderer->BeginCommandList(backbuffer_index);
         CD3DX12_VIEWPORT vp(eyeFrameBuffer.color.pTexture);
         vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, texDesc[texIndex], vp, false);
+        if (uiBufferDesc.pTexture) {
+            D3D12_RESOURCE_BARRIER barriers1[] = {
+                CD3DX12_RESOURCE_BARRIER::Transition(uiBufferDesc.pTexture, uiBufferDesc.initialState, D3D12_RESOURCE_STATE_RENDER_TARGET)};
+            FLOAT black[4] = {0, 0, 0, 0};
+            cmdList->ResourceBarrier(_countof(barriers1), barriers1);
+
+            cmdList->ClearRenderTargetView(uiBufferDesc.renderTargetViewHandle, black, 0, NULL);
+
+            D3D12_RESOURCE_BARRIER barriers2[] = {
+                CD3DX12_RESOURCE_BARRIER::Transition(uiBufferDesc.pTexture, D3D12_RESOURCE_STATE_RENDER_TARGET, uiBufferDesc.initialState)};
+            cmdList->ResourceBarrier(_countof(barriers2), barriers2);
+        }
         vr->d3d12Renderer->EndCommandList(backbuffer_index);
     }
     //#############################

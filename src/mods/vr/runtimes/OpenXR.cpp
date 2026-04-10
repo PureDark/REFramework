@@ -254,7 +254,7 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
     }
     float gaze_angle_x[2] = {0, 0};
     float gaze_angle_y[2] = {0, 0};
-
+    static float convergence_angle = 0.10f;
 
     if (eyeGazeActionSet != NULL) {
         XrActiveActionSet activeActionSet{eyeGazeActionSet, XR_NULL_PATH};
@@ -284,10 +284,6 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
             // ==============================================
             // Apply convergence
             // ==============================================
-            float ipd = 0.063f;
-            float focus_dist = 5.0f;
-            float half_ipd = ipd * 0.5f;
-            float convergence_angle = atanf(half_ipd / focus_dist);
 
             XrVector3f eyeDirs[2];
             eyeDirs[0].x = centerDir.x + convergence_angle;
@@ -298,20 +294,23 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
             // ==============================================
             
             // Yaw
-            gaze_angle_x[0] = atan2(eyeDirs[0].x, -centerDir.z);
-            gaze_angle_x[1] = atan2(eyeDirs[1].x, -centerDir.z); 
+            gaze_angle_x[0] = atan2(eyeDirs[0].x, -centerDir.z) + convergence_angle;
+            gaze_angle_x[1] = atan2(eyeDirs[1].x, -centerDir.z) - convergence_angle;
             // Pitch
             gaze_angle_y[0] = asin(-centerDir.y);
             gaze_angle_y[1] = asin(-centerDir.y);
         }
+    } else {
+        gaze_angle_x[0] += convergence_angle;
+        gaze_angle_x[1] -= convergence_angle;
     }
 
-     if (VR::get()->mDebug1) {
-        gaze_angle_x[0] = -0.3f;
+    if (VR::get()->mDebug1) {
+        gaze_angle_x[0] = -0.3f + convergence_angle;
         gaze_angle_y[0] = -0.3f;
-        gaze_angle_x[1] = -0.3f;
+        gaze_angle_x[1] = -0.3f - convergence_angle;
         gaze_angle_y[1] = -0.3f;
-     }
+    }
 
     std::unique_lock __{ this->eyes_mtx };
     std::unique_lock ___{ this->pose_mtx };

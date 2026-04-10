@@ -287,7 +287,7 @@ private:
 
     std::array<SceneLayerData, 5> m_scene_layer_data{};
     std::array<std::array<Matrix4x4f, 6>, 2> m_old_view_matrix{};
-    std::array<std::array<Matrix4x4f, 6>, 2> m_old_projection_matrix{};
+    std::array<std::array<Matrix4x4f, 6>, 2> m_old_foveated_view_matrix{};
 
     static void wwise_listener_update_hook(void* listener);
 
@@ -550,7 +550,7 @@ private:
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
     const ModSlider::Ptr m_ignore_motion_threshold{ModSlider::create(generate_name("IgnoreMotionThreshold"), 1.0f, 100.0f, 2.5f)};
     const ModToggle::Ptr m_enable_foveated_rendering{ModToggle::create(generate_name("EnableFoveatedRendering"), false)};
-    const ModSlider::Ptr m_foveated_ratio{ModSlider::create(generate_name("Sharpness"), 0.1f, 1.0f, 0.21f)};
+    const ModSlider::Ptr m_foveated_ratio{ModSlider::create(generate_name("Sharpness"), 0.1f, 1.0f, 0.333333333333f)};
 
     const ModCombo::Ptr m_framewarp_mode{ModCombo::create(generate_name("FramewarpMode"),
         {
