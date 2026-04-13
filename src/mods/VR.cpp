@@ -847,9 +847,12 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCommandList* I
 
                 if (vr->is_fix_dlss()) {
                     EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
-                    EyeIndex nEyeOther = (nEye == EyeLeft) ? EyeRight : EyeLeft;
-                    auto currHandle = (nEye == EyeLeft) ? vrDLSSHandle[0] : vrDLSSHandle[1];
-                    auto otherHandle = (nEye == EyeLeft) ? vrDLSSHandle[1] : vrDLSSHandle[0];
+                    auto currHandle = vrDLSSHandle[0];
+                    if (nEye == EyeLeft) {
+                        currHandle = (vr->is_foveated_rendering() && vr->m_is_second_rendered_frame) ? vrDLSSHandleFR[0] : vrDLSSHandle[0];
+                    } else {
+                        currHandle = (vr->is_foveated_rendering() && vr->m_is_second_rendered_frame) ? vrDLSSHandleFR[1] : vrDLSSHandle[1];
+                    }
 
                     // current rendered eye
                     auto result = o_NVSDK_NGX_D3D12_EvaluateFeature(InCmdList, currHandle, InParameters, InCallback);
@@ -917,6 +920,7 @@ struct ffxDispatchDescUpscale {
 };
 
 static ffxContext vrContexts[2] = {NULL, NULL};
+static ffxContext vrContextsFR[2] = {NULL, NULL};
 
 using ffxCreateContext_t = ffxReturnCode_t (*)(ffxContext* context, ffxCreateContextDescHeader* desc, const void** memCb);
 static ffxCreateContext_t o_ffxCreateContext = nullptr;
@@ -928,6 +932,11 @@ ffxReturnCode_t hk_ffxCreateContext(ffxContext* context, ffxCreateContextDescHea
         spdlog::info("Creating additional FSR context");
         auto result2 = o_ffxCreateContext(&vrContexts[1], desc, NULL);
         spdlog::info("Additional FSR context create result 0x{0:x}", (INT64)result2);
+        spdlog::info("Creating additional Foveated Rendering FSR context");
+        result2 = o_ffxCreateContext(&vrContextsFR[0], desc, NULL);
+        spdlog::info("Additional Foveated Rendering FSR context create result 0x{0:x}", (INT64)result2);
+        result2 = o_ffxCreateContext(&vrContextsFR[1], desc, NULL);
+        spdlog::info("Additional Foveated Rendering FSR context create result 0x{0:x}", (INT64)result2);
     }
     return o_ffxCreateContext(context, desc, memCb);
 }
@@ -943,6 +952,13 @@ ffxReturnCode_t hk_ffxDestroyContext(ffxContext* context, const void** memCb) {
             auto result2 = o_ffxDestroyContext(&vrContexts[1], NULL);
             spdlog::info("Additional FSR context release result 0x{0:x}", (INT64)result2);
             vrContexts[1] = NULL;
+            spdlog::info("Releasing additional Foveated Rendering FSR context");
+            result2 = o_ffxDestroyContext(&vrContextsFR[0], NULL);
+            spdlog::info("Additional Foveated Rendering FSR context release result 0x{0:x}", (INT64)result2);
+            vrContextsFR[0] = NULL;
+            result2 = o_ffxDestroyContext(&vrContextsFR[1], NULL);
+            spdlog::info("Additional Foveated Rendering FSR context release result 0x{0:x}", (INT64)result2);
+            vrContextsFR[1] = NULL;
         }
     }
     return o_ffxDestroyContext(context, memCb);
@@ -971,12 +987,15 @@ ffxReturnCode_t hk_ffxDispatch(ffxContext* context, const ffxDispatchDescHeader*
                 vr->d3d12Renderer->Copy(InCmdList, dest, src);
                 if (vr->is_fix_dlss()) {
                     EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
-                    EyeIndex nEyeOther = (nEye == EyeLeft) ? EyeRight : EyeLeft;
-                    auto currContext = (nEye == EyeLeft) ? vrContexts[0] : vrContexts[1];
-                    auto otherContext = (nEye == EyeLeft) ? vrContexts[1] : vrContexts[0];
+                    auto currHandle = vrContexts[0];
+                    if (nEye == EyeLeft) {
+                        currHandle = (vr->is_foveated_rendering() && vr->m_is_second_rendered_frame) ? vrContextsFR[0] : vrContexts[0];
+                    } else {
+                        currHandle = (vr->is_foveated_rendering() && vr->m_is_second_rendered_frame) ? vrContextsFR[1] : vrContexts[1];
+                    }
 
                     // current rendered eye
-                    auto result = o_ffxDispatch(&currContext, desc);
+                    auto result = o_ffxDispatch(&currHandle, desc);
                     if (NVSDK_NGX_FAILED(result)) {
                         spdlog::error("Failed FSR 00, code = 0x{0:x}", result);
                     }
