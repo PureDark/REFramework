@@ -854,17 +854,24 @@ std::optional<std::string> OpenXR::initialize_actions(const std::string& json_st
         strcpy(actionSetInfo.localizedActionSetName, "Eye Gaze");
         actionSetInfo.priority = 0;
         auto result = xrCreateActionSet(this->instance, &actionSetInfo, &this->eyeGazeActionSet);
+        spdlog::info("[VR][OpenXR] Eye Gaze xrCreateActionSet {}", this->get_result_string(result));
+        supportsEyeGazeInteraction = result == XR_SUCCESS;
         // Create eye gaze action
         XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
         strcpy(actionInfo.actionName, "eye_gaze_pose");
         actionInfo.actionType = XR_ACTION_TYPE_POSE_INPUT;
         strcpy(actionInfo.localizedActionName, "Eye Gaze Pose");
         result = xrCreateAction(this->eyeGazeActionSet, &actionInfo, &this->eyeGazeAction);
+        spdlog::info("[VR][OpenXR] Eye Gaze xrCreateAction {}", this->get_result_string(result));
+        supportsEyeGazeInteraction = result == XR_SUCCESS;
         // Create suggested bindings
         XrPath eyeGazeInteractionProfilePath;
         result = xrStringToPath(this->instance, "/interaction_profiles/ext/eye_gaze_interaction", &eyeGazeInteractionProfilePath);
+        spdlog::info("[VR][OpenXR] Eye Gaze xrStringToPath {}", this->get_result_string(result));
         XrPath gazePosePath;
         result = xrStringToPath(this->instance, "/user/eyes_ext/input/gaze_ext/pose", &gazePosePath);
+        spdlog::info("[VR][OpenXR] Eye Gaze xrStringToPath {}", this->get_result_string(result));
+        supportsEyeGazeInteraction = result == XR_SUCCESS;
         XrActionSuggestedBinding bindings;
         bindings.action = this->eyeGazeAction;
         bindings.binding = gazePosePath;
@@ -873,40 +880,47 @@ std::optional<std::string> OpenXR::initialize_actions(const std::string& json_st
         suggestedBindings.suggestedBindings = &bindings;
         suggestedBindings.countSuggestedBindings = 1;
         result = xrSuggestInteractionProfileBindings(this->instance, &suggestedBindings);
-        // XrSessionActionSetsAttachInfo attachInfo{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
-        // attachInfo.countActionSets = 1;
-        // attachInfo.actionSets = &this->eyeGazeActionSet;
-        // result = xrAttachSessionActionSets(this->session, &attachInfo);
+        spdlog::info("[VR][OpenXR] Eye Gaze xrSuggestInteractionProfileBindings {}", this->get_result_string(result));
+        supportsEyeGazeInteraction = result == XR_SUCCESS;
+        XrSessionActionSetsAttachInfo attachInfo{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
+        attachInfo.countActionSets = 2;
+        XrActionSet actionSets[] = {
+            eyeGazeActionSet,  // eye gaze set
+            action_set.handle, // controller set
+        };
+        attachInfo.actionSets = actionSets;
+        result = xrAttachSessionActionSets(this->session, &attachInfo);
+        spdlog::info("[VR][OpenXR] Eye Gaze xrAttachSessionActionSets {}", this->get_result_string(result));
+        supportsEyeGazeInteraction = result == XR_SUCCESS;
         XrActionSpaceCreateInfo createActionSpaceInfo{XR_TYPE_ACTION_SPACE_CREATE_INFO};
         createActionSpaceInfo.action = this->eyeGazeAction;
         createActionSpaceInfo.poseInActionSpace = {};
         createActionSpaceInfo.poseInActionSpace.orientation.w = 1.0f;
         result = xrCreateActionSpace(this->session, &createActionSpaceInfo, &this->gazeActionSpace);
+        spdlog::info("[VR][OpenXR] Eye Gaze xrCreateActionSpace {}", this->get_result_string(result));
+        supportsEyeGazeInteraction = result == XR_SUCCESS;
         XrReferenceSpaceCreateInfo createReferenceSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
         createReferenceSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
         createReferenceSpaceInfo.poseInReferenceSpace = {};
         createReferenceSpaceInfo.poseInReferenceSpace.orientation.w = 1.0f;
         xrCreateReferenceSpace(this->session, &createReferenceSpaceInfo, &this->viewSpace);
-    }
+        spdlog::info("[VR][OpenXR] Eye Gaze xrCreateReferenceSpace {}", this->get_result_string(result));
+        supportsEyeGazeInteraction = result == XR_SUCCESS;
+    } 
+    
+    
+    if(!supportsEyeGazeInteraction) {
 
-    // Attach the action set to the session
-    spdlog::info("[VR] Attaching action set to session");
+        // Attach the action set to the session
+        spdlog::info("[VR] Attaching action set to session");
 
-    XrSessionActionSetsAttachInfo action_sets_attach_info{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
-    if (supportsEyeGazeInteraction && eyeGazeActionSet != NULL) {
-        action_sets_attach_info.countActionSets = 2;
-        XrActionSet actionSets[] = {
-            eyeGazeActionSet,   // eye gaze set
-            action_set.handle, // controller set
-        };
-        action_sets_attach_info.actionSets = actionSets;
-    } else {
+        XrSessionActionSetsAttachInfo action_sets_attach_info{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
         action_sets_attach_info.countActionSets = 1;
         action_sets_attach_info.actionSets = &this->action_set.handle;
-    }
 
-    if (auto result = xrAttachSessionActionSets(this->session, &action_sets_attach_info); result != XR_SUCCESS) {
-        return "xrAttachSessionActionSets failed: " + this->get_result_string(result);
+        if (auto result = xrAttachSessionActionSets(this->session, &action_sets_attach_info); result != XR_SUCCESS) {
+            return "xrAttachSessionActionSets failed: " + this->get_result_string(result);
+        }
     }
 
     return std::nullopt;
