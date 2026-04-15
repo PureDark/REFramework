@@ -133,6 +133,14 @@ public:
     XrSpace viewSpace{XR_NULL_HANDLE};
     XrSpace gazeActionSpace{NULL};
 
+    // 上一帧【滤波后】稳定角度
+    float stable_gaze_x = {0};
+    float stable_gaze_y = {0};
+
+    // 缓存【上一帧原始数据】，用于 2 帧一致性校验
+    float raw_prev_x = {0};
+    float raw_prev_y = {0};
+
     XrSessionState session_state{XR_SESSION_STATE_UNKNOWN};
 
     XrSpaceLocation view_space_location{XR_TYPE_SPACE_LOCATION};

@@ -4031,12 +4031,8 @@ void VR::on_pre_begin_rendering(void* entry) {
     detect_controllers();
 
     //actual_frame_count = get_game_frame_count();
-    if ((is_using_afw_foveated()) && inside_on_end) {
-        // don't add frame count if it's rendering the foveated image
-    } else {
-        m_frame_count++;
-        actual_frame_count = m_frame_count;
-    }
+    m_frame_count++;
+    actual_frame_count = m_frame_count;
 
     /*if (!inside_on_end) {
         spdlog::info("VR: frame count: {}", m_frame_count);
@@ -4060,7 +4056,7 @@ void VR::on_pre_begin_rendering(void* entry) {
     }
     
     // Call WaitGetPoses
-    if (is_using_afw() || is_using_afw_foveated() || !inside_on_end &&  is_left_eye()) {
+    if (is_using_afw() || is_using_afw_foveated() || (!inside_on_end &&  is_left_eye())) {
         update_hmd_state();
     }
 
@@ -4279,9 +4275,9 @@ void VR::on_wait_rendering(void* entry) {
         return;
     }
 
-    if (is_using_afw_foveated()) {
-        return;
-    }
+    //if (is_using_afw_foveated()) {
+    //    return;
+    //}
 
     // wait for m_present_finished (std::condition_variable)
     // to be signaled
@@ -4290,7 +4286,7 @@ void VR::on_wait_rendering(void* entry) {
     // case 1: sequential frames and rendered frame == right eye (every two frames)
     // case 2: AFW and no foveated rendering (each frame)
     // case 3: AFW and foveated rendering and rendered frame is FR frame
-    if ((is_using_sf() && m_render_frame_count % 2 == m_right_eye_interval) || (is_using_afw())) {
+    if ((is_using_sf() && m_render_frame_count % 2 == m_right_eye_interval) || is_using_afw()|| is_using_afw_foveated()) {
         if (WaitForSingleObject(m_present_finished_event, 333) == WAIT_TIMEOUT) {
             timed_out = true;
         }

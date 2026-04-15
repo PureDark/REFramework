@@ -248,6 +248,43 @@ VRRuntime::Error OpenXR::consume_events(std::function<void(void*)> callback) {
     return VRRuntime::Error::SUCCESS;
 }
 
+// 快速眼动阈值（弧度）
+const float MAX_SINGLE_JUMP = 0.12f;
+// 连续两帧原始数据的差异必须 < 这个值 → 才认为是真眼动
+const float CONSECUTIVE_TOLERANCE = 0.05f;
+void FilterEyeGazeSaccade(float raw_current_x, float raw_current_y, float raw_prev_x, float raw_prev_y, float& stable_x, float& stable_y) {
+    float deltaX = fabs(raw_current_x - stable_x);
+    float deltaY = fabs(raw_current_y - stable_y);
+
+    // ==========================================
+    // 情况1：变化很小 → 正常平滑
+    // ==========================================
+    if (deltaX < MAX_SINGLE_JUMP && deltaY < MAX_SINGLE_JUMP) {
+        // 一阶低通（响应快，不延迟）
+        stable_x = stable_x * 0.3f + raw_current_x * 0.7f;
+        stable_y = stable_y * 0.3f + raw_current_y * 0.7f;
+        return;
+    }
+
+    // ==========================================
+    // 情况2：跳变很大 → 检查是否连续2帧一致
+    // ==========================================
+    float deltaBetweenTwoRawX = fabs(raw_current_x - raw_prev_x);
+    float deltaBetweenTwoRawY = fabs(raw_current_y - raw_prev_y);
+
+    // 如果【连续2帧原始数据】很接近 → 是真眼动！
+    if (deltaBetweenTwoRawX < CONSECUTIVE_TOLERANCE && deltaBetweenTwoRawY < CONSECUTIVE_TOLERANCE) {
+        // 立即跳过去（不卡）
+        stable_x = raw_current_x;
+        stable_y = raw_current_y;
+        return;
+    }
+
+    // ==========================================
+    // 否则 → 脏数据，保持原值
+    // ==========================================
+}
+
 VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
     if (!this->session_ready || this->views.empty()) {
         return VRRuntime::Error::SUCCESS;
@@ -262,16 +299,18 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
         XrActionsSyncInfo syncInfo{XR_TYPE_ACTIONS_SYNC_INFO};
         syncInfo.countActiveActionSets = 1;
         syncInfo.activeActionSets = &activeActionSet;
-        xrSyncActions(session, &syncInfo);
+        auto result = xrSyncActions(session, &syncInfo);
         XrActionStatePose actionStatePose{XR_TYPE_ACTION_STATE_POSE};
         XrActionStateGetInfo getActionStateInfo{XR_TYPE_ACTION_STATE_GET_INFO};
         getActionStateInfo.action = eyeGazeAction;
-        xrGetActionStatePose(session, &getActionStateInfo, &actionStatePose);
+        result = xrGetActionStatePose(session, &getActionStateInfo, &actionStatePose);
         if (actionStatePose.isActive) {
             XrEyeGazeSampleTimeEXT eyeGazeSampleTime{XR_TYPE_EYE_GAZE_SAMPLE_TIME_EXT};
             XrSpaceLocation gazeLocation{XR_TYPE_SPACE_LOCATION, &eyeGazeSampleTime};
-            xrLocateSpace(gazeActionSpace, viewSpace, time, &gazeLocation);
+            result = xrLocateSpace(gazeActionSpace, viewSpace, time, &gazeLocation);
             XrQuaternionf q = gazeLocation.pose.orientation;
+
+
 
             // ==============================================
             // Final gaze direction by applying quaternion
@@ -292,13 +331,24 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
             // ==============================================
             // Get Yaw and Pitch from dirs
             // ==============================================
+
+            // Yaw
+            float gaze_angle_center_x = atan2(eyeDirs[0].x, -centerDir.z);
+            float gaze_angle_center_y = asin(-centerDir.y);
+
+            // 过滤
+            FilterEyeGazeSaccade(gaze_angle_center_x, gaze_angle_center_y, raw_prev_x, raw_prev_y, stable_gaze_x, stable_gaze_y);
+
+            // 更新历史原始数据
+            raw_prev_x = gaze_angle_center_x;
+            raw_prev_y = gaze_angle_center_y;
             
             // Yaw
-            gaze_angle_x[0] = atan2(eyeDirs[0].x, -centerDir.z) + convergence_angle;
-            gaze_angle_x[1] = atan2(eyeDirs[1].x, -centerDir.z) - convergence_angle;
+            gaze_angle_x[0] = stable_gaze_x + convergence_angle;
+            gaze_angle_x[1] = stable_gaze_x - convergence_angle;
             // Pitch
-            gaze_angle_y[0] = asin(-centerDir.y);
-            gaze_angle_y[1] = asin(-centerDir.y);
+            gaze_angle_y[0] = stable_gaze_y;
+            gaze_angle_y[1] = stable_gaze_y;
         }
     } else {
         gaze_angle_x[0] += convergence_angle;
