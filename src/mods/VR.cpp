@@ -5,6 +5,8 @@
 #include <imgui_internal.h>
 #include <glm/gtx/transform.hpp>
 
+#include <utility/ScopeGuard.hpp>
+
 #include <sdk/TDBVer.hpp>
 #include <reframework/API.hpp>
 
@@ -57,6 +59,7 @@
 
 #include "FirstPerson.hpp"
 #include "ManualFlashlight.hpp"
+//#include "TemporalUpscaler.hpp"
 #include "VR.hpp"
 #include <MinHook.h>
 
@@ -147,13 +150,12 @@ void VR::on_view_get_size(REManagedObject* scene_view, float* result) {
             }
 #endif
 
-            bool isFR = (is_using_afw() && is_foveated_rendering());
+            bool isFR = is_using_afw_foveated();
             uint32_t render_width = (isFR) ? round(get_hmd_width() * get_foveated_ratio()) : get_hmd_width();
             uint32_t render_height = (isFR) ? round(get_hmd_height() * get_foveated_ratio()) : get_hmd_height();
 
             window_width = render_width;
             window_height = render_height;
-
 
             if (m_is_d3d12 && m_d3d12.is_initialized()) {
                 const auto& backbuffer_size = m_d3d12.get_backbuffer_size();
@@ -234,10 +236,6 @@ void VR::on_view_get_size(REManagedObject* scene_view, float* result) {
     // but rather update the current scene view's size directly.
     regenny_view->size.w = wanted_width;
     regenny_view->size.h = wanted_height;
-    //regenny_view->custom_display_size.w = wanted_width;
-    //regenny_view->custom_display_size.h = wanted_height;
-    //regenny_view->present_rect.w = wanted_width;
-    //regenny_view->present_rect.h = wanted_height;
 #endif
 }
 
@@ -258,18 +256,35 @@ void VR::on_camera_get_projection_matrix(REManagedObject* camera, Matrix4x4f* re
         //return original_func(camera, result);
     }
 
+    if (is_using_afw_foveated()) {
+        if (camera != m_multipass_cameras[0] && camera != m_multipass_cameras[1]) {
+            return;
+        }
+    }
+
+#ifdef RE4
+    if (const auto game_object = ((REComponent*)camera)->ownerGameObject; game_object != nullptr) {
+        if (game_object->name != nullptr) {
+            // Allows the sniper scope to work
+            if (utility::re_string::get_view(game_object->name).starts_with(L"ScopeCamera")) {
+                return;
+            }
+        }
+    }
+#endif
+
     // Get the projection matrix for the correct eye
     // For some reason we need to flip the projection matrix here?
 
-    const auto main_camera = sdk::get_primary_camera();
-    if (m_fix_item_inspection->value() && camera != main_camera) {
+    auto cameras = get_cameras();
+    if (m_fix_item_inspection->value() && (camera != cameras[0] && camera != cameras[1])) {
         return;
-    } else if (is_using_afw()) {
+    } else if (is_using_any_afw()) {
         std::shared_lock _{get_runtime()->eyes_mtx};
         auto eye_index = (m_render_frame_count + 1) % 2 == m_left_eye_interval ? EyeLeft : EyeRight;
         auto other_eye_index = (m_render_frame_count + 1) % 2 == m_left_eye_interval ? EyeRight : EyeLeft;
-        if (is_foveated_rendering() && !m_is_second_rendered_frame) {
-            *result = get_runtime()->foveated_projections[other_eye_index];
+        if ((is_using_afw_foveated() && m_multipass.pass == 1)) {
+            *result = get_runtime()->foveated_projections[eye_index];
         }
         else {
             if (eye_index == EyeLeft) {
@@ -277,7 +292,8 @@ void VR::on_camera_get_projection_matrix(REManagedObject* camera, Matrix4x4f* re
             }
             *result = get_runtime()->projections[eye_index];
         }
-    } else {
+    }
+    else {
         *result = get_current_projection_matrix(false);
     }
 }
@@ -323,50 +339,38 @@ void VR::on_camera_get_view_matrix(REManagedObject* camera, Matrix4x4f* result) 
         return;
     }
 
-    if (camera != sdk::get_primary_camera()) {
+    auto cameras = get_cameras();
+
+    if (camera != cameras[0] && camera != cameras[1]) {
         return;
     }
 
-    auto& mtx = *result;
+    // A little note on this. We can't actually use the camera (when using multipass) to detect how to adjust the view matrix
+    // For some reason, the game *always* uses the main camera when calling this function, even though it's rendering the other camera
+    // So we detect which pass is getting called and adjust the view matrix accordingly
+    //if (!is_using_multipass()) {
+        auto& mtx = *result;
 
-    //get the flipped eye to get the correct transform. something something right->left handedness i think
-    const auto current_eye_transform = get_current_eye_transform(true);
-    //auto current_head_pos = -(glm::inverse(vr->get_rotation(0)) * ((vr->get_position(0)) - vr->m_standing_origin));
-    //current_head_pos.w = 0.0f;
+        //get the flipped eye to get the correct transform. something something right->left handedness i think
+        const auto current_eye_transform = get_current_eye_transform(true);
+        //auto current_head_pos = -(glm::inverse(vr->get_rotation(0)) * ((vr->get_position(0)) - vr->m_standing_origin));
+        //current_head_pos.w = 0.0f;
 
-    // Apply the complete eye transform. This fixes the need for parallel projections on all canted headsets like Pimax
-    mtx = current_eye_transform * mtx;
+        // Apply the complete eye transform. This fixes the need for parallel projections on all canted headsets like Pimax
+        mtx = current_eye_transform * mtx;
+    //}
+}
 
+HookManager::PreHookResult VR::pre_set_hdr_mode(std::vector<uintptr_t>& args, std::vector<sdk::RETypeDefinition*>& arg_tys, uintptr_t ret_addr) {
+    if (!VR::get()->is_hmd_active()) {
+        return HookManager::PreHookResult::CALL_ORIGINAL;
+    }
 
-    // *result aka mtx, is actually WorldToView matrix
-    // 
-    // usually it should be 
-    // mat_ViewToWorld * mat_eye_transform to apply the transform (right multiplication)
-    // 
-    // but mtx is WorldToView (inverse(ViewToWorld))
-    // and the result requires to be WorldToView (inverse(ViewToWorld))
-    // 
-    // so essentially you need to do
-    // 
-    // inverse(mat_ViewToWorld * mat_eye_transform) = inverse(mat_eye_transform) * inverse(mat_ViewToWorld)
-    // 
-    // and inverse(mat_eye_transform) happens to be equal to the other eye's transform
-    // 
-    // that's why using a flipped eye transform happens to work when using left multiplication
+    if (args.size() >= 2) {
+        args[1] = 0;
+    }
 
-    //// easier way to understand it:
-    //auto current_eye_transform = get_current_eye_transform(false);
-    //auto other_eye_transform = get_current_eye_transform(true);
-    //auto worldToView = mtx;
-    //auto viewToWorld = glm::inverse(worldToView);
-    //mtx = glm::inverse(viewToWorld * current_eye_transform);
-    //// =>
-    //mtx = glm::inverse(current_eye_transform) * glm::inverse(viewToWorld);
-    //// =>
-    //mtx = other_eye_transform * worldToView;
-    //// which is 
-    //mtx = current_eye_transform * mtx;
-    //// in previous code
+    return HookManager::PreHookResult::CALL_ORIGINAL;
 }
 
 void VR::inputsystem_update_hook(void* ctx, REManagedObject* input_system) {
@@ -471,6 +475,8 @@ void VR::inputsystem_update_hook(void* ctx, REManagedObject* input_system) {
 bool VR::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_ctx) {
 
     uiBufferTex = layer->get_ui_buffer_tex_d3d12();
+    uiBufferNativeTex = layer->get_ui_buffer_tex();
+    uiTargetState = layer->get_ui_target();
 
     // just don't render anything at all.
     // overlays just seem to break stuff in VR.
@@ -555,84 +561,165 @@ bool VR::on_pre_scene_layer_draw(sdk::renderer::layer::Scene* layer, void* rende
     return true;
 }
 
+void VR::on_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer, void* render_context) {
+    if (!is_hmd_active()) {
+        return;
+    }
+
+    if (!is_using_afw_foveated()) {
+        return;
+    }
+    
+    auto context = (sdk::renderer::RenderContext*)render_context;
+    auto scene_layer = (sdk::renderer::layer::Scene*)layer->get_parent();
+
+    if (scene_layer == nullptr) {
+        return;
+    }
+
+    const auto output_state = layer->get_output_state();
+
+    if (output_state == nullptr) {
+        return;
+    }
+
+    const auto rtv = output_state->get_rtv(0);
+
+    if (rtv == nullptr) {
+        return;
+    }
+
+    const auto tex = rtv->get_texture_d3d12();
+
+    if (tex == nullptr) {
+        return;
+    }
+
+    auto scene_layers = m_camera_duplicator.get_relevant_scene_layers();
+
+    if (scene_layers.size() < 2) {
+        return;
+    }
+
+    const auto parent_layer = layer->get_parent();
+
+    if (parent_layer == nullptr) {
+        return;
+    }
+
+    if (parent_layer == scene_layers[0]) {
+        float w = (is_left_eye()) ? 0 : 1.0f;
+        float red[4] = {1.0f, 0, 0, w};
+        context->clear_rtv(rtv, red);
+        //if (m_multipass.native_res_copies[0] != nullptr) {
+        //    context->copy_texture(m_multipass.native_res_copies[0], tex);
+        //}
+    } else {
+        // float w = (is_left_eye()) ? 0 : 1.0f;
+        // float green[4] = {0, 1.0f, 0, w};
+        // context->clear_rtv(rtv, green);
+        //if (m_multipass.native_res_copies[1] != nullptr) {
+        //    context->copy_texture(m_multipass.native_res_copies[1], tex);
+        //}
+    }
+}
+
 bool VR::on_pre_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_ctx) {
+    
+
+    m_scene_update_mtx.lock();
+    
     if (!is_hmd_active()) {
         return true;
     }
-    if (m_disable_temporal_fix || (is_using_afw() && is_fix_dlss())) {
+
+    if (!layer->is_fully_rendered()) {
         return true;
     }
 
+    if (is_using_afw_foveated()) {
+        const auto real_main_camera = sdk::get_primary_camera();
+        const auto layer_camera = layer->get_main_camera_if_possible();
+
+        if (layer_camera != nullptr) {
+            if (layer_camera == real_main_camera) {
+                m_multipass.pass = 0;
+                m_multipass_cameras[0] = real_main_camera;
+                m_multipass_cameras[1] = m_camera_duplicator.get_new_camera_counterpart(real_main_camera);
+            } else if (layer_camera == m_camera_duplicator.get_new_camera_counterpart(real_main_camera)) {
+                m_multipass.pass = 1;
+                m_multipass_cameras[1] = m_camera_duplicator.get_new_camera_counterpart(real_main_camera);
+            } else {
+                return true; // dont care
+            }
+        } else {
+            return true; // dont care
+        }
+    }
+    
     auto scene_info = layer->get_scene_info();
     auto depth_distortion_scene_info = layer->get_depth_distortion_scene_info();
     auto filter_scene_info = layer->get_filter_scene_info();
     auto jitter_disable_scene_info = layer->get_jitter_disable_scene_info();
     auto z_prepass_scene_info = layer->get_z_prepass_scene_info();
 
-    m_scene_layer_data = std::array<SceneLayerData, 5>{
-        SceneLayerData{scene_info},
-        SceneLayerData{depth_distortion_scene_info},
-        SceneLayerData{filter_scene_info},
-        SceneLayerData{jitter_disable_scene_info},
-        SceneLayerData{z_prepass_scene_info},
-    };
+    auto& layer_data = m_scene_layer_data[layer];
 
-    m_set_next_scene_layer_data = true;
+    layer_data[0].setup(scene_info);
+    layer_data[1].setup(depth_distortion_scene_info);
+    layer_data[2].setup(filter_scene_info);
+    layer_data[3].setup(jitter_disable_scene_info);
+    layer_data[4].setup(z_prepass_scene_info);
+
     return true;
 }
 
 void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_ctx) {
+    
+
+    utility::ScopeGuard ___([&]() {
+        m_scene_update_mtx.unlock();
+    });
+
     if (!is_hmd_active()) {
         return;
     }
 
-    // Other layers appear when using scopes or mirrors are displayed
-    if (!layer->is_fully_rendered() || !layer->has_main_camera()) {
+    if (!layer->is_fully_rendered()) {
         return;
     }
 
-    if (is_using_afw() && is_fix_dlss()) {
+    if (is_using_afw_foveated()) {
+        const auto layer_camera = layer->get_camera();
+
+        if (layer_camera != m_multipass_cameras[0] && layer_camera != m_multipass_cameras[1]) {
+            return;
+        }
+    }
+
+    auto& layer_data = m_scene_layer_data[layer];
+
+    auto fix_motion_vectors = [&](SceneLayerData& d) {
+        if (d.scene_info == nullptr) {
+            return;
+        }
         auto eye_index = m_frame_count % 2 == m_left_eye_interval ? EyeLeft : EyeRight;
         auto other_eye_index = m_frame_count % 2 == m_left_eye_interval ? EyeRight : EyeLeft;
+        auto old_view_matrix = d.old_view_matrix[eye_index];
+        auto old_projection_matrix = get_runtime()->projections[eye_index];
+        d.scene_info->old_view_projection_matrix = old_projection_matrix * old_view_matrix;
+        d.old_view_matrix[eye_index] = d.scene_info->view_matrix;
+    };
 
-        auto scene_info = layer->get_scene_info();
-        auto depth_distortion_scene_info = layer->get_depth_distortion_scene_info();
-        auto filter_scene_info = layer->get_filter_scene_info();
-        auto jitter_disable_scene_info = layer->get_jitter_disable_scene_info();
-        auto jitter_disable_post_scene_info = layer->get_jitter_disable_post_scene_info();
-        auto z_prepass_scene_info = layer->get_z_prepass_scene_info();
-
-        auto fix_motion_vectors = [&](int32_t i, sdk::renderer::SceneInfo* scene_info) {
-            if (scene_info == nullptr) {
-                return;
+    for (auto& d : layer_data) {
+        if (d.scene_info != nullptr) {
+            if (is_fix_dlss()) {
+                fix_motion_vectors(d);
             }
-            if (!is_foveated_rendering() || m_is_second_rendered_frame) {
-                auto old_view_matrix = this->m_old_view_matrix[eye_index][i];
-                auto old_projection_matrix = get_runtime()->projections[eye_index];
-                scene_info->old_view_projection_matrix = old_projection_matrix * old_view_matrix;
-                this->m_old_view_matrix[eye_index][i] = scene_info->view_matrix;
-            } else {
-                auto old_view_matrix = this->m_old_foveated_view_matrix[eye_index][i];
-                auto old_projection_matrix = get_runtime()->foveated_projections[eye_index];
-                scene_info->old_view_projection_matrix = old_projection_matrix * old_view_matrix;
-                this->m_old_foveated_view_matrix[eye_index][i] = scene_info->view_matrix;
+            else if (!m_disable_temporal_fix) {
+                // TAA fix
+                d.scene_info->old_view_projection_matrix = d.view_projection_matrix;
             }
-        };
-        fix_motion_vectors(0, scene_info);
-        fix_motion_vectors(1, depth_distortion_scene_info);
-        fix_motion_vectors(2, filter_scene_info);
-        fix_motion_vectors(3, jitter_disable_scene_info);
-        fix_motion_vectors(4, jitter_disable_post_scene_info);
-        fix_motion_vectors(5, z_prepass_scene_info);
-    } else if (!m_disable_temporal_fix) {
-        if (m_set_next_scene_layer_data) {
-            for (auto& d : m_scene_layer_data) {
-                if (d.scene_info != nullptr) {
-                    d.scene_info->old_view_projection_matrix = d.view_projection_matrix;
-                }
-            }
-
-            m_set_next_scene_layer_data = false;
         }
     }
 }
@@ -760,7 +847,7 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_CreateFeature(
     int flag;
     InParameters->Get(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags, &flag);
     spdlog::info("hk_NVSDK_NGX_D3D12_CreateFeature 0x{0:x}", (INT64)result);
-    if (InFeatureID == NVSDK_NGX_Feature_SuperSampling || InFeatureID == NVSDK_NGX_Feature_RayReconstruction) {
+    if (vrDLSSHandle[0] == NULL && (InFeatureID == NVSDK_NGX_Feature_SuperSampling || InFeatureID == NVSDK_NGX_Feature_RayReconstruction)) {
         vrDLSSHandle[0] = *OutHandle;
         spdlog::info("Creating additional DLSS instance");
         auto result2 = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, &vrDLSSHandle[1]);
@@ -782,10 +869,13 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_ReleaseFeature(NVSDK_NGX_Handle* InHandle) {
     spdlog::info("hk_NVSDK_NGX_D3D12_ReleaseFeature 0x{0:x}", (INT64)result);
     if (vrDLSSHandle[0] == InHandle) {
         vrDLSSHandle[0] = NULL;
-        VR::get()->depthDesc.pTexture = NULL;
-        VR::get()->depthDesc.depthStencilViewHandle.ptr = NULL;
-        VR::get()->renderDepthDesc.pTexture = NULL;
-        VR::get()->renderDepthDesc.depthStencilViewHandle.ptr = NULL;
+        auto& vr = VR::get();
+        vr->depthDesc[0].pTexture = NULL;
+        vr->depthDesc[0].depthStencilViewHandle.ptr = NULL;
+        vr->depthDesc[1].pTexture = NULL;
+        vr->depthDesc[1].depthStencilViewHandle.ptr = NULL;
+        vr->renderDepthDesc.pTexture = NULL;
+        vr->renderDepthDesc.depthStencilViewHandle.ptr = NULL;
         if (vrDLSSHandle[1] != NULL) {
             spdlog::info("Releasing additional DLSS instance");
             auto result2 = o_NVSDK_NGX_D3D12_ReleaseFeature(vrDLSSHandle[1]);
@@ -828,7 +918,7 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCommandList* I
         InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_X, &mvScaleX);
         InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &mvScaleY);
         auto vr = VR::get();
-        if (vr->is_hmd_active() && motionVectors && vr->motionVectorsTex) {
+        if (vr->is_hmd_active() && motionVectors && vr->motionVectorsDesc.pTexture) {
 
             if (vr->renderDepthDesc.pTexture != depth) {
                 vr->renderDepthDesc.pTexture = depth;
@@ -838,20 +928,19 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCommandList* I
             }
 
             auto desc1 = motionVectors->GetDesc();
-            auto desc2 = vr->motionVectorsTex->GetDesc();
-            if ((desc1.Width == desc2.Width && desc1.Height == desc2.Height && desc1.Format == desc2.Format)) {
-                TextureDesc src, dest;
+            auto desc2 = vr->motionVectorsDesc.pTexture->GetDesc();
+            if ((abs((float)(desc1.Width - desc2.Width)) <= 2 && abs((float)(desc1.Height - desc2.Height)) <= 2 && desc1.Format == desc2.Format)) {
+                TextureDesc src;
                 src.pTexture = motionVectors;
-                dest.pTexture = vr->motionVectorsTex;
-                vr->d3d12Renderer->Copy(InCmdList, dest, src);
+                vr->d3d12Renderer->Copy(InCmdList, vr->motionVectorsDesc, src);
 
                 if (vr->is_fix_dlss()) {
                     EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
                     auto currHandle = vrDLSSHandle[0];
                     if (nEye == EyeLeft) {
-                        currHandle = (vr->is_foveated_rendering() && vr->m_is_second_rendered_frame) ? vrDLSSHandleFR[0] : vrDLSSHandle[0];
+                        currHandle = vrDLSSHandle[0];
                     } else {
-                        currHandle = (vr->is_foveated_rendering() && vr->m_is_second_rendered_frame) ? vrDLSSHandleFR[1] : vrDLSSHandle[1];
+                        currHandle = vrDLSSHandle[1];
                     }
 
                     // current rendered eye
@@ -975,23 +1064,22 @@ ffxReturnCode_t hk_ffxDispatch(ffxContext* context, const ffxDispatchDescHeader*
         float mvScaleX = upscaleDesc->motionVectorScale[0];
         float mvScaleY = upscaleDesc->motionVectorScale[1];
         auto vr = VR::get();
-        if (vr->is_hmd_active() && mvApiResource.resource && vr->motionVectorsTex) {
+        if (vr->is_hmd_active() && mvApiResource.resource && vr->motionVectorsDesc.pTexture) {
             auto InCmdList = (ID3D12GraphicsCommandList*)upscaleDesc->commandList;
             auto motionVectors = (ID3D12Resource*)mvApiResource.resource;
             auto desc1 = motionVectors->GetDesc();
-            auto desc2 = vr->motionVectorsTex->GetDesc();
+            auto desc2 = vr->motionVectorsDesc.pTexture->GetDesc();
             if ((desc1.Width == desc2.Width && desc1.Height == desc2.Height && desc1.Format == desc2.Format)) {
-                TextureDesc src, dest;
+                TextureDesc src;
                 src.pTexture = motionVectors;
-                dest.pTexture = vr->motionVectorsTex;
-                vr->d3d12Renderer->Copy(InCmdList, dest, src);
+                vr->d3d12Renderer->Copy(InCmdList, vr->motionVectorsDesc, src);
                 if (vr->is_fix_dlss()) {
                     EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
                     auto currHandle = vrContexts[0];
                     if (nEye == EyeLeft) {
-                        currHandle = (vr->is_foveated_rendering() && vr->m_is_second_rendered_frame) ? vrContextsFR[0] : vrContexts[0];
+                        currHandle = vrContexts[0];
                     } else {
-                        currHandle = (vr->is_foveated_rendering() && vr->m_is_second_rendered_frame) ? vrContextsFR[1] : vrContexts[1];
+                        currHandle = vrContexts[1];
                     }
 
                     // current rendered eye
@@ -1008,6 +1096,97 @@ ffxReturnCode_t hk_ffxDispatch(ffxContext* context, const ffxDispatchDescHeader*
         }
     }
     return o_ffxDispatch(context, desc);
+}
+
+static std::unordered_map<SIZE_T, ID3D12Resource*> rtvMap{};
+
+decltype(&ID3D12GraphicsCommandList::ClearRenderTargetView) ptrClearRenderTargetView; // 48
+void WINAPI hk_ID3D12GraphicsCommandList_ClearRenderTargetView(ID3D12GraphicsCommandList* This, D3D12_CPU_DESCRIPTOR_HANDLE RenderTargetView, const FLOAT  ColorRGBA[4], UINT NumRects, const D3D12_RECT* pRects)
+{
+    const auto& vr = VR::get();
+    if ((ColorRGBA[0] == 1.0f || ColorRGBA[1] == 1.0f) && rtvMap.contains(RenderTargetView.ptr)) {
+        auto rtvTex = rtvMap[RenderTargetView.ptr];
+        int eyeIndex = 0;
+        if (ColorRGBA[0] == 1.0f) {
+            //spdlog::info("Cleared RED! rtvTex = {:p}", (void*)rtvMap[RenderTargetView.ptr]);
+            eyeIndex = ColorRGBA[3] == 0 ? 0 : 1;
+        }
+        else if (ColorRGBA[1] == 1.0f) {
+            //spdlog::info("Cleared GREEN! rtvTex = {:p}", (void*)rtvMap[RenderTargetView.ptr]);
+            eyeIndex = ColorRGBA[3] == 0 ? 0 : 1;
+        }
+
+        static TextureDesc tempBufferDesc[2];
+        if (tempBufferDesc[eyeIndex].pTexture != rtvTex) {
+            tempBufferDesc[eyeIndex].pTexture = rtvTex;
+            tempBufferDesc[eyeIndex].initialState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+            vr->d3d12Renderer->SetupTextureDesc(tempBufferDesc[eyeIndex]);
+        }
+        //vr->d3d12Renderer->Blit(This, vr->m_d3d12.m_eyeFrameBuffers.eyeFrameBuffers[eyeIndex].color, tempBufferDesc[eyeIndex]);
+
+        if (!vr->multipassBackupTex[eyeIndex].pTexture) {
+            auto desc = tempBufferDesc[eyeIndex].pTexture->GetDesc();
+            vr->d3d12Renderer->CreateTexture(desc.Width, desc.Height, desc.Format, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, vr->multipassBackupTex[eyeIndex],false);
+        } else {
+            auto desc1 = vr->multipassBackupTex[eyeIndex].pTexture->GetDesc();
+            auto desc2 = tempBufferDesc[eyeIndex].pTexture->GetDesc();
+            if (desc1.Width != desc2.Width || desc1.Height != desc2.Height || desc1.Format != desc2.Format) {
+                vr->d3d12Renderer->CreateTexture(desc2.Width, desc2.Height, desc2.Format, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, vr->multipassBackupTex[eyeIndex], false);
+            }
+        }
+
+        if (vr->multipassBackupTex[eyeIndex].pTexture) {
+            vr->d3d12Renderer->Copy(This, vr->multipassBackupTex[eyeIndex], tempBufferDesc[eyeIndex]);
+        }
+        return;
+
+        //ID3D12Resource* destTex = vr->m_multipass.eye_textures[eyeIndex].Get();
+        //if (destTex) {
+        //    D3D12_RESOURCE_BARRIER barriers1[] = {
+        //        CD3DX12_RESOURCE_BARRIER::Transition(rtvTex, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE),
+        //        CD3DX12_RESOURCE_BARRIER::Transition(destTex, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST)};
+        //    This->ResourceBarrier(_countof(barriers1), barriers1);
+        //    This->CopyResource(destTex, rtvTex);
+        //    D3D12_RESOURCE_BARRIER barriers2[] = {
+        //        CD3DX12_RESOURCE_BARRIER::Transition(rtvTex, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
+        //        CD3DX12_RESOURCE_BARRIER::Transition(destTex, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET)};
+        //    This->ResourceBarrier(_countof(barriers2), barriers2);
+        //}
+    }
+
+    return (This->*ptrClearRenderTargetView)(RenderTargetView, ColorRGBA, NumRects, pRects);
+}
+
+//decltype(&ID3D12GraphicsCommandList::CopyTextureRegion) ptrCopyTextureRegion; // 16
+//void WINAPI hk_ID3D12GraphicsCommandList_CopyTextureRegion(ID3D12GraphicsCommandList* This, const D3D12_TEXTURE_COPY_LOCATION* pDst,
+//    UINT DstX, UINT DstY, UINT DstZ, _In_ const D3D12_TEXTURE_COPY_LOCATION* pSrc, _In_opt_ const D3D12_BOX* pSrcBox) {
+//    const auto& vr = VR::get();
+//    if (pDst->pResource == vr->m_multipass.eye_textures[0].Get() || pDst->pResource == vr->m_multipass.eye_textures[1].Get()) {
+//        spdlog::info("Copy Resource dest eye texture {:p}", (void*)pDst->pResource);
+//    }
+//    if (pSrc->pResource == vr->m_multipass.native_textures[0].Get() || pSrc->pResource == vr->m_multipass.native_textures[1].Get()) {
+//        spdlog::info("Copy Resource src native texture {:p}", (void*)pSrc->pResource);
+//    }
+//    return (This->*ptrCopyTextureRegion)(pDst, DstX, DstY, DstZ, pSrc, pSrcBox);
+//}
+//
+//decltype(&ID3D12GraphicsCommandList::CopyResource) ptrCopyResource; // 17
+//void WINAPI hk_ID3D12GraphicsCommandList_CopyResource(ID3D12GraphicsCommandList* This, ID3D12Resource* pDstResource, ID3D12Resource* pSrcResource) {
+//    const auto& vr = VR::get();
+//    if (pDstResource == vr->m_multipass.eye_textures[0].Get() || pDstResource == vr->m_multipass.eye_textures[1].Get()) {
+//        spdlog::info("Copy Resource dest eye texture {:p}", (void*)pDstResource);
+//    }
+//    if (pSrcResource == vr->m_multipass.native_textures[0].Get() || pSrcResource == vr->m_multipass.native_textures[1].Get()) {
+//        spdlog::info("Copy Resource src native texture {:p}", (void*)pSrcResource);
+//    }
+//    return (This->*ptrCopyResource)(pDstResource, pSrcResource);
+//}
+
+decltype(&ID3D12Device::CreateRenderTargetView) ptrCreateRenderTargetView; // 20
+void WINAPI hk_ID3D12Device_CreateRenderTargetView(ID3D12Device* This, ID3D12Resource* pResource, const D3D12_RENDER_TARGET_VIEW_DESC* pDesc, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) 
+{
+    (This->*ptrCreateRenderTargetView)(pResource, pDesc, DestDescriptor);
+    rtvMap[DestDescriptor.ptr] = pResource;
 }
 
 uintptr_t hookVtable(void* target, int index, void* detours) {
@@ -1031,6 +1210,14 @@ std::optional<std::string> VR::on_initialize_d3d_thread() try {
     params.d3d12Device = hook->get_device();
     params.d3d12Queue = hook->get_command_queue();
     d3d12Renderer = InitDevice(params);
+
+    *(uintptr_t*)&ptrCreateRenderTargetView = hookVtable(params.d3d12Device, 20, hk_ID3D12Device_CreateRenderTargetView);
+
+    auto cmdList = d3d12Renderer->BeginCommandList(0);
+    *(uintptr_t*)&ptrClearRenderTargetView = hookVtable(cmdList, 48, hk_ID3D12GraphicsCommandList_ClearRenderTargetView);
+    //*(uintptr_t*)&ptrCopyTextureRegion = hookVtable(cmdList, 16, hk_ID3D12GraphicsCommandList_CopyTextureRegion);
+    //*(uintptr_t*)&ptrCopyResource = hookVtable(cmdList, 17, hk_ID3D12GraphicsCommandList_CopyResource);
+    d3d12Renderer->EndCommandList(0);
 
     if (auto mr = MH_Initialize(); mr != MH_OK) {
         spdlog::error("MH_Initialize failed: {}", (INT)mr);
@@ -1155,6 +1342,17 @@ and place the openxr_loader.dll in the same folder.)";
 
     if (hijack_error) {
         return hijack_error;
+    }
+
+    const auto renderer_t = sdk::find_type_definition("via.render.Renderer");
+
+    if (renderer_t != nullptr) {
+        const auto set_hdr_method = renderer_t->get_method("set_HDRMode");
+
+        if (set_hdr_method != nullptr) {
+            spdlog::info("Hooking setHDRMode");
+            g_hookman.add(set_hdr_method, &pre_set_hdr_mode, &post_set_hdr_mode);
+        }
     }
 
     m_init_finished = true;
@@ -1485,6 +1683,48 @@ std::optional<std::string> VR::initialize_openxr() {
     XrSystemProperties systemProps = {.type = XR_TYPE_SYSTEM_PROPERTIES, .next = &eyeGazeProps};
     xrGetSystemProperties(m_openxr->instance, m_openxr->system, &systemProps);
     m_openxr->supportsEyeGazeInteraction = eyeGazeProps.supportsEyeGazeInteraction;
+    m_openxr->supportsEyeGazeInteraction = false;
+    if (m_openxr->supportsEyeGazeInteraction) {
+        // Create action set
+        XrActionSetCreateInfo actionSetInfo{XR_TYPE_ACTION_SET_CREATE_INFO};
+        strcpy(actionSetInfo.actionSetName, "eyegaze");
+        strcpy(actionSetInfo.localizedActionSetName, "Eye Gaze");
+        actionSetInfo.priority = 0;
+        result = xrCreateActionSet(m_openxr->instance, &actionSetInfo, &m_openxr->eyeGazeActionSet);
+        // Create eye gaze action
+        XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
+        strcpy(actionInfo.actionName, "eye_gaze_pose");
+        actionInfo.actionType = XR_ACTION_TYPE_POSE_INPUT;
+        strcpy(actionInfo.localizedActionName, "Eye Gaze Pose");
+        result = xrCreateAction(m_openxr->eyeGazeActionSet, &actionInfo, &m_openxr->eyeGazeAction);
+        // Create suggested bindings
+        XrPath eyeGazeInteractionProfilePath;
+        result = xrStringToPath(m_openxr->instance, "/interaction_profiles/ext/eye_gaze_interaction", &eyeGazeInteractionProfilePath);
+        XrPath gazePosePath;
+        result = xrStringToPath(m_openxr->instance, "/user/eyes_ext/input/gaze_ext/pose", &gazePosePath);
+        XrActionSuggestedBinding bindings;
+        bindings.action = m_openxr->eyeGazeAction;
+        bindings.binding = gazePosePath;
+        XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+        suggestedBindings.interactionProfile = eyeGazeInteractionProfilePath;
+        suggestedBindings.suggestedBindings = &bindings;
+        suggestedBindings.countSuggestedBindings = 1;
+        result = xrSuggestInteractionProfileBindings(m_openxr->instance, &suggestedBindings);
+        //XrSessionActionSetsAttachInfo attachInfo{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
+        //attachInfo.countActionSets = 1;
+        //attachInfo.actionSets = &m_openxr->eyeGazeActionSet;
+        //result = xrAttachSessionActionSets(m_openxr->session, &attachInfo);
+        XrActionSpaceCreateInfo createActionSpaceInfo{XR_TYPE_ACTION_SPACE_CREATE_INFO};
+        createActionSpaceInfo.action = m_openxr->eyeGazeAction;
+        createActionSpaceInfo.poseInActionSpace = {};
+        createActionSpaceInfo.poseInActionSpace.orientation.w = 1.0f;
+        result = xrCreateActionSpace(m_openxr->session, &createActionSpaceInfo, &m_openxr->gazeActionSpace);
+        XrReferenceSpaceCreateInfo createReferenceSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+        createReferenceSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+        createReferenceSpaceInfo.poseInReferenceSpace = {};
+        createReferenceSpaceInfo.poseInReferenceSpace.orientation.w = 1.0f;
+        xrCreateReferenceSpace(m_openxr->session, &createReferenceSpaceInfo, &m_openxr->viewSpace);
+    }
 
     // Step 4: Create a space
     spdlog::info("[VR] Creating OpenXR space");
@@ -1863,6 +2103,8 @@ bool VR::is_any_action_down() {
 }
 
 void VR::update_hmd_state() {
+    
+
     auto runtime = get_runtime();
     
     if (runtime->get_synchronize_stage() == VRRuntime::SynchronizeStage::EARLY) {
@@ -1905,15 +2147,46 @@ void VR::update_hmd_state() {
     // This will massively improve HMD rotation smoothness for the user
     // if this is not done, the left eye will jitter a lot
 #if defined(RE2) || defined(RE3)
-    auto camera = sdk::get_primary_camera();
+    const auto cameras = get_cameras();
 
-    if (camera != nullptr && camera->ownerGameObject != nullptr && camera->ownerGameObject->transform != nullptr) {
-        FirstPerson::get()->on_update_transform(camera->ownerGameObject->transform);
+    for (auto camera : cameras) {
+        if (camera == nullptr) {
+            continue;
+        }
+
+        if (camera->ownerGameObject != nullptr && camera->ownerGameObject->transform != nullptr) {
+            if (camera == cameras[0]) {
+                FirstPerson::get()->on_update_transform(camera->ownerGameObject->transform);
+            } else if (cameras[0] != nullptr && cameras[0]->ownerGameObject != nullptr && cameras[0]->ownerGameObject->transform != nullptr) {
+                auto transform0 = cameras[0]->ownerGameObject->transform;
+                auto transform1 = camera->ownerGameObject->transform;
+
+                const auto camera_joint = utility::re_transform::get_joint(*transform1, 0);
+
+                if (camera_joint == nullptr) {
+                    continue;
+                }
+
+                auto& fp = FirstPerson::get();
+
+                const auto mat = fp->get_last_camera_matrix();
+                const auto pos = mat[3];
+
+                //transform1->angles = transform0->angles;
+                //transform1->position = transform0->position;
+                transform1->worldTransform = transform0->worldTransform;
+
+                sdk::set_joint_position(camera_joint, pos);
+                sdk::set_joint_rotation(camera_joint, mat);
+            }
+        }
     }
 #endif
 }
 
 void VR::update_action_states() {
+    
+
     auto runtime = get_runtime();
 
     if (runtime->wants_reinitialize) {
@@ -1955,6 +2228,8 @@ void VR::update_action_states() {
 }
 
 void VR::update_camera() {
+    
+
     if (!is_hmd_active()) {
         m_needs_camera_restore = false;
         return;
@@ -1964,80 +2239,87 @@ void VR::update_camera() {
         return;
     }
 
-    auto camera = sdk::get_primary_camera();
+    auto cameras = get_cameras();
 
-    if (camera == nullptr) {
+    if (cameras[0] == nullptr) {
         spdlog::error("VR: Failed to get primary camera!");
         return;
     }
 
-    static auto via_camera = sdk::find_type_definition("via.Camera");
-    static auto get_near_clip_plane_method = via_camera->get_method("get_NearClipPlane");
-    static auto get_far_clip_plane_method = via_camera->get_method("get_FarClipPlane");
-    static auto set_far_clip_plane_method = via_camera->get_method("set_FarClipPlane");
-    static auto set_fov_method = via_camera->get_method("set_FOV");
-    static auto set_vertical_enable_method = via_camera->get_method("set_VerticalEnable");
-    static auto set_aspect_ratio_method = via_camera->get_method("set_AspectRatio");
-
-    if (m_use_custom_view_distance->value()) {
-        set_far_clip_plane_method->call<void*>(sdk::get_thread_context(), camera, m_view_distance->value());
-    }
-
-    m_nearz = get_near_clip_plane_method->call<float>(sdk::get_thread_context(), camera);
-    m_farz = get_far_clip_plane_method->call<float>(sdk::get_thread_context(), camera);
-
-    // Disable certain effects like the 3D overlay during the sewer gators
-    // section in RE7
-    disable_bad_effects();
-    // Disable lens distortion
-    set_lens_distortion(false);
-
-#if defined(RE2) || defined(RE3)
-    if (FirstPerson::get()->will_be_used()) {
-        m_needs_camera_restore = false;
-
-        auto camera_object = utility::re_component::get_game_object(camera);
-
-        if (camera_object == nullptr || camera_object->transform == nullptr) {
-            return;
+    for (auto camera : cameras) {
+        if (camera == nullptr) {
+            break;
         }
 
-        auto camera_joint = utility::re_transform::get_joint(*camera_object->transform, 0);
+        static auto via_camera = sdk::find_type_definition("via.Camera");
+        static auto get_near_clip_plane_method = via_camera->get_method("get_NearClipPlane");
+        static auto get_far_clip_plane_method = via_camera->get_method("get_FarClipPlane");
+        static auto set_far_clip_plane_method = via_camera->get_method("set_FarClipPlane");
+        static auto set_fov_method = via_camera->get_method("set_FOV");
+        static auto set_vertical_enable_method = via_camera->get_method("set_VerticalEnable");
+        static auto set_aspect_ratio_method = via_camera->get_method("set_AspectRatio");
 
-        if (camera_joint == nullptr) {
-            return;
+        if (m_use_custom_view_distance->value()) {
+            set_far_clip_plane_method->call<void*>(sdk::get_thread_context(), camera, m_view_distance->value());
         }
 
-        m_original_camera_position = sdk::get_joint_position(camera_joint);
-        m_original_camera_rotation = sdk::get_joint_rotation(camera_joint);
-        m_original_camera_matrix = Matrix4x4f{m_original_camera_rotation};
-        m_original_camera_matrix[3] = m_original_camera_position;
+        m_nearz = get_near_clip_plane_method->call<float>(sdk::get_thread_context(), camera);
+        m_farz = get_far_clip_plane_method->call<float>(sdk::get_thread_context(), camera);
 
-        return;
+        // Disable certain effects like the 3D overlay during the sewer gators
+        // section in RE7
+        disable_bad_effects();
+        // Disable lens distortion
+        set_lens_distortion(false);
+
+    #if defined(RE2) || defined(RE3)
+        if (FirstPerson::get()->will_be_used()) {
+            m_needs_camera_restore = false;
+
+            auto camera_object = utility::re_component::get_game_object(camera);
+
+            if (camera_object == nullptr || camera_object->transform == nullptr) {
+                return;
+            }
+
+            auto camera_joint = utility::re_transform::get_joint(*camera_object->transform, 0);
+
+            if (camera_joint == nullptr) {
+                return;
+            }
+
+            m_original_camera_position = sdk::get_joint_position(camera_joint);
+            m_original_camera_rotation = sdk::get_joint_rotation(camera_joint);
+            m_original_camera_matrix = Matrix4x4f{m_original_camera_rotation};
+            m_original_camera_matrix[3] = m_original_camera_position;
+
+            return;
+        }
+    #endif
+
+        auto projection_matrix = is_using_afw_foveated() ? get_projection_matrix(0) : get_current_projection_matrix(true);
+
+        // Steps towards getting lens flares and volumetric lighting working
+        // Get the FOV from the projection matrix
+        const auto vfov = glm::degrees(2.0f * std::atan(1.0f / projection_matrix[1][1]));
+        const auto aspect = projection_matrix[1][1] / projection_matrix[0][0];
+        const auto hfov = vfov * aspect;
+        
+        //spdlog::info("vFOV: {}", vfov);
+        //spdlog::info("Aspect: {}", aspect);
+
+        set_fov_method->call<void*>(sdk::get_thread_context(), camera, vfov);
+        set_vertical_enable_method->call<void*>(sdk::get_thread_context(), camera, true);
+        set_aspect_ratio_method->call<void*>(sdk::get_thread_context(), camera, aspect);
     }
-#endif
 
     update_camera_origin();
-
-    auto projection_matrix = get_current_projection_matrix(true);
-
-    // Steps towards getting lens flares and volumetric lighting working
-    // Get the FOV from the projection matrix
-    const auto vfov = glm::degrees(2.0f * std::atan(1.0f / projection_matrix[1][1]));
-    const auto aspect = projection_matrix[1][1] / projection_matrix[0][0];
-    const auto hfov = vfov * aspect;
-    
-    //spdlog::info("vFOV: {}", vfov);
-    //spdlog::info("Aspect: {}", aspect);
-
-    set_fov_method->call<void*>(sdk::get_thread_context(), camera, vfov);
-    set_vertical_enable_method->call<void*>(sdk::get_thread_context(), camera, true);
-    set_aspect_ratio_method->call<void*>(sdk::get_thread_context(), camera, aspect);
-
     m_needs_camera_restore = true;
 }
 
 void VR::update_camera_origin() {
+    
+
     if (!is_hmd_active()) {
         return;
     }
@@ -2048,40 +2330,48 @@ void VR::update_camera_origin() {
         return;
     }
 
-    auto camera = sdk::get_primary_camera();
+    auto cameras = get_cameras();
 
-    if (camera == nullptr) {
+    if (cameras[0] == nullptr) {
         m_needs_camera_restore = false;
         return;
     }
 
-    auto camera_object = utility::re_component::get_game_object(camera);
+    for (auto camera : cameras) {
+        if (camera == nullptr) {
+            return;
+        }
 
-    if (camera_object == nullptr || camera_object->transform == nullptr) {
-        spdlog::error("VR: Failed to get camera game object or transform!");
-        m_needs_camera_restore = false;
-        return;
+        auto camera_object = utility::re_component::get_game_object(camera);
+
+        if (camera_object == nullptr || camera_object->transform == nullptr) {
+            spdlog::error("VR: Failed to get camera game object or transform!");
+            m_needs_camera_restore = false;
+            return;
+        }
+
+        auto camera_joint = utility::re_transform::get_joint(*camera_object->transform, 0);
+
+        if (camera_joint == nullptr) {
+            spdlog::error("VR: Failed to get camera joint!");
+            m_needs_camera_restore = false;
+            return;
+        }
+
+        if (!inside_on_end && camera == cameras[0]) {
+            m_original_camera_position = sdk::get_joint_position(camera_joint);
+            m_original_camera_rotation = sdk::get_joint_rotation(camera_joint);
+            m_original_camera_matrix = Matrix4x4f{m_original_camera_rotation};
+            m_original_camera_matrix[3] = m_original_camera_position;
+        }
+
+        apply_hmd_transform(camera_joint);
     }
-
-    auto camera_joint = utility::re_transform::get_joint(*camera_object->transform, 0);
-
-    if (camera_joint == nullptr) {
-        spdlog::error("VR: Failed to get camera joint!");
-        m_needs_camera_restore = false;
-        return;
-    }
-
-    if (!inside_on_end) {
-        m_original_camera_position = sdk::get_joint_position(camera_joint);
-        m_original_camera_rotation = sdk::get_joint_rotation(camera_joint);
-        m_original_camera_matrix = Matrix4x4f{m_original_camera_rotation};
-        m_original_camera_matrix[3] = m_original_camera_position;
-    }
-
-    apply_hmd_transform(camera_joint);
 }
 
 void VR::apply_hmd_transform(glm::quat& rotation, Vector4f& position) {
+    
+
     const auto rotation_offset = get_rotation_offset();
     const auto current_hmd_rotation = glm::normalize(rotation_offset * glm::quat{get_rotation(0)});
     
@@ -2108,6 +2398,8 @@ void VR::apply_hmd_transform(glm::quat& rotation, Vector4f& position) {
 }
 
 void VR::apply_hmd_transform(::REJoint* camera_joint) {
+    
+
     auto rotation = m_original_camera_rotation;
     auto position = m_original_camera_position;
 
@@ -2146,6 +2438,8 @@ bool VR::is_hand_behind_head(VRRuntime::Hand hand, float sensitivity) const {
 }
 
 void VR::update_audio_camera() {
+    
+
     if (!is_hmd_active()) {
         return;
     }
@@ -2185,26 +2479,34 @@ void VR::update_audio_camera() {
 }
 
 void VR::update_render_matrix() {
-    auto camera = sdk::get_primary_camera();
+    
 
-    if (camera == nullptr) {
+    auto cameras = get_cameras();
+
+    if (cameras[0] == nullptr) {
         return;
     }
 
-    auto camera_object = utility::re_component::get_game_object(camera);
+    for (auto camera : cameras) {
+        if (camera == nullptr || camera != cameras[0]) {
+            return;
+        }
 
-    if (camera_object == nullptr || camera_object->transform == nullptr) {
-        return;
+        auto camera_object = utility::re_component::get_game_object(camera);
+
+        if (camera_object == nullptr || camera_object->transform == nullptr) {
+            return;
+        }
+
+        auto camera_joint = utility::re_transform::get_joint(*camera_object->transform, 0);
+
+        if (camera_joint == nullptr) {
+            return;
+        }
+
+        m_render_camera_matrix = Matrix4x4f{sdk::get_joint_rotation(camera_joint)};
+        m_render_camera_matrix[3] = sdk::get_joint_position(camera_joint);
     }
-
-    auto camera_joint = utility::re_transform::get_joint(*camera_object->transform, 0);
-
-    if (camera_joint == nullptr) {
-        return;
-    }
-
-    m_render_camera_matrix = Matrix4x4f{sdk::get_joint_rotation(camera_joint)};
-    m_render_camera_matrix[3] = sdk::get_joint_position(camera_joint);
 }
 
 void VR::restore_audio_camera() {
@@ -2249,6 +2551,8 @@ void VR::restore_audio_camera() {
 }
 
 void VR::restore_camera() {
+    
+
     if (!m_needs_camera_restore) {
         return;
     }
@@ -2260,35 +2564,45 @@ void VR::restore_camera() {
     }
 #endif
 
-    auto camera = sdk::get_primary_camera();
+    auto cameras = get_cameras();
 
-    if (camera == nullptr) {
+    if (cameras[0] == nullptr) {
         m_needs_camera_restore = false;
         return;
     }
 
-    auto camera_object = utility::re_component::get_game_object(camera);
+    for (auto camera : cameras) {
+        if (camera == nullptr) {
+            return;
+        }
 
-    if (camera_object == nullptr || camera_object->transform == nullptr) {
-        m_needs_camera_restore = false;
-        return;
+        auto camera_object = utility::re_component::get_game_object(camera);
+
+        if (camera_object == nullptr || camera_object->transform == nullptr) {
+            m_needs_camera_restore = false;
+            return;
+        }
+
+        //camera_object->transform->worldTransform = m_original_camera_matrix;
+
+        auto joint = utility::re_transform::get_joint(*camera_object->transform, 0);
+
+        if (joint == nullptr) {
+            m_needs_camera_restore = false;
+            return;
+        }
+
+        sdk::set_joint_rotation(joint, m_original_camera_rotation);
+        sdk::set_joint_position(joint, m_original_camera_position);
     }
 
-    //camera_object->transform->worldTransform = m_original_camera_matrix;
 
-    auto joint = utility::re_transform::get_joint(*camera_object->transform, 0);
-
-    if (joint == nullptr) {
-        m_needs_camera_restore = false;
-        return;
-    }
-
-    sdk::set_joint_rotation(joint, m_original_camera_rotation);
-    sdk::set_joint_position(joint, m_original_camera_position);
     m_needs_camera_restore = false;
 }
 
 void VR::set_lens_distortion(bool value) {
+    
+
     if (!m_force_lensdistortion_settings->value()) {
         return;
     }
@@ -2318,6 +2632,8 @@ void VR::set_lens_distortion(bool value) {
 }
 
 void VR::disable_bad_effects() {
+    
+
     auto context = sdk::get_thread_context();
 
     auto application = sdk::Application::get();
@@ -2389,7 +2705,11 @@ void VR::disable_bad_effects() {
     // get_MaxFps on application
     if (!is_sf6 && m_force_fps_settings->value() && application->get_max_fps() <  600.0f) {
         application->set_max_fps(600.0f);
-        spdlog::info("[VR] Max FPS set to {}", 600.0f);
+
+        static bool once = []() {
+            spdlog::info("[VR] Max FPS set to {}", 600.0f);
+            return true;
+        }();
     }
 
     if (m_force_aa_settings->value() && get_antialiasing_method != nullptr && set_antialiasing_method != nullptr) {
@@ -2499,9 +2819,10 @@ void VR::disable_bad_effects() {
         }
     }
 
+    // Causes crashes on D3D11. May be a performance detriment in VR with new rendering method.
+    const auto is_new_rendering_method = is_using_afw_foveated();
 
-    // Causes crashes on D3D11.
-    if (!is_sf6 && g_framework->get_renderer_type() == REFramework::RendererType::D3D12 && m_enable_asynchronous_rendering->value()) {
+    if (!is_new_rendering_method && !is_sf6 && g_framework->get_renderer_type() == REFramework::RendererType::D3D12 && m_enable_asynchronous_rendering->value()) {
         if (get_delay_render_enable_method != nullptr && set_delay_render_enable_method != nullptr) {
             const auto is_delay_render_enabled = get_delay_render_enable_method->call<bool>(context);
 
@@ -2669,7 +2990,9 @@ Vector4f VR::get_current_offset() {
 
     std::shared_lock _{ get_runtime()->eyes_mtx };
 
-    if (m_frame_count % 2 == m_left_eye_interval) {
+    const auto count = m_frame_count;
+
+    if (count % 2 == m_left_eye_interval) {
         //return Vector4f{m_eye_distance * -1.0f, 0.0f, 0.0f, 0.0f};
         return get_runtime()->eyes[vr::Eye_Left][3];
     }
@@ -2685,9 +3008,10 @@ Matrix4x4f VR::get_current_eye_transform(bool flip) {
 
     std::shared_lock _{get_runtime()->eyes_mtx};
 
-    auto mod_count = flip ? m_right_eye_interval : m_left_eye_interval;
+    const auto count = m_frame_count;
+    const auto mod_count = flip ? m_right_eye_interval : m_left_eye_interval;
 
-    if (m_frame_count % 2 == mod_count) {
+    if (count % 2 == mod_count) {
         return get_runtime()->eyes[vr::Eye_Left];
     }
 
@@ -2701,16 +3025,47 @@ Matrix4x4f VR::get_current_projection_matrix(bool flip) {
 
     std::shared_lock _{get_runtime()->eyes_mtx};
 
-    auto mod_count = flip ? m_right_eye_interval : m_left_eye_interval;
+    const auto count = m_frame_count;
+    const auto mod_count = flip ? m_right_eye_interval : m_left_eye_interval;
 
-    if (m_frame_count % 2 == mod_count) {
+    if (count % 2 == mod_count) {
         return get_runtime()->projections[(uint32_t)VRRuntime::Eye::LEFT];
     }
 
     return get_runtime()->projections[(uint32_t)VRRuntime::Eye::RIGHT];
 }
 
+Matrix4x4f VR::get_projection_matrix(uint32_t pass) {
+    if (!is_hmd_active()) {
+        return glm::identity<Matrix4x4f>();
+    }
+
+    std::shared_lock _{get_runtime()->eyes_mtx};
+
+    if (pass % 2 == 0) {
+        return get_runtime()->projections[(uint32_t)VRRuntime::Eye::LEFT];
+    }
+
+    return get_runtime()->projections[(uint32_t)VRRuntime::Eye::RIGHT];
+}
+
+Matrix4x4f VR::get_eye_transform(uint32_t pass) {
+    if (!is_hmd_active()) {
+        return glm::identity<Matrix4x4f>();
+    }
+
+    std::shared_lock _{get_runtime()->eyes_mtx};
+
+    if (pass % 2 == 0) {
+        return get_runtime()->eyes[vr::Eye_Left];
+    }
+
+    return get_runtime()->eyes[vr::Eye_Right];
+}
+
 void VR::on_pre_imgui_frame() {
+    
+
     if (!get_runtime()->ready()) {
         return;
     }
@@ -2780,6 +3135,7 @@ void VR::update_camera_data(int frame_count) {
 }
 
 void VR::on_present() {
+    
 
     static bool btn1 = false;
     if (GetAsyncKeyState(VK_NUMPAD1) < 0 && btn1 == false) {
@@ -2816,10 +3172,10 @@ void VR::on_present() {
 
     // case 1: sequential frames and rendered frame == right eye (every two frames)
     // case 2: AFW and no foveated rendering (each frame)
-    // case 2: AFW and foveated rendering and rendered frame is FR frame
+    // case 3: AFW and foveated rendering and rendered frame is FR frame
     if ((is_using_sf() && m_render_frame_count % 2 == m_right_eye_interval) || 
-        (is_using_afw() && !is_foveated_rendering()) ||
-        (is_using_afw() && m_is_second_rendered_frame)) {
+        (is_using_afw()) ||
+        (is_using_afw_foveated())) {
         ResetEvent(m_present_finished_event);
     }
 
@@ -2847,7 +3203,6 @@ void VR::on_present() {
             }
 
             openvr->is_hmd_active = hmd_active;
-            //openvr->is_hmd_active = mDebug2;
             openvr->is_hmd_active = true;
 
             // upon headset re-entry, reinitialize OpenVR
@@ -2891,7 +3246,16 @@ void VR::on_present() {
     }
     if (GetAsyncKeyState(VK_NUMPAD7) == 0 && btn7 == true) {
         btn7 = false;
-        m_use_afw->toggle();
+        //m_use_afr->toggle();
+        int32_t& value = m_rendering_technique->value();
+        value = (value + 1) % 2;
+    }
+    static bool btn8 = false;
+    if (GetAsyncKeyState(VK_NUMPAD8) < 0 && btn8 == false) {
+        btn8 = true;
+    }
+    if (GetAsyncKeyState(VK_NUMPAD8) == 0 && btn8 == true) {
+        btn8 = false;
     }
     static bool btn9 = false;
     if (GetAsyncKeyState(VK_NUMPAD9) < 0 && btn9 == false) {
@@ -2929,8 +3293,7 @@ void VR::on_present() {
     }
 
     // only update camera data when not rendering FR frame (which has lower FOV)
-    if (!m_is_second_rendered_frame)
-        update_camera_data(m_render_frame_count);
+    update_camera_data(m_render_frame_count);
 
     const auto renderer = g_framework->get_renderer_type();
     vr::EVRCompositorError e = vr::EVRCompositorError::VRCompositorError_None;
@@ -2973,18 +3336,20 @@ void VR::on_present() {
 
     // case 1: sequential frames and rendered frame == right eye (every two frames)
     // case 2: AFW and no foveated rendering (each frame)
-    // case 2: AFW and foveated rendering and rendered frame is FR frame
-    if ((is_using_sf() && m_render_frame_count % 2 == m_right_eye_interval) ||
-        (is_using_afw() && !is_foveated_rendering()) ||
-        (is_using_afw() && m_is_second_rendered_frame)) {
+    // case 3: AFW and foveated rendering and rendered frame is FR frame
+    if ((is_using_sf() && m_render_frame_count % 2 == m_right_eye_interval) || 
+        (is_using_afw()) ||
+        (is_using_afw_foveated())) {
         SetEvent(m_present_finished_event);
     }
 }
 
 void VR::on_post_present() {
+    
+
     auto runtime = get_runtime();
 
-    if (!get_runtime()->loaded) {
+    if (!runtime->loaded) {
         return;
     }
 
@@ -2992,6 +3357,27 @@ void VR::on_post_present() {
 
     if (renderer == REFramework::RendererType::D3D12) {
         m_d3d12.on_post_present(this);
+    }
+    
+    // case 1: sequential frames and rendered frame == right eye (every two frames)
+    // case 2: AFW and no foveated rendering (each frame)
+    // case 3: AFW and foveated rendering and rendered frame is FR frame
+    if ((is_using_sf() && m_render_frame_count % 2 == m_right_eye_interval) || 
+        (is_using_afw()) ||
+        (is_using_afw_foveated())) {
+        runtime->consume_events(nullptr);
+    }
+
+    if (!inside_on_end && runtime->wants_reinitialize) {
+        std::scoped_lock _{m_openvr_mtx};
+
+        if (runtime->is_openvr()) {
+            m_openvr->wants_reinitialize = false;
+            reinitialize_openvr();
+        } else if (runtime->is_openxr()) {
+            m_openxr->wants_reinitialize = false;
+            reinitialize_openxr();
+        }
     }
 }
 
@@ -3029,6 +3415,8 @@ struct GUIRestoreData {
 thread_local std::vector<std::unique_ptr<GUIRestoreData>> g_elements_to_reset{};
 
 bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_context) {
+    
+
     inside_gui_draw = true;
 
     if (!get_runtime()->ready()) {
@@ -3400,7 +3788,7 @@ bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_conte
 
 #if defined(RE9)
                         // fix double vision on button prompts when using AFW/AFR
-                        if (is_using_afw() && name_hash == "Gui_ui2010"_fnv) {
+                        if ((is_using_afw() || is_using_afw_foveated()) && name_hash == "Gui_ui2010"_fnv) {
                             const auto eye_camera_matrix = m_original_camera_matrix * get_current_eye_transform(true);
                             camera_position = eye_camera_matrix[3];
                         }
@@ -3562,6 +3950,8 @@ bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_conte
 }
 
 void VR::on_gui_draw_element(REComponent* gui_element, void* primitive_context) {
+    
+
     //spdlog::info("VR: on_gui_draw_element");
 
     auto context = sdk::get_thread_context();
@@ -3642,6 +4032,8 @@ void VR::on_lightshaft_draw(void* shaft, void* render_context) {
 thread_local bool timed_out = false;
 
 void VR::on_pre_begin_rendering(void* entry) {
+    
+
     auto runtime = get_runtime();
 
     if (!runtime->loaded) {
@@ -3678,22 +4070,10 @@ void VR::on_pre_begin_rendering(void* entry) {
         // will probably require some game-specific code
     }
 
-    if (!inside_on_end && runtime->wants_reinitialize) {
-        std::scoped_lock _{m_openvr_mtx};
-
-        if (runtime->is_openvr()) {
-            m_openvr->wants_reinitialize = false;
-            reinitialize_openvr();
-        } else if (runtime->is_openxr()) {
-            m_openxr->wants_reinitialize = false;
-            reinitialize_openxr();
-        }
-    }
-
     detect_controllers();
 
     //actual_frame_count = get_game_frame_count();
-    if (is_using_afw() && is_foveated_rendering() && inside_on_end) {
+    if ((is_using_afw_foveated()) && inside_on_end) {
         // don't add frame count if it's rendering the foveated image
     } else {
         m_frame_count++;
@@ -3722,12 +4102,11 @@ void VR::on_pre_begin_rendering(void* entry) {
     }
     
     // Call WaitGetPoses
-    if (!inside_on_end && (is_left_eye() || is_using_afw())) {
-        runtime->consume_events(nullptr);
+    if (is_using_afw() || is_using_afw_foveated() || !inside_on_end &&  is_left_eye()) {
         update_hmd_state();
     }
 
-    const auto should_update_camera = is_left_eye() || is_using_afw();
+    const auto should_update_camera = is_left_eye() || is_using_afw() || is_using_afw_foveated();
 
     if (!inside_on_end && should_update_camera) {
         update_camera();
@@ -3745,13 +4124,15 @@ void VR::on_begin_rendering(void* entry) {
 }
 
 void VR::on_pre_end_rendering(void* entry) {
+    
+
     auto runtime = get_runtime();
 
     if (!runtime->loaded) {
         return;
     }
 
-    if (runtime->ready() && ((is_using_sf() && is_left_eye()) || (is_using_afw() && !inside_on_end))) {
+    if (runtime->ready() && ((is_using_sf() && is_left_eye()) || is_using_afw() || is_using_afw_foveated())) {
         const auto stage = runtime->get_synchronize_stage();
 
         if (stage == VRRuntime::SynchronizeStage::LATE && runtime->synchronize_frame() == VRRuntime::Error::SUCCESS) {
@@ -3769,20 +4150,23 @@ void VR::on_pre_end_rendering(void* entry) {
             return;
         }
         if (valid_scene_layers.size() > 0) {
-            depthTex = valid_scene_layers[0]->get_depth_stencil_d3d12();
+            depthTex[0] = valid_scene_layers[0]->get_depth_stencil_d3d12();
             //motionVectorsState = valid_scene_layers[0]->get_motion_vectors_state();
-            //motionVectorsTex = valid_scene_layers[0]->get_motion_vectors_d3d12();
+            if (valid_scene_layers.size() > 1) {
+                depthTex[1] = valid_scene_layers[1]->get_depth_stencil_d3d12();
+            }
         } 
     }
 }
 
 void VR::on_end_rendering(void* entry) {
+    
+
     // we set this because we've enabled asynchronous rendering
     // by the time the next frame (right eye) starts,
     // the frame count might get modified, screwing up our logic
     // so we need a render frame count to compare against
     m_render_frame_count = m_frame_count;
-    m_is_second_rendered_frame = inside_on_end;
 
     auto runtime = get_runtime();
 
@@ -3799,7 +4183,21 @@ void VR::on_end_rendering(void* entry) {
         return;
     }
 
-    if ((is_using_afw() && !is_foveated_rendering())) {
+    if (!inside_on_end) {
+        auto app = sdk::Application::get();
+
+        static auto app_type = sdk::find_type_definition("via.Application");
+        static auto set_max_delta_time_fn = app_type->get_method("set_MaxDeltaTime");
+
+        // RE8 and onwards...
+        // defaults to 2, and will slow the game down if frame rate is too low
+        if (set_max_delta_time_fn != nullptr) {
+            // static func, no need for app
+            set_max_delta_time_fn->call<void*>(sdk::get_thread_context(), 10.0f);
+        }
+    }
+
+    if (is_using_afw() || is_using_afw_foveated()) {
         restore_camera();
         m_in_render = false;
         return;
@@ -3812,25 +4210,14 @@ void VR::on_end_rendering(void* entry) {
     // Only render again on even (left eye) frames
     // We're checking == 1 because at this point, the frame has finished.
     // Meaning the previous frame was a left eye frame.
-    if (!inside_on_end && ((is_using_sf() && (m_render_frame_count % 2 == m_left_eye_interval)) || is_foveated_rendering())) {
+    if (!inside_on_end && ((is_using_sf() && (m_render_frame_count % 2 == m_left_eye_interval)))) {
         inside_on_end = true;
         
         // Try to render again for the right eye
         // Or for the foveated part when using foveated rendering
         auto app = sdk::Application::get();
 
-        static auto app_type = sdk::find_type_definition("via.Application");
-        static auto set_max_delta_time_fn = app_type->get_method("set_MaxDeltaTime");
-
-        // RE8 and onwards...
-        // defaults to 2, and will slow the game down if frame rate is too low
-        if (set_max_delta_time_fn != nullptr) {
-            // static func, no need for app
-            set_max_delta_time_fn->call<void*>(sdk::get_thread_context(), 10.0f);
-        }
-
         static auto chain = app->generate_chain("WaitRendering", "EndRendering");
-        static auto chain_for_fr = app->generate_chain("WaitRendering", "EndRendering");
         static bool do_once = true;
 
         if (do_once) {
@@ -3906,7 +4293,8 @@ void VR::on_end_rendering(void* entry) {
         }
 
         for (auto func : chain) {
-            // spdlog::info("Calling {}", func->description);
+            //spdlog::info("Calling {}", func->description);
+
             func->func(func->entry);
         }
 
@@ -3921,6 +4309,8 @@ void VR::on_pre_wait_rendering(void* entry) {
 }
 
 void VR::on_wait_rendering(void* entry) {
+    
+
     if (!get_runtime()->loaded) {
         return;
     }
@@ -3931,16 +4321,18 @@ void VR::on_wait_rendering(void* entry) {
         return;
     }
 
+    if (is_using_afw_foveated()) {
+        return;
+    }
+
     // wait for m_present_finished (std::condition_variable)
     // to be signaled
     // only on the left eye interval because we need the right eye
     // to start render work as soon as possible
     // case 1: sequential frames and rendered frame == right eye (every two frames)
     // case 2: AFW and no foveated rendering (each frame)
-    // case 2: AFW and foveated rendering and rendered frame is FR frame
-    if ((is_using_sf() && m_frame_count % 2 == m_right_eye_interval) || 
-        (is_using_afw() && !is_foveated_rendering()) ||
-        (is_using_afw() && m_is_second_rendered_frame)) {
+    // case 3: AFW and foveated rendering and rendered frame is FR frame
+    if ((is_using_sf() && m_render_frame_count % 2 == m_right_eye_interval) || (is_using_afw())) {
         if (WaitForSingleObject(m_present_finished_event, 333) == WAIT_TIMEOUT) {
             timed_out = true;
         }
@@ -3953,6 +4345,8 @@ void VR::on_pre_application_entry(void* entry, const char* name, size_t hash) {
     if (!get_runtime()->loaded) {
         return;
     }
+
+    m_camera_duplicator.on_pre_application_entry(entry, name, hash);
 
     switch (hash) {
         case "UpdateHID"_fnv:
@@ -3976,6 +4370,8 @@ void VR::on_application_entry(void* entry, const char* name, size_t hash) {
     if (!get_runtime()->loaded) {
         return;
     }
+
+    m_camera_duplicator.on_application_entry(entry, name, hash);
 
     switch (hash) {
         case "UpdateHID"_fnv:
@@ -4498,8 +4894,8 @@ void VR::on_draw_ui() {
 
     ImGui::Separator();
 
-    m_use_afw->draw("Use Alternate Frame Warping");
-    if (m_use_afw->value()) {
+    m_rendering_technique->draw("Rendering Technique");
+    if (m_rendering_technique->value() == ALTERNATE_FRAME_WARPING) {
         m_clear_before_framewarp->draw("Clear Before Framewarp");
         m_framewarp_debug->draw("Debug Framewarp");
         m_enable_ui_fix->draw("Enable Framewarp UI Fix");
@@ -4511,7 +4907,8 @@ void VR::on_draw_ui() {
         m_framewarp_mode->draw("Framewarp Mode");
         m_enable_foveated_rendering->draw("Enable Foveated Rendering");
         m_foveated_ratio->draw("Foveated Ratio");
-    }   ImGui::Separator();
+    }
+    ImGui::Separator();
 
     m_decoupled_pitch->draw("Decoupled Camera Pitch");
 
@@ -4555,6 +4952,9 @@ void VR::on_draw_ui() {
 
     ImGui::Separator();
     ImGui::Text("Debug info");
+    m_camera_duplicator.on_draw_ui();
+    
+
     ImGui::Checkbox("Disable Projection Matrix Override", &m_disable_projection_matrix_override);
     ImGui::Checkbox("Disable GUI Projection Matrix Override", &m_disable_gui_camera_projection_matrix_override);
     ImGui::Checkbox("Disable View Matrix Override", &m_disable_view_matrix_override);
@@ -4577,6 +4977,9 @@ void VR::on_draw_ui() {
 
 void VR::on_device_reset() {
     std::scoped_lock _{m_openxr->sync_mtx};
+
+    m_multipass.eye_textures[0] = nullptr;
+    m_multipass.eye_textures[1] = nullptr;
 
     spdlog::info("VR: on_device_reset");
     m_backbuffer_inconsistency = false;
@@ -4628,6 +5031,14 @@ void VR::on_config_save(utility::Config& cfg) {
     for (IModValue& option : m_options) {
         option.config_save(cfg);
     }
+}
+
+std::array<RECamera*, 2> VR::get_cameras() const {
+    if (is_using_afw_foveated()) {
+        return m_multipass_cameras;
+    }
+
+    return std::array<RECamera*, 2>{ sdk::get_primary_camera(), nullptr };
 }
 
 Vector4f VR::get_position(uint32_t index) const {

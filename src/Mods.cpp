@@ -51,8 +51,8 @@ Mods::Mods() {
 #endif
 #endif
 
-    // All games!!!!
-    m_mods.emplace_back(std::make_unique<Camera>());
+    // All games!!!
+    m_mods.emplace_back(Camera::get());
     m_mods.emplace_back(Graphics::get());
 
 #if defined(RE2) || defined(RE3) || defined(RE8)
@@ -143,6 +143,10 @@ void Mods::on_frame() const {
 }
 
 void Mods::on_present() const {
+    for (auto& mod : m_mods) {
+        mod->on_early_present();
+    }
+
     for (auto& mod : m_mods) {
         mod->on_present();
     }

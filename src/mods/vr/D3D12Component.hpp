@@ -30,6 +30,8 @@ class VR;
 namespace vrmod {
 class D3D12Component {
 public:
+    EyeFrameBuffers m_eyeFrameBuffers;
+
     vr::EVRCompositorError on_frame(VR* vr);
     void on_post_present(VR* vr);
 
@@ -49,8 +51,6 @@ private:
     void render_srv_to_rtv(ID3D12GraphicsCommandList* command_list, const d3d12::TextureContext& src, const d3d12::TextureContext& dst, D3D12_RESOURCE_STATES src_state, D3D12_RESOURCE_STATES dst_state);
 
     template <typename T> using ComPtr = Microsoft::WRL::ComPtr<T>;
-
-    EyeFrameBuffers m_eyeFrameBuffers;
 
     ComPtr<ID3D12Resource> m_prev_backbuffer{};
     d3d12::TextureContext m_backbuffer_copy{};
@@ -102,13 +102,14 @@ private:
         std::array<d3d12::TextureContext, 1> left_eye_tex{};
         std::array<d3d12::TextureContext, 1> right_eye_tex{};
         uint32_t texture_counter{0};
+        DXGI_FORMAT last_format{};
     } m_openvr;
 
     struct OpenXR {
         void initialize(XrSessionCreateInfo& session_info);
         std::optional<std::string> create_swapchains();
         void destroy_swapchains();
-        void copy(uint32_t swapchain_idx, ID3D12Resource* src);
+        void copy(uint32_t swapchain_idx, ID3D12Resource* resource, D3D12_BOX* src_box, D3D12_RESOURCE_STATES src_state);
         void wait_for_all_copies() {
             std::scoped_lock _{this->mtx};
 
@@ -130,6 +131,7 @@ private:
         std::vector<SwapchainContext> contexts{};
         std::recursive_mutex mtx{};
         std::array<uint32_t, 2> last_resolution{};
+        DXGI_FORMAT last_format{};
     } m_openxr;
 
     uint32_t m_backbuffer_size[2]{};

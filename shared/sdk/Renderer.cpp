@@ -868,13 +868,13 @@ void RenderContext::copy_texture(Texture* dest, Texture* src, Fence& fence) {
 
     func(this, dest, src, fence);
 #else
-    using CopyTexFn = void (*)(RenderContext*, Texture*, int32_t, Texture*, int32_t, Fence&);
+    using CopyTexFn = void (*)(RenderContext*, Texture*, Texture*, Fence&);
     static auto func = []() -> CopyTexFn {
         spdlog::info("Searching for RenderContext::copy_texture (>= TDB82)");
 
         const auto game = utility::get_executable();
         // constants 0x301 (the typeid 1 or'd with something) 0x36, 0x3f, 0x2a.
-        const auto mid_result = utility::scan(game, "01 03 00 00 *[64] 36 *[32] 3f *[32] 2a");
+        const auto mid_result = utility::scan(game, "CA 01 03 00 00 *[64] 36 *[32] 3f *[32] 2a");
 
         if (!mid_result) {
             spdlog::error("Failed to find copy_texture (>= TDB82)");
@@ -894,7 +894,7 @@ void RenderContext::copy_texture(Texture* dest, Texture* src, Fence& fence) {
     }();
 
     // src, src_subresource, dst, dst_subresource, fence
-    func(this, src, -1, dest, -1, fence);
+    func(this, src, dest, fence);
 #endif
 //#endif
 }

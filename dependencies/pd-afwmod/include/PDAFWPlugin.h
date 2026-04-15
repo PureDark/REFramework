@@ -238,6 +238,16 @@ namespace pd {
 		VRSFovRadius    foveationRadius;                  ///< The radius of the foveated regions, expected squared by the shader.
 	} VRSParams;
 
+	struct FoveatedCompositeParams
+	{
+		float fFadeLeft = 0.05f;
+		float fFadeRight = 0.05f;
+		float fFadeTop = 0.05f;
+		float fFadeBottom = 0.05f;
+		int   bRoundedCorner = 1;
+		float fRoundedRadius = 0.1f;
+	};
+
 	struct __declspec(novtable) D3D12RendererAPI
 	{
 		virtual ID3D12GraphicsCommandList*  BeginCommandList(int index) = 0;
@@ -258,12 +268,13 @@ namespace pd {
 		virtual bool                        CreateVertexBuffer(ID3D12GraphicsCommandList* cmdList, VextexBufferDesc& vextexDesc, uint32_t vertexCount, uint32_t vertexSize, float* pVertexData);
 		virtual bool                        CreateTexture(int nWidth, int nHeight, DXGI_FORMAT format, D3D12_RESOURCE_STATES initialState, TextureDesc& textureDesc, bool createUAV) = 0;
 		virtual bool                        CreateFrameBuffer(int nWidth, int nHeight, FrameBufferDesc& framebufferDesc, D3D12_RESOURCE_STATES initialState, bool createUAV) = 0;
-		virtual void                        Blit(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, D3D12_VIEWPORT viewPort, bool enableBlend = false) = 0;
+		virtual void                        Blit(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, D3D12_VIEWPORT viewPort = {}, bool enableBlend = false) = 0;
 		virtual void                        Copy(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc) = 0;
 		virtual void                        Sharpen(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, float sharpness) = 0;
 		virtual void                        Tonemap(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, TonemapParams params) = 0;
 		virtual void                        ExtractUI(ID3D12GraphicsCommandList* cmdList, TextureDesc& extactedUIDesc, TextureDesc& hudlessDesc, TextureDesc& finalColorWithUI) = 0;
 		virtual void                        CorrectMotionVectors(ID3D12GraphicsCommandList* cmdList, TextureDesc& correctedMVDesc, CorrectMotionVectorsParams& params) = 0;
+		virtual void                        FoveatedComposite(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, D3D12_VIEWPORT viewPort = {}, FoveatedCompositeParams params = {}) = 0;
 		virtual void                        ApplyHiddenAreaMesh(ID3D12GraphicsCommandList* cmdList, TextureDesc& depthDesc, D3D12_VIEWPORT viewPort, VextexBufferDesc& vextexDesc) = 0;
 		virtual void                        GenerateVRSImage(ID3D12GraphicsCommandList* cmdList, TextureDesc& vrsImageDesc, VRSParams params) = 0;
 		virtual VRSInfo                     GetVRSInfo() = 0;
