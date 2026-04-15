@@ -847,6 +847,47 @@ std::optional<std::string> OpenXR::initialize_actions(const std::string& json_st
             return "xrCreateActionSpace failed (" + std::to_string(i) + ")" + this->get_result_string(result);
         }
     }
+    if (supportsEyeGazeInteraction) {
+        // Create action set
+        XrActionSetCreateInfo actionSetInfo{XR_TYPE_ACTION_SET_CREATE_INFO};
+        strcpy(actionSetInfo.actionSetName, "eyegaze");
+        strcpy(actionSetInfo.localizedActionSetName, "Eye Gaze");
+        actionSetInfo.priority = 0;
+        auto result = xrCreateActionSet(this->instance, &actionSetInfo, &this->eyeGazeActionSet);
+        // Create eye gaze action
+        XrActionCreateInfo actionInfo{XR_TYPE_ACTION_CREATE_INFO};
+        strcpy(actionInfo.actionName, "eye_gaze_pose");
+        actionInfo.actionType = XR_ACTION_TYPE_POSE_INPUT;
+        strcpy(actionInfo.localizedActionName, "Eye Gaze Pose");
+        result = xrCreateAction(this->eyeGazeActionSet, &actionInfo, &this->eyeGazeAction);
+        // Create suggested bindings
+        XrPath eyeGazeInteractionProfilePath;
+        result = xrStringToPath(this->instance, "/interaction_profiles/ext/eye_gaze_interaction", &eyeGazeInteractionProfilePath);
+        XrPath gazePosePath;
+        result = xrStringToPath(this->instance, "/user/eyes_ext/input/gaze_ext/pose", &gazePosePath);
+        XrActionSuggestedBinding bindings;
+        bindings.action = this->eyeGazeAction;
+        bindings.binding = gazePosePath;
+        XrInteractionProfileSuggestedBinding suggestedBindings{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+        suggestedBindings.interactionProfile = eyeGazeInteractionProfilePath;
+        suggestedBindings.suggestedBindings = &bindings;
+        suggestedBindings.countSuggestedBindings = 1;
+        result = xrSuggestInteractionProfileBindings(this->instance, &suggestedBindings);
+        // XrSessionActionSetsAttachInfo attachInfo{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
+        // attachInfo.countActionSets = 1;
+        // attachInfo.actionSets = &this->eyeGazeActionSet;
+        // result = xrAttachSessionActionSets(this->session, &attachInfo);
+        XrActionSpaceCreateInfo createActionSpaceInfo{XR_TYPE_ACTION_SPACE_CREATE_INFO};
+        createActionSpaceInfo.action = this->eyeGazeAction;
+        createActionSpaceInfo.poseInActionSpace = {};
+        createActionSpaceInfo.poseInActionSpace.orientation.w = 1.0f;
+        result = xrCreateActionSpace(this->session, &createActionSpaceInfo, &this->gazeActionSpace);
+        XrReferenceSpaceCreateInfo createReferenceSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+        createReferenceSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+        createReferenceSpaceInfo.poseInReferenceSpace = {};
+        createReferenceSpaceInfo.poseInReferenceSpace.orientation.w = 1.0f;
+        xrCreateReferenceSpace(this->session, &createReferenceSpaceInfo, &this->viewSpace);
+    }
 
     // Attach the action set to the session
     spdlog::info("[VR] Attaching action set to session");
@@ -855,8 +896,8 @@ std::optional<std::string> OpenXR::initialize_actions(const std::string& json_st
     if (supportsEyeGazeInteraction && eyeGazeActionSet != NULL) {
         action_sets_attach_info.countActionSets = 2;
         XrActionSet actionSets[] = {
-            {action_set.handle}, // controller set
-            {eyeGazeActionSet}   // eye gaze set
+            eyeGazeActionSet,   // eye gaze set
+            action_set.handle, // controller set
         };
         action_sets_attach_info.actionSets = actionSets;
     } else {
