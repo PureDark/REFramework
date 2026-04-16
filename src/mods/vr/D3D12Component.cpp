@@ -121,15 +121,67 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         }
     }
 
+    auto cmdList = vr->d3d12Renderer->BeginCommandList(backbuffer_index);
+    if ((vr->is_using_any_afw()) && eyeFrameBuffer.motionVectors.pTexture && vr->motionVectorsDesc.pTexture) {
+        if (vr->motionVectorsDesc.pTexture != eyeFrameBuffer.motionVectors.pTexture) {
+            auto desc1 = vr->motionVectorsDesc.pTexture->GetDesc();
+            auto desc2 = eyeFrameBuffer.motionVectors.pTexture->GetDesc();
+            if (desc1.Width == desc2.Width && desc1.Height == desc2.Height && desc1.Format == desc2.Format) {
+                vr->d3d12Renderer->Copy(cmdList, eyeFrameBuffer.motionVectors, vr->motionVectorsDesc);
+            } else {
+                vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.motionVectors, vr->motionVectorsDesc);
+            }
+        }
+    }
 
-    if ((vr->is_using_any_afw()) && m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture && vr->depthTex) {
+    bool upscaled = false;
+    if (vr->is_using_afw_foveated() && vr->multipassUpscaledDesc[nEye].pTexture && vr->depthDesc[1].pTexture) {
+        if (vr->vrDLSSHandleFR[nEye] && vr->vrDLSSParameters) {
+            NVSDK_NGX_Result Result;
+            NVSDK_NGX_Dimensions renderingSize = {vr->render_size[0], vr->render_size[1]};
+
+            auto colorDesc = eyeFrameBuffer.color.pTexture->GetDesc();
+            auto foveatedVP = vr->get_runtime()->foveated_viewports[nEye];
+            NVSDK_NGX_Coordinates mvSubrectBase = {foveatedVP.TopLeftX * colorDesc.Width, foveatedVP.TopLeftY * colorDesc.Height};
+
+            NVSDK_NGX_D3D12_DLSS_Eval_Params D3D12DlssEvalParams;
+            memset(&D3D12DlssEvalParams, 0, sizeof(D3D12DlssEvalParams));
+            D3D12DlssEvalParams.Feature.pInColor = texDesc[texIndex].pTexture;
+            D3D12DlssEvalParams.Feature.pInOutput = vr->multipassUpscaledDesc[nEye].pTexture;
+            D3D12DlssEvalParams.pInDepth = vr->depthDesc[1].pTexture;
+            D3D12DlssEvalParams.pInMotionVectors = eyeFrameBuffer.motionVectors.pTexture;
+            D3D12DlssEvalParams.pInExposureTexture = nullptr;
+            D3D12DlssEvalParams.pInTransparencyMask = nullptr;
+            D3D12DlssEvalParams.pInBiasCurrentColorMask = nullptr;
+            D3D12DlssEvalParams.InJitterOffsetX = vr->m_jitter_offsets[nEye][0];
+            D3D12DlssEvalParams.InJitterOffsetY = vr->m_jitter_offsets[nEye][1];
+            D3D12DlssEvalParams.InReset = false;
+            if (vr->mDebug1) {
+                D3D12DlssEvalParams.InMVScaleX = (float)vr->render_size[0];
+                D3D12DlssEvalParams.InMVScaleY = (float)vr->render_size[1];
+            } else {
+                D3D12DlssEvalParams.InMVScaleX = (float)vr->render_size[0] * vr->m_motion_scale[0];
+                D3D12DlssEvalParams.InMVScaleY = (float)vr->render_size[1] * vr->m_motion_scale[1];
+            }
+            D3D12DlssEvalParams.InColorSubrectBase = {};
+            D3D12DlssEvalParams.InDepthSubrectBase = {};
+            D3D12DlssEvalParams.InTranslucencySubrectBase = {};
+            D3D12DlssEvalParams.InMVSubrectBase = mvSubrectBase;
+            D3D12DlssEvalParams.InRenderSubrectDimensions = renderingSize;
+            D3D12DlssEvalParams.InIndicatorInvertYAxis = 0;
+            Result = NGX_D3D12_EVALUATE_DLSS_EXT(vr->o_NVSDK_NGX_D3D12_EvaluateFeature, cmdList, vr->vrDLSSHandleFR[nEye], vr->vrDLSSParameters, &D3D12DlssEvalParams);
+            upscaled = Result == NVSDK_NGX_Result_Success;
+        } else if (vr->vrContextsFR[nEye]) {
+        
+        }
+    }
+
+    if ((vr->is_using_any_afw()) && m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture && vr->depthTex[0]) {
         static FrameBufferDesc s_CurrentEyeFrameBuffer{};
 
         s_CurrentEyeFrameBuffer.color = texDesc[texIndex];
         s_CurrentEyeFrameBuffer.depth = vr->depthDesc[0];
-        s_CurrentEyeFrameBuffer.motionVectors = vr->motionVectorsDesc;
-
-        auto cmdList = vr->d3d12Renderer->BeginCommandList(backbuffer_index);
+        s_CurrentEyeFrameBuffer.motionVectors = eyeFrameBuffer.motionVectors;
 
 	    if (!vr->get_runtime()->hiddenAreaMeshVextexBuffer[0].pVextexBuffer && vr->get_runtime()->hiddenAreaMesh[0].pVertexData) {
             UINT vertexSize = sizeof(vr::HmdVector2_t);
@@ -162,7 +214,6 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             // Sharpening
             if (vr->is_enable_sharpening() && vr->get_sharpness() > 0) {
                 vr->d3d12Renderer->Sharpen(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vr->get_sharpness());
-                vr->d3d12Renderer->Copy(cmdList, s_CurrentEyeFrameBuffer.color, eyeFrameBuffer.color);
                 s_CurrentEyeFrameBuffer.color = eyeFrameBuffer.color;
             }
             EvaluateFrameWarp(params);
@@ -175,16 +226,23 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             vp.Height = foveatedVP.Height * colorDesc.Height;
             vp.MinDepth = 0;
             vp.MaxDepth = 1;
-            if (vr->multipassBackupTex[nEye].pTexture) {
-                vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, vr->multipassBackupTex[nEye]);
+            if (vr->multipassBackupDesc[nEye].pTexture) {
+                vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, vr->multipassBackupDesc[nEye]);
                 vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.depth, vr->depthDesc[0]);
                 vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.depth, vr->depthDesc[1], vp);
             }
-            vr->d3d12Renderer->FoveatedComposite(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vp);
+            if (upscaled) {
+                vr->d3d12Renderer->FoveatedComposite(cmdList, eyeFrameBuffer.color, vr->multipassUpscaledDesc[nEye], vp);
+            } else {
+                vr->d3d12Renderer->FoveatedComposite(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vp);
+            }
             // Sharpening
             if (vr->is_enable_sharpening() && vr->get_sharpness() > 0) {
                 vr->d3d12Renderer->Sharpen(cmdList, otherEyeFrameBuffer.color, eyeFrameBuffer.color, vr->get_sharpness());
                 vr->d3d12Renderer->Copy(cmdList, eyeFrameBuffer.color, otherEyeFrameBuffer.color);
+            }
+            if (vr->m_desktop_fix->value()) {
+                vr->d3d12Renderer->Blit(cmdList, texDesc[texIndex], eyeFrameBuffer.color);
             }
             s_CurrentEyeFrameBuffer.color = eyeFrameBuffer.color;
             s_CurrentEyeFrameBuffer.depth = eyeFrameBuffer.depth;
@@ -206,10 +264,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
 		    };
 		    cmdList->ResourceBarrier(_countof(barriers2), barriers2);
         }
-
-        vr->d3d12Renderer->EndCommandList(backbuffer_index);
     } else {
-        auto cmdList = vr->d3d12Renderer->BeginCommandList(backbuffer_index);
         vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, texDesc[texIndex]);
         if (uiBufferDesc.pTexture) {
             D3D12_RESOURCE_BARRIER barriers1[] = {
@@ -235,8 +290,10 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 eyeFrameBuffer.color.pTexture, D3D12_RESOURCE_STATE_RENDER_TARGET, eyeFrameBuffer.color.initialState)};
             cmdList->ResourceBarrier(_countof(barriers2), barriers2);
         }
-        vr->d3d12Renderer->EndCommandList(backbuffer_index);
     }
+
+    vr->d3d12Renderer->EndCommandList(backbuffer_index);
+
     //#############################
     //#Frame Warp Module End
     //#############################

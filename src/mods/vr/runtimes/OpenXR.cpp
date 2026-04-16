@@ -355,13 +355,6 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
         gaze_angle_x[1] -= convergence_angle;
     }
 
-    if (VR::get()->mDebug1) {
-        gaze_angle_x[0] = -0.3f + convergence_angle;
-        gaze_angle_y[0] = -0.3f;
-        gaze_angle_x[1] = -0.3f - convergence_angle;
-        gaze_angle_y[1] = -0.3f;
-    }
-
     std::unique_lock __{ this->eyes_mtx };
     std::unique_lock ___{ this->pose_mtx };
 

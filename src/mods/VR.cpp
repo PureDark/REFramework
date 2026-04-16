@@ -476,7 +476,6 @@ bool VR::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* r
 
     uiBufferTex = layer->get_ui_buffer_tex_d3d12();
     uiBufferNativeTex = layer->get_ui_buffer_tex();
-    uiTargetState = layer->get_ui_target();
 
     // just don't render anything at all.
     // overlays just seem to break stuff in VR.
@@ -562,6 +561,12 @@ bool VR::on_pre_scene_layer_draw(sdk::renderer::layer::Scene* layer, void* rende
 }
 
 void VR::on_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer, void* render_context) {
+    return;
+}
+
+
+void VR::on_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_context) {
+
     if (!is_hmd_active()) {
         return;
     }
@@ -569,7 +574,7 @@ void VR::on_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer
     if (!is_using_afw_foveated()) {
         return;
     }
-    
+
     auto context = (sdk::renderer::RenderContext*)render_context;
     auto scene_layer = (sdk::renderer::layer::Scene*)layer->get_parent();
 
@@ -577,13 +582,13 @@ void VR::on_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer
         return;
     }
 
-    const auto output_state = layer->get_output_state();
+    const auto ui_target_state = layer->get_ui_target();
 
-    if (output_state == nullptr) {
+    if (ui_target_state == nullptr) {
         return;
     }
 
-    const auto rtv = output_state->get_rtv(0);
+    const auto rtv = ui_target_state->get_rtv(0);
 
     if (rtv == nullptr) {
         return;
@@ -611,14 +616,14 @@ void VR::on_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer
         float w = (is_left_eye()) ? 0 : 1.0f;
         float red[4] = {1.0f, 0, 0, w};
         context->clear_rtv(rtv, red);
-        //if (m_multipass.native_res_copies[0] != nullptr) {
-        //    context->copy_texture(m_multipass.native_res_copies[0], tex);
-        //}
+        // if (m_multipass.native_res_copies[0] != nullptr) {
+        //     context->copy_texture(m_multipass.native_res_copies[0], tex);
+        // }
     } else {
         // float w = (is_left_eye()) ? 0 : 1.0f;
         // float green[4] = {0, 1.0f, 0, w};
         // context->clear_rtv(rtv, green);
-        //if (m_multipass.native_res_copies[1] != nullptr) {
+        // if (m_multipass.native_res_copies[1] != nullptr) {
         //    context->copy_texture(m_multipass.native_res_copies[1], tex);
         //}
     }
@@ -674,6 +679,36 @@ bool VR::on_pre_scene_layer_update(sdk::renderer::layer::Scene* layer, void* ren
     return true;
 }
 
+int32_t GetJitterPhaseCount(int32_t renderWidth, int32_t displayWidth) {
+    const float basePhaseCount = 8.0f;
+    const int32_t jitterPhaseCount = int32_t(basePhaseCount * pow((float(displayWidth) / renderWidth), 2.0f));
+    return jitterPhaseCount;
+}
+
+// Calculate halton number for index and base.
+float halton(int32_t index, int32_t base) {
+    float f = 1.0f, result = 0.0f;
+
+    for (int32_t currentIndex = index; currentIndex > 0;) {
+
+        f /= (float)base;
+        result = result + f * (float)(currentIndex % base);
+        currentIndex = (uint32_t)(floorf((float)(currentIndex) / (float)(base)));
+    }
+
+    return result;
+}
+
+int GetJitterOffset(float* outX, float* outY, int index, int phaseCount) {
+    phaseCount = std::max(phaseCount, 8);
+    const float x = halton((index % phaseCount) + 1, 2) - 0.5f;
+    const float y = halton((index % phaseCount) + 1, 3) - 0.5f;
+
+    *outX = x;
+    *outY = y;
+    return 0;
+}
+
 void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_ctx) {
     
 
@@ -697,12 +732,8 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
         }
     }
 
-    auto& layer_data = m_scene_layer_data[layer];
 
     auto fix_motion_vectors = [&](SceneLayerData& d) {
-        if (d.scene_info == nullptr) {
-            return;
-        }
         auto eye_index = m_frame_count % 2 == m_left_eye_interval ? EyeLeft : EyeRight;
         auto other_eye_index = m_frame_count % 2 == m_left_eye_interval ? EyeRight : EyeLeft;
         auto old_view_matrix = d.old_view_matrix[eye_index];
@@ -711,14 +742,50 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
         d.old_view_matrix[eye_index] = d.scene_info->view_matrix;
     };
 
-    for (auto& d : layer_data) {
-        if (d.scene_info != nullptr) {
-            if (is_fix_dlss()) {
-                fix_motion_vectors(d);
+    auto& layer_data = m_scene_layer_data[layer];
+
+    if (is_using_afw_foveated() && m_multipass.pass == 1 && (vrDLSSHandleFR[0] != NULL || vrContextsFR[0] != NULL)) {
+        const auto fr_index = is_left_eye();
+
+        const auto phase = GetJitterPhaseCount(render_size[0], render_size[1]);
+        const auto w = (float)render_size[0];
+        const auto h = (float)render_size[1];
+
+        float x = 0.0f;
+        float y = 0.0f;
+
+        m_jitter_indices[fr_index]++;
+        GetJitterOffset(&x, &y, m_jitter_indices[fr_index], phase);
+
+        m_jitter_offsets[fr_index][0] = -x;
+        m_jitter_offsets[fr_index][1] = -y;
+
+        x = 2.0f * (x / w);
+        y = -2.0f * (y / h);
+
+        auto add_jitter = [&](SceneLayerData& d) {
+            d.scene_info->projection_matrix[2][0] += x;
+            d.scene_info->projection_matrix[2][1] += y;
+            d.scene_info->inverse_projection_matrix = glm::inverse(d.scene_info->projection_matrix);
+
+            d.scene_info->view_projection_matrix = d.scene_info->projection_matrix * d.scene_info->view_matrix;
+            d.scene_info->inverse_view_projection_matrix = glm::inverse(d.scene_info->view_projection_matrix);
+        };
+        for (auto& d : layer_data) {
+            if (d.scene_info != nullptr) {
+                add_jitter(d);
             }
-            else if (!m_disable_temporal_fix) {
-                // TAA fix
-                d.scene_info->old_view_projection_matrix = d.view_projection_matrix;
+        }
+    }
+    else {
+        for (auto& d : layer_data) {
+            if (d.scene_info != nullptr) {
+                if (is_fix_dlss()) {
+                    fix_motion_vectors(d);
+                } else if (!m_disable_temporal_fix) {
+                    // TAA fix
+                    d.scene_info->old_view_projection_matrix = d.view_projection_matrix;
+                }
             }
         }
     }
@@ -804,107 +871,67 @@ float VR::get_sharpness_hook(void* tonemapping) {
 }
 */
 
-
-typedef int NVSDK_NGX_Result;
-typedef enum NVSDK_NGX_Feature {
-    NVSDK_NGX_Feature_SuperSampling = 1,
-    NVSDK_NGX_Feature_RayReconstruction = 13,
-} NVSDK_NGX_Feature;
-typedef struct NVSDK_NGX_Handle { unsigned int Id; } NVSDK_NGX_Handle;
-typedef struct NVSDK_NGX_Parameter {
-    virtual void Set(const char* InName, unsigned long long InValue) = 0;
-    virtual void Set(const char* InName, float InValue) = 0;
-    virtual void Set(const char* InName, double InValue) = 0;
-    virtual void Set(const char* InName, unsigned int InValue) = 0;
-    virtual void Set(const char* InName, int InValue) = 0;
-    virtual void Set(const char* InName, ID3D11Resource* InValue) = 0;
-    virtual void Set(const char* InName, ID3D12Resource* InValue) = 0;
-    virtual void Set(const char* InName, void* InValue) = 0;
-
-    virtual NVSDK_NGX_Result Get(const char* InName, unsigned long long* OutValue) const = 0;
-    virtual NVSDK_NGX_Result Get(const char* InName, float* OutValue) const = 0;
-    virtual NVSDK_NGX_Result Get(const char* InName, double* OutValue) const = 0;
-    virtual NVSDK_NGX_Result Get(const char* InName, unsigned int* OutValue) const = 0;
-    virtual NVSDK_NGX_Result Get(const char* InName, int* OutValue) const = 0;
-    virtual NVSDK_NGX_Result Get(const char* InName, ID3D11Resource** OutValue) const = 0;
-    virtual NVSDK_NGX_Result Get(const char* InName, ID3D12Resource** OutValue) const = 0;
-    virtual NVSDK_NGX_Result Get(const char* InName, void** OutValue) const = 0;
-
-    virtual void Reset() = 0;
-} NVSDK_NGX_Parameter;
-
-static NVSDK_NGX_Handle* vrDLSSHandle[2] = {NULL, NULL};
-static NVSDK_NGX_Handle* vrDLSSHandleFR[2] = {NULL, NULL};
-
-#define NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags "DLSS.Feature.Create.Flags"
-using NVSDK_NGX_D3D12_CreateFeature_t = NVSDK_NGX_Result (*)(ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_Feature InFeatureID,
-    const NVSDK_NGX_Parameter* InParameters, NVSDK_NGX_Handle** OutHandle);
-static NVSDK_NGX_D3D12_CreateFeature_t o_NVSDK_NGX_D3D12_CreateFeature = nullptr;
 NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_CreateFeature(
     ID3D12GraphicsCommandList* InCmdList, NVSDK_NGX_Feature InFeatureID, NVSDK_NGX_Parameter* InParameters, NVSDK_NGX_Handle** OutHandle) {
     spdlog::info("hk_NVSDK_NGX_D3D12_CreateFeature FeatureID {}", (int)InFeatureID);
     auto result = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, OutHandle);
+    const auto& vr = VR::get();
     int flag;
     InParameters->Get(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags, &flag);
     spdlog::info("hk_NVSDK_NGX_D3D12_CreateFeature 0x{0:x}", (INT64)result);
-    if (vrDLSSHandle[0] == NULL && (InFeatureID == NVSDK_NGX_Feature_SuperSampling || InFeatureID == NVSDK_NGX_Feature_RayReconstruction)) {
-        vrDLSSHandle[0] = *OutHandle;
+    if (vr->vrDLSSHandle[0] == NULL && (InFeatureID == NVSDK_NGX_Feature_SuperSampling || InFeatureID == NVSDK_NGX_Feature_RayReconstruction)) {
+        vr->vrDLSSHandle[0] = *OutHandle;
+        UINT width = 0, height = 0;
+        InParameters->Get(NVSDK_NGX_Parameter_OutWidth, &width);
+        InParameters->Get(NVSDK_NGX_Parameter_OutHeight, &height);
+        vr->upscaled_size[0] = width;
+        vr->upscaled_size[1] = height;
         spdlog::info("Creating additional DLSS instance");
-        auto result2 = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, &vrDLSSHandle[1]);
+        auto result2 = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, &vr->vrDLSSHandle[1]);
         spdlog::info("Additional DLSS instance create result 0x{0:x}", (INT64)result2);
         spdlog::info("Creating additional Foveated Rendering DLSS instance");
-        result2 = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, &vrDLSSHandleFR[0]);
+        result2 = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, &vr->vrDLSSHandleFR[0]);
         spdlog::info("Additional Foveated Rendering DLSS instance create result 0x{0:x}", (INT64)result2);
-        result2 = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, &vrDLSSHandleFR[1]);
+        result2 = o_NVSDK_NGX_D3D12_CreateFeature(InCmdList, InFeatureID, InParameters, &vr->vrDLSSHandleFR[1]);
         spdlog::info("Additional Foveated Rendering DLSS instance create result 0x{0:x}", (INT64)result2);
     }
     return result;
 }
 
-using NVSDK_NGX_D3D12_ReleaseFeature_t = NVSDK_NGX_Result (*)(NVSDK_NGX_Handle* InHandle);
-static NVSDK_NGX_D3D12_ReleaseFeature_t o_NVSDK_NGX_D3D12_ReleaseFeature = nullptr;
 NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_ReleaseFeature(NVSDK_NGX_Handle* InHandle) {
     spdlog::info("hk_NVSDK_NGX_D3D12_ReleaseFeature Starts");
     auto result = o_NVSDK_NGX_D3D12_ReleaseFeature(InHandle);
     spdlog::info("hk_NVSDK_NGX_D3D12_ReleaseFeature 0x{0:x}", (INT64)result);
-    if (vrDLSSHandle[0] == InHandle) {
-        vrDLSSHandle[0] = NULL;
-        auto& vr = VR::get();
+    const auto& vr = VR::get();
+    if (vr->vrDLSSHandle[0] == InHandle) {
+        vr->vrDLSSHandle[0] = NULL;
         vr->depthDesc[0].pTexture = NULL;
-        vr->depthDesc[0].depthStencilViewHandle.ptr = NULL;
         vr->depthDesc[1].pTexture = NULL;
-        vr->depthDesc[1].depthStencilViewHandle.ptr = NULL;
-        vr->renderDepthDesc.pTexture = NULL;
-        vr->renderDepthDesc.depthStencilViewHandle.ptr = NULL;
-        if (vrDLSSHandle[1] != NULL) {
-            spdlog::info("Releasing additional DLSS instance");
-            auto result2 = o_NVSDK_NGX_D3D12_ReleaseFeature(vrDLSSHandle[1]);
+        //vr->renderDepthDesc.pTexture = NULL;
+        if (vr->vrDLSSHandle[1] != NULL) {
+            auto result2 = o_NVSDK_NGX_D3D12_ReleaseFeature(vr->vrDLSSHandle[1]);
             spdlog::info("Additional DLSS instance release result 0x{0:x}", (INT64)result2);
-            vrDLSSHandle[1] = NULL;
-            spdlog::info("Releasing additional Foveated Rendering DLSS instance");
-            result2 = o_NVSDK_NGX_D3D12_ReleaseFeature(vrDLSSHandleFR[0]);
+            vr->vrDLSSHandle[1] = NULL;
+        }
+        if (vr->vrDLSSHandleFR[0] != NULL) {
+            auto result2 = o_NVSDK_NGX_D3D12_ReleaseFeature(vr->vrDLSSHandleFR[0]);
             spdlog::info("Additional Foveated Rendering DLSS instance release result 0x{0:x}", (INT64)result2);
-            vrDLSSHandleFR[0] = NULL;
-            result2 = o_NVSDK_NGX_D3D12_ReleaseFeature(vrDLSSHandleFR[1]);
+            vr->vrDLSSHandleFR[0] = NULL;
+        }
+        if (vr->vrDLSSHandleFR[0] != NULL) {
+            auto result2 = o_NVSDK_NGX_D3D12_ReleaseFeature(vr->vrDLSSHandleFR[1]);
             spdlog::info("Additional Foveated Rendering DLSS instance release result 0x{0:x}", (INT64)result2);
-            vrDLSSHandleFR[1] = NULL;
+            vr->vrDLSSHandleFR[1] = NULL;
         }
     }
     return result;
 }
 
-#define NVSDK_NGX_SUCCEED(value) (((value) & 0xFFF00000) != 0xBAD00000)
-#define NVSDK_NGX_FAILED(value) (((value) & 0xFFF00000) == 0xBAD00000)
-#define NVSDK_NGX_Parameter_Color "Color"
-#define NVSDK_NGX_Parameter_Depth "Depth"
-#define NVSDK_NGX_Parameter_MotionVectors "MotionVectors"
-#define NVSDK_NGX_Parameter_Output "Output"
-#define NVSDK_NGX_Parameter_MV_Scale_X "MV.Scale.X"
-#define NVSDK_NGX_Parameter_MV_Scale_Y "MV.Scale.Y"
-using NVSDK_NGX_D3D12_EvaluateFeature_t = NVSDK_NGX_Result (*)(ID3D12GraphicsCommandList* InCmdList, const NVSDK_NGX_Handle* InFeatureHandle, NVSDK_NGX_Parameter* InParameters, void* InCallback);
-static NVSDK_NGX_D3D12_EvaluateFeature_t o_NVSDK_NGX_D3D12_EvaluateFeature = nullptr;
-NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCommandList* InCmdList, const NVSDK_NGX_Handle* InFeatureHandle,  NVSDK_NGX_Parameter* InParameters, void* InCallback) {
-    if (InFeatureHandle == vrDLSSHandle[0]) {
+NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(
+    ID3D12GraphicsCommandList* InCmdList, const NVSDK_NGX_Handle* InFeatureHandle, NVSDK_NGX_Parameter* InParameters, void* InCallback) {
+    const auto& vr = VR::get();
+    if (InFeatureHandle == vr->vrDLSSHandle[0]) {
+        vr->vrDLSSParameters = InParameters;
         ID3D12Resource* color;
         ID3D12Resource* depth;
         ID3D12Resource* motionVectors;
@@ -917,15 +944,14 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCommandList* I
         float mvScaleY;
         InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_X, &mvScaleX);
         InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &mvScaleY);
-        auto vr = VR::get();
         if (vr->is_hmd_active() && motionVectors && vr->motionVectorsDesc.pTexture) {
 
-            if (vr->renderDepthDesc.pTexture != depth) {
-                vr->renderDepthDesc.pTexture = depth;
-                vr->renderDepthDesc.initialState = D3D12_RESOURCE_STATE_DEPTH_READ;
-                vr->d3d12Renderer->SetupTextureDesc(vr->renderDepthDesc);
-                vr->renderDepthDesc.type = Depth;
-            }
+            //if (vr->renderDepthDesc.pTexture != depth) {
+            //    vr->renderDepthDesc.pTexture = depth;
+            //    vr->renderDepthDesc.initialState = D3D12_RESOURCE_STATE_DEPTH_READ;
+            //    vr->d3d12Renderer->SetupTextureDesc(vr->renderDepthDesc);
+            //    vr->renderDepthDesc.type = Depth;
+            //}
 
             auto desc1 = motionVectors->GetDesc();
             auto desc2 = vr->motionVectorsDesc.pTexture->GetDesc();
@@ -936,15 +962,15 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCommandList* I
 
                 if (vr->is_fix_dlss()) {
                     EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
-                    auto currHandle = vrDLSSHandle[0];
+                    auto currHandle = vr->vrDLSSHandle[0];
                     if (nEye == EyeLeft) {
-                        currHandle = vrDLSSHandle[0];
+                        currHandle = vr->vrDLSSHandle[0];
                     } else {
-                        currHandle = vrDLSSHandle[1];
+                        currHandle = vr->vrDLSSHandle[1];
                     }
 
                     // current rendered eye
-                    auto result = o_NVSDK_NGX_D3D12_EvaluateFeature(InCmdList, currHandle, InParameters, InCallback);
+                    auto result = vr->o_NVSDK_NGX_D3D12_EvaluateFeature(InCmdList, currHandle, InParameters, InCallback);
                     if (NVSDK_NGX_FAILED(result)) {
                         spdlog::error("Failed DLSS 00, code = 0x{0:x}", result);
                     }
@@ -957,105 +983,60 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(ID3D12GraphicsCommandList* I
             }
         }
     }
-    auto result = o_NVSDK_NGX_D3D12_EvaluateFeature(InCmdList, InFeatureHandle, InParameters, InCallback);
+    auto result = vr->o_NVSDK_NGX_D3D12_EvaluateFeature(InCmdList, InFeatureHandle, InParameters, InCallback);
     return result;
 }
 
-typedef void* ffxContext;
-typedef uint32_t ffxReturnCode_t;
-typedef uint64_t ffxStructType_t;
-typedef struct ffxApiHeader {
-    ffxStructType_t type;
-    struct ffxApiHeader* pNext;
-} ffxApiHeader;
-typedef ffxApiHeader ffxCreateContextDescHeader;
-typedef ffxApiHeader ffxDispatchDescHeader;
-struct FfxApiResource {
-    void* resource;
-    uint32_t description[8];
-    uint32_t state;
-};
-
-#define FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE 0x00010000u
-struct ffxCreateContextDescUpscale {
-    ffxCreateContextDescHeader header;
-};
-
-#define FFX_API_DISPATCH_DESC_TYPE_UPSCALE 0x00010001u
-struct ffxDispatchDescUpscale {
-    ffxDispatchDescHeader header;
-    void* commandList;
-    struct FfxApiResource color;
-    struct FfxApiResource depth;
-    struct FfxApiResource motionVectors;
-    struct FfxApiResource exposure;
-    struct FfxApiResource reactive;
-    struct FfxApiResource transparencyAndComposition;
-    struct FfxApiResource output;
-    float jitterOffset[2];
-    float motionVectorScale[2];
-    float renderSize[2];
-    float upscaleSize[2];
-    bool enableSharpening;
-    float sharpness;
-    float frameTimeDelta;
-    float preExposure;
-    bool reset;
-    float cameraNear;
-    float cameraFar;
-    float cameraFovAngleVertical;
-    float viewSpaceToMetersFactor;
-    uint32_t flags;
-};
-
-static ffxContext vrContexts[2] = {NULL, NULL};
-static ffxContext vrContextsFR[2] = {NULL, NULL};
-
-using ffxCreateContext_t = ffxReturnCode_t (*)(ffxContext* context, ffxCreateContextDescHeader* desc, const void** memCb);
-static ffxCreateContext_t o_ffxCreateContext = nullptr;
 ffxReturnCode_t hk_ffxCreateContext(ffxContext* context, ffxCreateContextDescHeader* desc, const void** memCb) {
+    auto vr = VR::get();
     auto result = o_ffxCreateContext(context, desc, memCb);
     spdlog::info("hk_ffxCreateContext 0x{0:x}", (INT64)result);
     if (desc->type == FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE) {
-        vrContexts[0] = *context;
+        auto createDesc = reinterpret_cast<const ffxCreateContextDescUpscale*>(desc);
+        vr->upscaled_size[0] = createDesc->maxUpscaleSize.width;
+        vr->upscaled_size[1] = createDesc->maxUpscaleSize.height;
+        vr->vrContexts[0] = *context;
         spdlog::info("Creating additional FSR context");
-        auto result2 = o_ffxCreateContext(&vrContexts[1], desc, NULL);
+        auto result2 = o_ffxCreateContext(&vr->vrContexts[1], desc, NULL);
         spdlog::info("Additional FSR context create result 0x{0:x}", (INT64)result2);
         spdlog::info("Creating additional Foveated Rendering FSR context");
-        result2 = o_ffxCreateContext(&vrContextsFR[0], desc, NULL);
+        result2 = o_ffxCreateContext(&vr->vrContextsFR[0], desc, NULL);
         spdlog::info("Additional Foveated Rendering FSR context create result 0x{0:x}", (INT64)result2);
-        result2 = o_ffxCreateContext(&vrContextsFR[1], desc, NULL);
+        result2 = o_ffxCreateContext(&vr->vrContextsFR[1], desc, NULL);
         spdlog::info("Additional Foveated Rendering FSR context create result 0x{0:x}", (INT64)result2);
     }
     return o_ffxCreateContext(context, desc, memCb);
 }
 
-using ffxDestroyContext_t = ffxReturnCode_t (*)(ffxContext* context, const void** memCb);
-static ffxDestroyContext_t o_ffxDestroyContext = nullptr;
 ffxReturnCode_t hk_ffxDestroyContext(ffxContext* context, const void** memCb) {
-    if (context == vrContexts[0]) {
+    auto vr = VR::get();
+    if (context == vr->vrContexts[0]) {
         spdlog::info("hk_ffxDestroyContext 0x{0:x}", (INT64)context);
-        vrContexts[0] = NULL;
-        if (vrContexts[1] != NULL) {
-            spdlog::info("Releasing additional FSR context");
-            auto result2 = o_ffxDestroyContext(&vrContexts[1], NULL);
+        vr->vrContexts[0] = NULL;
+        vr->depthDesc[0].pTexture = NULL;
+        vr->depthDesc[1].pTexture = NULL;
+        //vr->renderDepthDesc.pTexture = NULL;
+        if (vr->vrContexts[1] != NULL) {
+            auto result2 = o_ffxDestroyContext(&vr->vrContexts[1], NULL);
             spdlog::info("Additional FSR context release result 0x{0:x}", (INT64)result2);
-            vrContexts[1] = NULL;
-            spdlog::info("Releasing additional Foveated Rendering FSR context");
-            result2 = o_ffxDestroyContext(&vrContextsFR[0], NULL);
+            vr->vrContexts[1] = NULL;
+        }
+        if (vr->vrContexts[1] != NULL) {
+            auto result2 = o_ffxDestroyContext(&vr->vrContextsFR[0], NULL);
             spdlog::info("Additional Foveated Rendering FSR context release result 0x{0:x}", (INT64)result2);
-            vrContextsFR[0] = NULL;
-            result2 = o_ffxDestroyContext(&vrContextsFR[1], NULL);
+            vr->vrContextsFR[0] = NULL;
+        }
+        if (vr->vrContexts[1] != NULL) {
+            auto result2 = o_ffxDestroyContext(&vr->vrContextsFR[1], NULL);
             spdlog::info("Additional Foveated Rendering FSR context release result 0x{0:x}", (INT64)result2);
-            vrContextsFR[1] = NULL;
+            vr->vrContextsFR[1] = NULL;
         }
     }
     return o_ffxDestroyContext(context, memCb);
 }
 
-using ffxDispatch_t = ffxReturnCode_t (*)(ffxContext* context, const ffxDispatchDescHeader* desc);
-static ffxDispatch_t o_ffxDispatch = nullptr;
 ffxReturnCode_t hk_ffxDispatch(ffxContext* context, const ffxDispatchDescHeader* desc) {
+    auto vr = VR::get();
     if (desc->type == FFX_API_DISPATCH_DESC_TYPE_UPSCALE) {
         auto upscaleDesc = reinterpret_cast<const ffxDispatchDescUpscale*>(desc);
 
@@ -1063,7 +1044,6 @@ ffxReturnCode_t hk_ffxDispatch(ffxContext* context, const ffxDispatchDescHeader*
         FfxApiResource mvApiResource = upscaleDesc->motionVectors;
         float mvScaleX = upscaleDesc->motionVectorScale[0];
         float mvScaleY = upscaleDesc->motionVectorScale[1];
-        auto vr = VR::get();
         if (vr->is_hmd_active() && mvApiResource.resource && vr->motionVectorsDesc.pTexture) {
             auto InCmdList = (ID3D12GraphicsCommandList*)upscaleDesc->commandList;
             auto motionVectors = (ID3D12Resource*)mvApiResource.resource;
@@ -1075,15 +1055,15 @@ ffxReturnCode_t hk_ffxDispatch(ffxContext* context, const ffxDispatchDescHeader*
                 vr->d3d12Renderer->Copy(InCmdList, vr->motionVectorsDesc, src);
                 if (vr->is_fix_dlss()) {
                     EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
-                    auto currHandle = vrContexts[0];
+                    auto currHandle = vr->vrContexts[0];
                     if (nEye == EyeLeft) {
-                        currHandle = vrContexts[0];
+                        currHandle = vr->vrContexts[0];
                     } else {
-                        currHandle = vrContexts[1];
+                        currHandle = vr->vrContexts[1];
                     }
 
                     // current rendered eye
-                    auto result = o_ffxDispatch(&currHandle, desc);
+                    auto result = vr->o_ffxDispatch(&currHandle, desc);
                     if (NVSDK_NGX_FAILED(result)) {
                         spdlog::error("Failed FSR 00, code = 0x{0:x}", result);
                     }
@@ -1095,7 +1075,7 @@ ffxReturnCode_t hk_ffxDispatch(ffxContext* context, const ffxDispatchDescHeader*
             }
         }
     }
-    return o_ffxDispatch(context, desc);
+    return vr->o_ffxDispatch(context, desc);
 }
 
 static std::unordered_map<SIZE_T, ID3D12Resource*> rtvMap{};
@@ -1124,19 +1104,21 @@ void WINAPI hk_ID3D12GraphicsCommandList_ClearRenderTargetView(ID3D12GraphicsCom
         }
         //vr->d3d12Renderer->Blit(This, vr->m_d3d12.m_eyeFrameBuffers.eyeFrameBuffers[eyeIndex].color, tempBufferDesc[eyeIndex]);
 
-        if (!vr->multipassBackupTex[eyeIndex].pTexture) {
+        if (!vr->multipassBackupDesc[eyeIndex].pTexture) {
             auto desc = tempBufferDesc[eyeIndex].pTexture->GetDesc();
-            vr->d3d12Renderer->CreateTexture(desc.Width, desc.Height, desc.Format, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, vr->multipassBackupTex[eyeIndex],false);
+            vr->d3d12Renderer->CreateTexture(desc.Width, desc.Height, desc.Format, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, vr->multipassBackupDesc[eyeIndex], true);
+            vr->d3d12Renderer->CreateTexture(vr->upscaled_size[0], vr->upscaled_size[1], desc.Format, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, vr->multipassUpscaledDesc[eyeIndex], true);
         } else {
-            auto desc1 = vr->multipassBackupTex[eyeIndex].pTexture->GetDesc();
+            auto desc1 = vr->multipassBackupDesc[eyeIndex].pTexture->GetDesc();
             auto desc2 = tempBufferDesc[eyeIndex].pTexture->GetDesc();
             if (desc1.Width != desc2.Width || desc1.Height != desc2.Height || desc1.Format != desc2.Format) {
-                vr->d3d12Renderer->CreateTexture(desc2.Width, desc2.Height, desc2.Format, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, vr->multipassBackupTex[eyeIndex], false);
+                vr->d3d12Renderer->CreateTexture(desc2.Width, desc2.Height, desc2.Format, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, vr->multipassBackupDesc[eyeIndex], true);
+                vr->d3d12Renderer->CreateTexture(vr->upscaled_size[0], vr->upscaled_size[1], desc2.Format, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, vr->multipassUpscaledDesc[eyeIndex],true);
             }
         }
 
-        if (vr->multipassBackupTex[eyeIndex].pTexture) {
-            vr->d3d12Renderer->Copy(This, vr->multipassBackupTex[eyeIndex], tempBufferDesc[eyeIndex]);
+        if (vr->multipassBackupDesc[eyeIndex].pTexture) {
+            vr->d3d12Renderer->Copy(This, vr->multipassBackupDesc[eyeIndex], tempBufferDesc[eyeIndex]);
         }
         return;
 
@@ -4108,6 +4090,8 @@ void VR::on_pre_end_rendering(void* entry) {
             //motionVectorsState = valid_scene_layers[0]->get_motion_vectors_state();
             if (valid_scene_layers.size() > 1) {
                 depthTex[1] = valid_scene_layers[1]->get_depth_stencil_d3d12();
+                auto rtv = valid_scene_layers[1]->get_motion_vectors_state()->get_rtv(0).get();
+                mvRtvPtr = ((uintptr_t)rtv + 0xE8);
             }
         } 
     }
@@ -4861,6 +4845,8 @@ void VR::on_draw_ui() {
         m_framewarp_mode->draw("Framewarp Mode");
         m_enable_foveated_rendering->draw("Enable Foveated Rendering");
         m_foveated_ratio->draw("Foveated Ratio");
+        ImGui::DragFloat("MotionScale X", &m_motion_scale[0], 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat("MotionScale Y", &m_motion_scale[1], 0.01f, -1.0f, 1.0f);
     }
     ImGui::Separator();
 

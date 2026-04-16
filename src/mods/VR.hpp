@@ -30,6 +30,9 @@
 
 #include "PDAFWPlugin.h"
 
+#include "vr/UpscaleHelper.hpp"
+
+
 class REManagedObject;
 
 class VR : public Mod {
@@ -41,17 +44,17 @@ public:
     D3D12RendererAPI* d3d12Renderer = nullptr;
 
     sdk::renderer::TargetState* motionVectorsState = NULL;
-    sdk::renderer::TargetState* uiTargetState = NULL;
     sdk::renderer::Texture* uiBufferNativeTex = NULL;
 
-    SIZE_T rtvPtr = {0};
+    SIZE_T mvRtvPtr = {0};
 
-    TextureDesc renderDepthDesc;
+    //TextureDesc renderDepthDesc;
 
     TextureDesc depthDesc[2];
     TextureDesc motionVectorsDesc;
-    
-	TextureDesc multipassBackupTex[2];
+
+	TextureDesc multipassBackupDesc[2];
+    TextureDesc multipassUpscaledDesc[2];
 
     bool mDebug1 = false;
     bool mDebug2 = false;
@@ -59,6 +62,19 @@ public:
     int mDebug5 = 0;
 
     uint32_t render_size[2] = {0, 0};
+    uint32_t upscaled_size[2] = {0, 0};
+
+    NVSDK_NGX_Parameter* vrDLSSParameters = {nullptr};
+    NVSDK_NGX_Handle* vrDLSSHandle[2] = {NULL, NULL};
+    NVSDK_NGX_Handle* vrDLSSHandleFR[2] = {NULL, NULL};
+    ffxContext vrContexts[2] = {NULL, NULL};
+    ffxContext vrContextsFR[2] = {NULL, NULL};
+    NVSDK_NGX_D3D12_EvaluateFeature_t o_NVSDK_NGX_D3D12_EvaluateFeature = nullptr;
+    ffxDispatch_t o_ffxDispatch = nullptr;
+
+    std::array<uint32_t, 2> m_jitter_indices{0, 0};
+    float m_jitter_offsets[2][2]{0.0f, 0.0f};
+    float m_motion_scale[2]{1.0f, 1.0f};
 
     int last_update_camera_data_frame_count = 0;
     void update_camera_data(int frame_count);
@@ -313,9 +329,6 @@ private:
     static HookManager::PreHookResult pre_set_hdr_mode(std::vector<uintptr_t>& args, std::vector<sdk::RETypeDefinition*>& arg_tys, uintptr_t ret_addr);
     static void post_set_hdr_mode(uintptr_t& ret_val, sdk::RETypeDefinition* ret_ty, uintptr_t ret_addr) {}
 
-    bool on_pre_overlay_layer_update(sdk::renderer::layer::Overlay* layer, void* render_context) override;
-    bool on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_context) override;
-
     bool on_pre_post_effect_layer_update(sdk::renderer::layer::PostEffect* layer, void* render_context) override;
     bool on_pre_post_effect_layer_draw(sdk::renderer::layer::PostEffect* layer, void* render_context) override;
     void on_post_effect_layer_draw(sdk::renderer::layer::PostEffect* layer, void* render_context) override;
@@ -327,6 +340,10 @@ private:
     bool on_pre_scene_layer_draw(sdk::renderer::layer::Scene* layer, void* render_context) override;
 
     void on_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer, void* render_context) override;
+
+    bool on_pre_overlay_layer_update(sdk::renderer::layer::Overlay* layer, void* render_context) override;
+    bool on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_context) override;
+    void on_overlay_layer_draw(sdk::renderer::layer::Overlay* overlay_layer, void* render_context) override;
 
     struct SceneLayerData {
         SceneLayerData() = default;
