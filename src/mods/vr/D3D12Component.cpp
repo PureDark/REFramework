@@ -77,6 +77,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     if ((vr->is_using_any_afw()) && (!m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture || !m_eyeFrameBuffers.eyeFrameBuffers[1].color.pTexture))
         force_reset();
 
+    auto colorDesc = eyeFrameBuffer.color.pTexture->GetDesc();
     static TextureDesc texDesc[4];
     int texIndex = m_backbuffer_is_8bit || true ? backbuffer_index : 3;
     if (texDesc[texIndex].pTexture != eye_texture.Get()) {
@@ -91,11 +92,22 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         texDesc[backbuffer_index].initialState = D3D12_RESOURCE_STATE_PRESENT;
         vr->d3d12Renderer->SetupTextureDesc(texDesc[backbuffer_index]);
     }
-    static TextureDesc uiBufferDesc;
-    if (vr->m_enable_ui_fix->value() && uiBufferDesc.pTexture != vr->uiBufferTex) {
-        uiBufferDesc.pTexture = vr->uiBufferTex;
-        uiBufferDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-        vr->d3d12Renderer->SetupTextureDesc(uiBufferDesc);
+    
+    if (vr->m_enable_ui_fix->value() ) {
+        for (int i = 0; i < 2; i++) {
+            if (vr->uiBufferDesc[i].pTexture != vr->uiBufferTex[i]) {
+                vr->uiBufferDesc[i].pTexture = vr->uiBufferTex[i];
+                vr->uiBufferDesc[i].initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+                vr->d3d12Renderer->SetupTextureDesc(vr->uiBufferDesc[i]);
+            }
+        }
+        if (vr->is_using_afw_foveated() && vr->uiBufferTex[0]) {
+            auto desc = vr->uiBufferTex[0]->GetDesc();
+            if (vr->multipassUIBufferDesc.pTexture == NULL || vr->multipassUIBufferDesc.pTexture->GetDesc().Width != colorDesc.Width ||
+                vr->multipassUIBufferDesc.pTexture->GetDesc().Height != colorDesc.Height || vr->multipassUIBufferDesc.pTexture->GetDesc().Format != desc.Format) {
+                vr->d3d12Renderer->CreateTexture(colorDesc.Width, colorDesc.Height, desc.Format, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, vr->multipassUIBufferDesc, false);
+            }
+        }
     }
     if (vr->depthTex[0]) {
         auto targetDepth = vr->depthTex[0];
@@ -135,12 +147,11 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     }
 
     bool upscaled = false;
-    if (vr->is_using_afw_foveated() && vr->multipassUpscaledDesc[nEye].pTexture && vr->depthDesc[1].pTexture) {
+    if (false && vr->is_using_afw_foveated() && vr->multipassUpscaledDesc[nEye].pTexture && vr->depthDesc[1].pTexture) {
         if (vr->vrDLSSHandleFR[nEye] && vr->vrDLSSParameters) {
             NVSDK_NGX_Result Result;
             NVSDK_NGX_Dimensions renderingSize = {vr->render_size[0], vr->render_size[1]};
 
-            auto colorDesc = eyeFrameBuffer.color.pTexture->GetDesc();
             auto foveatedVP = vr->get_runtime()->foveated_viewports[nEye];
             NVSDK_NGX_Coordinates mvSubrectBase = {foveatedVP.TopLeftX * colorDesc.Width, foveatedVP.TopLeftY * colorDesc.Height};
 
@@ -149,7 +160,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             D3D12DlssEvalParams.Feature.pInColor = texDesc[texIndex].pTexture;
             D3D12DlssEvalParams.Feature.pInOutput = vr->multipassUpscaledDesc[nEye].pTexture;
             D3D12DlssEvalParams.pInDepth = vr->depthDesc[1].pTexture;
-            D3D12DlssEvalParams.pInMotionVectors = eyeFrameBuffer.motionVectors.pTexture;
+            D3D12DlssEvalParams.pInMotionVectors = vr->multipassMVDesc.pTexture;
             D3D12DlssEvalParams.pInExposureTexture = nullptr;
             D3D12DlssEvalParams.pInTransparencyMask = nullptr;
             D3D12DlssEvalParams.pInBiasCurrentColorMask = nullptr;
@@ -157,8 +168,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             D3D12DlssEvalParams.InJitterOffsetY = vr->m_jitter_offsets[nEye][1];
             D3D12DlssEvalParams.InReset = false;
             if (vr->mDebug1) {
-                D3D12DlssEvalParams.InMVScaleX = (float)vr->render_size[0];
-                D3D12DlssEvalParams.InMVScaleY = (float)vr->render_size[1];
+                D3D12DlssEvalParams.InMVScaleX = vr->m_motion_scale[0];
+                D3D12DlssEvalParams.InMVScaleY = vr->m_motion_scale[1];
             } else {
                 D3D12DlssEvalParams.InMVScaleX = (float)vr->render_size[0] * vr->m_motion_scale[0];
                 D3D12DlssEvalParams.InMVScaleY = (float)vr->render_size[1] * vr->m_motion_scale[1];
@@ -193,14 +204,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
 
         params.InCmdList = cmdList;
         params.InEyeFrameBuffer = &s_CurrentEyeFrameBuffer;
-        if (vr->m_enable_ui_fix->value() && vr->uiBufferTex) {
-            params.InUIColorAlpha = &uiBufferDesc;
-            params.IsHudlessColor = false;
-        } else {
-            params.InUIColorAlpha = NULL;
-            params.IsHudlessColor = true;
-        }
-        auto colorDesc = eyeFrameBuffer.color.pTexture->GetDesc();
+        params.InUIColorAlpha = NULL;
+        params.IsHudlessColor = true;
         params.IsMotionVectorsOtherEye = !vr->is_fix_dlss();
         params.InMotionScale[0] = (float)colorDesc.Width;
         params.InMotionScale[1] = (float)colorDesc.Height;
@@ -211,6 +216,10 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         params.IgnoreMotionThreshold = vr->m_ignore_motion_threshold->value();
         params.Debug = vr->m_framewarp_debug->value();
         if (!vr->is_foveated_rendering()) {
+            if (vr->m_enable_ui_fix->value() && vr->uiBufferDesc[0].pTexture) {
+                params.InUIColorAlpha = &vr->uiBufferDesc[0];
+                params.IsHudlessColor = false;
+            }
             // Sharpening
             if (vr->is_enable_sharpening() && vr->get_sharpness() > 0) {
                 vr->d3d12Renderer->Sharpen(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vr->get_sharpness());
@@ -226,8 +235,14 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             vp.Height = foveatedVP.Height * colorDesc.Height;
             vp.MinDepth = 0;
             vp.MaxDepth = 1;
+            if (vr->m_enable_ui_fix->value() && vr->multipassUIBufferDesc.pTexture) {
+                vr->d3d12Renderer->Blit(cmdList, vr->multipassUIBufferDesc, vr->uiBufferDesc[0]);
+                params.InUIColorAlpha = &vr->multipassUIBufferDesc;
+                params.IsHudlessColor = false;
+            }
             if (vr->multipassBackupDesc[nEye].pTexture) {
                 vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, vr->multipassBackupDesc[nEye]);
+                vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, vr->multipassUIBufferDesc, {}, true);
                 vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.depth, vr->depthDesc[0]);
                 vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.depth, vr->depthDesc[1], vp);
             }
@@ -241,42 +256,44 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 vr->d3d12Renderer->Sharpen(cmdList, otherEyeFrameBuffer.color, eyeFrameBuffer.color, vr->get_sharpness());
                 vr->d3d12Renderer->Copy(cmdList, eyeFrameBuffer.color, otherEyeFrameBuffer.color);
             }
-            if (vr->m_desktop_fix->value()) {
-                vr->d3d12Renderer->Blit(cmdList, texDesc[texIndex], eyeFrameBuffer.color);
-            }
+            //if (vr->m_desktop_fix->value()) {
+            //    vr->d3d12Renderer->Blit(cmdList, texDesc[texIndex], eyeFrameBuffer.color);
+            //}
             s_CurrentEyeFrameBuffer.color = eyeFrameBuffer.color;
             s_CurrentEyeFrameBuffer.depth = eyeFrameBuffer.depth;
             params.InEyeFrameBuffer = &s_CurrentEyeFrameBuffer;
             EvaluateFrameWarp(params);
         }
 
-        if (uiBufferDesc.pTexture) {
-		    D3D12_RESOURCE_BARRIER barriers1[] = {
-                CD3DX12_RESOURCE_BARRIER::Transition(uiBufferDesc.pTexture, uiBufferDesc.initialState, D3D12_RESOURCE_STATE_RENDER_TARGET)
-		    };
-	        FLOAT black[4] = { 0, 0, 0, 0 };
-		    cmdList->ResourceBarrier(_countof(barriers1), barriers1);
+        for (int i = 0; i < 2; i++) {
+            if (vr->uiBufferDesc[i].pTexture) {
+                D3D12_RESOURCE_BARRIER barriers1[] = {CD3DX12_RESOURCE_BARRIER::Transition(
+                    vr->uiBufferDesc[i].pTexture, vr->uiBufferDesc[i].initialState, D3D12_RESOURCE_STATE_RENDER_TARGET)};
+                FLOAT black[4] = {0, 0, 0, 0};
+                cmdList->ResourceBarrier(_countof(barriers1), barriers1);
 
-            cmdList->ClearRenderTargetView(uiBufferDesc.renderTargetViewHandle, black, 0, NULL);
+                cmdList->ClearRenderTargetView(vr->uiBufferDesc[i].renderTargetViewHandle, black, 0, NULL);
 
-		    D3D12_RESOURCE_BARRIER barriers2[] = {
-                CD3DX12_RESOURCE_BARRIER::Transition( uiBufferDesc.pTexture, D3D12_RESOURCE_STATE_RENDER_TARGET, uiBufferDesc.initialState)
-		    };
-		    cmdList->ResourceBarrier(_countof(barriers2), barriers2);
+                D3D12_RESOURCE_BARRIER barriers2[] = {CD3DX12_RESOURCE_BARRIER::Transition(
+                    vr->uiBufferDesc[i].pTexture, D3D12_RESOURCE_STATE_RENDER_TARGET, vr->uiBufferDesc[i].initialState)};
+                cmdList->ResourceBarrier(_countof(barriers2), barriers2);
+            }
         }
     } else {
         vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, texDesc[texIndex]);
-        if (uiBufferDesc.pTexture) {
-            D3D12_RESOURCE_BARRIER barriers1[] = {
-                CD3DX12_RESOURCE_BARRIER::Transition(uiBufferDesc.pTexture, uiBufferDesc.initialState, D3D12_RESOURCE_STATE_RENDER_TARGET)};
-            FLOAT black[4] = {0, 0, 0, 0};
-            cmdList->ResourceBarrier(_countof(barriers1), barriers1);
+        for (int i = 0; i < 2; i++) {
+            if (vr->uiBufferDesc[i].pTexture) {
+                D3D12_RESOURCE_BARRIER barriers1[] = {CD3DX12_RESOURCE_BARRIER::Transition(
+                    vr->uiBufferDesc[i].pTexture, vr->uiBufferDesc[i].initialState, D3D12_RESOURCE_STATE_RENDER_TARGET)};
+                FLOAT black[4] = {0, 0, 0, 0};
+                cmdList->ResourceBarrier(_countof(barriers1), barriers1);
 
-            cmdList->ClearRenderTargetView(uiBufferDesc.renderTargetViewHandle, black, 0, NULL);
+                cmdList->ClearRenderTargetView(vr->uiBufferDesc[i].renderTargetViewHandle, black, 0, NULL);
 
-            D3D12_RESOURCE_BARRIER barriers2[] = {
-                CD3DX12_RESOURCE_BARRIER::Transition(uiBufferDesc.pTexture, D3D12_RESOURCE_STATE_RENDER_TARGET, uiBufferDesc.initialState)};
-            cmdList->ResourceBarrier(_countof(barriers2), barriers2);
+                D3D12_RESOURCE_BARRIER barriers2[] = {CD3DX12_RESOURCE_BARRIER::Transition(
+                    vr->uiBufferDesc[i].pTexture, D3D12_RESOURCE_STATE_RENDER_TARGET, vr->uiBufferDesc[i].initialState)};
+                cmdList->ResourceBarrier(_countof(barriers2), barriers2);
+            }
         }
         if (vr->mDebug3) {
             D3D12_RESOURCE_BARRIER barriers1[] = {CD3DX12_RESOURCE_BARRIER::Transition(

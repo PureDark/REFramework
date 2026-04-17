@@ -473,9 +473,16 @@ void VR::inputsystem_update_hook(void* ctx, REManagedObject* input_system) {
 }
 
 bool VR::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_ctx) {
+    auto scene_layers = m_camera_duplicator.get_relevant_scene_layers();
 
-    uiBufferTex = layer->get_ui_buffer_tex_d3d12();
-    uiBufferNativeTex = layer->get_ui_buffer_tex();
+    const auto parent_layer = layer->get_parent();
+    for(int i = 0; i <scene_layers.size(); i ++)
+    {
+        if (parent_layer == scene_layers[i]) {
+            uiBufferTex[i] = layer->get_ui_buffer_tex_d3d12();
+            uiBufferNativeTex = layer->get_ui_buffer_tex();
+        }
+    }
 
     // just don't render anything at all.
     // overlays just seem to break stuff in VR.
@@ -561,12 +568,6 @@ bool VR::on_pre_scene_layer_draw(sdk::renderer::layer::Scene* layer, void* rende
 }
 
 void VR::on_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer, void* render_context) {
-    return;
-}
-
-
-void VR::on_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_context) {
-
     if (!is_hmd_active()) {
         return;
     }
@@ -582,13 +583,13 @@ void VR::on_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* rende
         return;
     }
 
-    const auto ui_target_state = layer->get_ui_target();
+    const auto target_state = layer->get_output_state();
 
-    if (ui_target_state == nullptr) {
+    if (target_state == nullptr) {
         return;
     }
 
-    const auto rtv = ui_target_state->get_rtv(0);
+    const auto rtv = target_state->get_rtv(0);
 
     if (rtv == nullptr) {
         return;
@@ -907,6 +908,10 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_ReleaseFeature(NVSDK_NGX_Handle* InHandle) {
         vr->vrDLSSHandle[0] = NULL;
         vr->depthDesc[0].pTexture = NULL;
         vr->depthDesc[1].pTexture = NULL;
+        vr->uiBufferDesc[0].pTexture = NULL;
+        vr->uiBufferDesc[1].pTexture = NULL;
+        vr->uiBufferTex[0] = NULL;
+        vr->uiBufferTex[1] = NULL;
         //vr->renderDepthDesc.pTexture = NULL;
         if (vr->vrDLSSHandle[1] != NULL) {
             auto result2 = o_NVSDK_NGX_D3D12_ReleaseFeature(vr->vrDLSSHandle[1]);
@@ -944,6 +949,7 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(
         float mvScaleY;
         InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_X, &mvScaleX);
         InParameters->Get(NVSDK_NGX_Parameter_MV_Scale_Y, &mvScaleY);
+        vr->rawMotionVectorsTex = motionVectors;
         if (vr->is_hmd_active() && motionVectors && vr->motionVectorsDesc.pTexture) {
 
             //if (vr->renderDepthDesc.pTexture != depth) {
@@ -1015,6 +1021,10 @@ ffxReturnCode_t hk_ffxDestroyContext(ffxContext* context, const void** memCb) {
         vr->vrContexts[0] = NULL;
         vr->depthDesc[0].pTexture = NULL;
         vr->depthDesc[1].pTexture = NULL;
+        vr->uiBufferDesc[0].pTexture = NULL;
+        vr->uiBufferDesc[1].pTexture = NULL;
+        vr->uiBufferTex[0] = NULL;
+        vr->uiBufferTex[1] = NULL;
         //vr->renderDepthDesc.pTexture = NULL;
         if (vr->vrContexts[1] != NULL) {
             auto result2 = o_ffxDestroyContext(&vr->vrContexts[1], NULL);
@@ -1139,6 +1149,24 @@ void WINAPI hk_ID3D12GraphicsCommandList_ClearRenderTargetView(ID3D12GraphicsCom
     return (This->*ptrClearRenderTargetView)(RenderTargetView, ColorRGBA, NumRects, pRects);
 }
 
+//decltype(&ID3D12GraphicsCommandList::OMSetRenderTargets) ptrOMSetRenderTargets; // 46
+//void WINAPI hk_ID3D12GraphicsCommandList_OMSetRenderTargets(ID3D12GraphicsCommandList* This, UINT NumRenderTargetDescriptors,
+//    const D3D12_CPU_DESCRIPTOR_HANDLE* pRenderTargetDescriptors, BOOL RTsSingleHandleToDescriptorRange,
+//    const D3D12_CPU_DESCRIPTOR_HANDLE* pDepthStencilDescriptor) {
+//
+//    const auto& vr = VR::get();
+//    if (NumRenderTargetDescriptors > 0) {
+//        for (int i = 0; i < NumRenderTargetDescriptors; i++) {
+//            if (rtvMap.contains(pRenderTargetDescriptors[i].ptr) && rtvMap[pRenderTargetDescriptors[i].ptr] == vr->rawMotionVectorsTex) {
+//                bool a = false;
+//            }
+//        }
+//    }
+//    (This->*ptrOMSetRenderTargets)(
+//        NumRenderTargetDescriptors, pRenderTargetDescriptors, RTsSingleHandleToDescriptorRange, pDepthStencilDescriptor);
+//}
+
+
 //decltype(&ID3D12GraphicsCommandList::CopyTextureRegion) ptrCopyTextureRegion; // 16
 //void WINAPI hk_ID3D12GraphicsCommandList_CopyTextureRegion(ID3D12GraphicsCommandList* This, const D3D12_TEXTURE_COPY_LOCATION* pDst,
 //    UINT DstX, UINT DstY, UINT DstZ, _In_ const D3D12_TEXTURE_COPY_LOCATION* pSrc, _In_opt_ const D3D12_BOX* pSrcBox) {
@@ -1196,6 +1224,7 @@ std::optional<std::string> VR::on_initialize_d3d_thread() try {
     *(uintptr_t*)&ptrCreateRenderTargetView = hookVtable(params.d3d12Device, 20, hk_ID3D12Device_CreateRenderTargetView);
 
     auto cmdList = d3d12Renderer->BeginCommandList(0);
+    //*(uintptr_t*)&ptrOMSetRenderTargets = hookVtable(cmdList, 46, hk_ID3D12GraphicsCommandList_OMSetRenderTargets);
     *(uintptr_t*)&ptrClearRenderTargetView = hookVtable(cmdList, 48, hk_ID3D12GraphicsCommandList_ClearRenderTargetView);
     //*(uintptr_t*)&ptrCopyTextureRegion = hookVtable(cmdList, 16, hk_ID3D12GraphicsCommandList_CopyTextureRegion);
     //*(uintptr_t*)&ptrCopyResource = hookVtable(cmdList, 17, hk_ID3D12GraphicsCommandList_CopyResource);
@@ -4091,7 +4120,15 @@ void VR::on_pre_end_rendering(void* entry) {
             if (valid_scene_layers.size() > 1) {
                 depthTex[1] = valid_scene_layers[1]->get_depth_stencil_d3d12();
                 auto rtv = valid_scene_layers[1]->get_motion_vectors_state()->get_rtv(0).get();
-                mvRtvPtr = ((uintptr_t)rtv + 0xE8);
+                mvRtvPtr = *(SIZE_T*)((uintptr_t)rtv + 0xE8);
+                if (rtvMap.contains(mvRtvPtr)) {
+                    auto mvTex = rtvMap[mvRtvPtr];
+                    if (multipassMVDesc.pTexture != mvTex) {
+                        multipassMVDesc.pTexture = mvTex;
+                        multipassMVDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+                        d3d12Renderer->SetupTextureDesc(multipassMVDesc);
+                    }
+                }
             }
         } 
     }

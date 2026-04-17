@@ -2007,6 +2007,10 @@ TargetState* layer::Scene::get_motion_vectors_state() {
     return utility::re_managed_object::get_field<::sdk::renderer::TargetState*>(this, "VelocityTarget");
 }
 
+TargetState* layer::Scene::get_post_main_target() {
+    return utility::re_managed_object::get_field<::sdk::renderer::TargetState*>(this, "PostMainTarget");
+}
+
 ID3D12Resource* layer::Scene::get_depth_stencil_d3d12() {
     const auto tex = utility::re_managed_object::get_field<::sdk::renderer::Texture*>(this, "DepthStencilTex");
 

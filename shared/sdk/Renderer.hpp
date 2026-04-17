@@ -363,6 +363,8 @@ public:
 
     Texture* get_depth_stencil();
     TargetState* get_motion_vectors_state();
+    TargetState* get_post_main_target();
+
     ID3D12Resource* get_depth_stencil_d3d12();
 
     ID3D12Resource* get_motion_vectors_d3d12() {

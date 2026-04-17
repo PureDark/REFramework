@@ -40,21 +40,25 @@ public:
     CameraData cameraData[2];
     CameraDataMVCorrection cameraDataForMV[2];
     ID3D12Resource* depthTex[2] = {NULL, NULL};
-    ID3D12Resource* uiBufferTex = NULL;
+    ID3D12Resource* uiBufferTex[2] = {NULL, NULL};
     D3D12RendererAPI* d3d12Renderer = nullptr;
+
+    ID3D12Resource* rawMotionVectorsTex = NULL;
 
     sdk::renderer::TargetState* motionVectorsState = NULL;
     sdk::renderer::Texture* uiBufferNativeTex = NULL;
 
     SIZE_T mvRtvPtr = {0};
 
-    //TextureDesc renderDepthDesc;
-
+    TextureDesc uiBufferDesc[2];
     TextureDesc depthDesc[2];
     TextureDesc motionVectorsDesc;
+    TextureDesc multipassMVDesc;
 
 	TextureDesc multipassBackupDesc[2];
     TextureDesc multipassUpscaledDesc[2];
+
+    TextureDesc multipassUIBufferDesc;
 
     bool mDebug1 = false;
     bool mDebug2 = false;
@@ -343,7 +347,6 @@ private:
 
     bool on_pre_overlay_layer_update(sdk::renderer::layer::Overlay* layer, void* render_context) override;
     bool on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_context) override;
-    void on_overlay_layer_draw(sdk::renderer::layer::Overlay* overlay_layer, void* render_context) override;
 
     struct SceneLayerData {
         SceneLayerData() = default;
