@@ -53,10 +53,10 @@ public:
     TextureDesc uiBufferDesc[2];
     TextureDesc depthDesc[2];
     TextureDesc motionVectorsDesc;
+    TextureDesc motionVectorsCorrectedDesc;
     TextureDesc multipassMVDesc;
 
 	TextureDesc multipassBackupDesc[2];
-    TextureDesc multipassUpscaledDesc[2];
 
     TextureDesc multipassUIBufferDesc;
 
@@ -66,15 +66,9 @@ public:
     int mDebug5 = 0;
 
     uint32_t render_size[2] = {0, 0};
-    uint32_t upscaled_size[2] = {0, 0};
 
-    NVSDK_NGX_Parameter* vrDLSSParameters = {nullptr};
     NVSDK_NGX_Handle* vrDLSSHandle[2] = {NULL, NULL};
-    NVSDK_NGX_Handle* vrDLSSHandleFR[2] = {NULL, NULL};
     ffxContext vrContexts[2] = {NULL, NULL};
-    ffxContext vrContextsFR[2] = {NULL, NULL};
-    NVSDK_NGX_D3D12_EvaluateFeature_t o_NVSDK_NGX_D3D12_EvaluateFeature = nullptr;
-    ffxDispatch_t o_ffxDispatch = nullptr;
 
     std::array<uint32_t, 2> m_jitter_indices{0, 0};
     float m_jitter_offsets[2][2]{0.0f, 0.0f};
@@ -361,16 +355,9 @@ private:
             }
         }
 
-        void post_setup(int32_t index) {
-            scene_info->old_view_projection_matrix = previous_view_projection_matrices[(index - 1) % 2];
-            previous_view_projection_matrices[index % 2] = scene_info->view_projection_matrix;
-        }
-
         sdk::renderer::SceneInfo* scene_info{};
         Matrix4x4f view_projection_matrix{};
-        std::array<Matrix4x4f, 2> previous_view_projection_matrices{};
         std::array<Matrix4x4f, 2> old_view_matrix{};
-        std::array<Matrix4x4f, 2> old_foveated_view_matrix{};
     };
 
     std::unordered_map<sdk::renderer::layer::Scene*, std::array<SceneLayerData, 5>> m_scene_layer_data {};

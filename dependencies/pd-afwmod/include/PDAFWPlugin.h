@@ -122,22 +122,29 @@ namespace pd {
 		glm::mat4 srcClipToViewMatrixPrev;
 	};
 
+	enum MVType
+	{
+		Normal,        // curr eye curr frame -> curr eye last frame
+		FromOtherEye,  // curr eye curr frame -> other eye last frame
+		ObjectOnly     // only object motion, no camera motion
+	};
+
 	struct FrameWarpEvaluateParams
 	{
-		void*            InCmdList = NULL;            // optional, leave it NULL to use the built-in command list, which will execute immediately so better to submit your own command lists before calling
-		FrameBufferDesc* InEyeFrameBuffer = NULL;     // required, needs to be in pixel shader resource state
-		FrameBufferDesc* OutEyeFrameBuffer = NULL;    // returns reprojected result, which is one of the framebuffer you got from calling InitFrameWarp
-		TextureDesc*     InUIColorAlpha = NULL;       // optional, provide the UI and the plugin will render it according to the camera orientation without the HMD rotaion and position affecting it.
+		void*            InCmdList = NULL;          // optional, leave it NULL to use the built-in command list, which will execute immediately so better to submit your own command lists before calling
+		FrameBufferDesc* InEyeFrameBuffer = NULL;   // required, needs to be in pixel shader resource state
+		FrameBufferDesc* OutEyeFrameBuffer = NULL;  // returns reprojected result, which is one of the framebuffer you got from calling InitFrameWarp
+		TextureDesc*     InUIColorAlpha = NULL;     // optional, provide the UI and the plugin will render it according to the camera orientation without the HMD rotaion and position affecting it.
 		float            InUIScale[2] = { 1.0f, 1.0f };
 		float            InUIPos[3] = { 0.0f, 0.0f, -1.0f };
 		float            InMotionScale[2] = { 0.0f, 0.0f };
-		FrameWarpMode	 Mode;
+		FrameWarpMode    Mode;
 		EyeIndex         EyeIndex;
 		CameraData*      CameraData;  // required, camera matrices for this frame
 		bool             ClearBeforeWarping = false;
-		float            IgnoreMotionThreshold{ 2.5f };    // per-object motion vectors, ignore threshold in pixel space
-		bool             IsHudlessColor = true;    // specify whether InEyeColor is hudless or contaning UI, if the latter, will use UIColorAndAlpha to avoid reprojecting UI.
-		bool             IsMotionVectorsOtherEye = false;  // whether motion vectors include motion from camera jumping between eyes
+		float            IgnoreMotionThreshold{ 2.5f };  // per-object motion vectors, ignore threshold in pixel space
+		bool             IsHudlessColor = true;          // specify whether InEyeColor is hudless or contaning UI, if the latter, will use UIColorAndAlpha to avoid reprojecting UI.
+		MVType           MotionVectorsType = Normal;
 		bool             Debug = false;
 	};
 
@@ -268,6 +275,7 @@ namespace pd {
 		virtual bool                        CreateVertexBuffer(ID3D12GraphicsCommandList* cmdList, VextexBufferDesc& vextexDesc, uint32_t vertexCount, uint32_t vertexSize, float* pVertexData);
 		virtual bool                        CreateTexture(int nWidth, int nHeight, DXGI_FORMAT format, D3D12_RESOURCE_STATES initialState, TextureDesc& textureDesc, bool createUAV) = 0;
 		virtual bool                        CreateFrameBuffer(int nWidth, int nHeight, FrameBufferDesc& framebufferDesc, D3D12_RESOURCE_STATES initialState, bool createUAV) = 0;
+		virtual void                        Clear(ID3D12GraphicsCommandList* cmdList, TextureDesc& texDesc, const FLOAT ColorRGBA[4]) = 0;
 		virtual void                        Blit(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, D3D12_VIEWPORT viewPort = {}, bool enableBlend = false) = 0;
 		virtual void                        Copy(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc) = 0;
 		virtual void                        Sharpen(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, float sharpness) = 0;

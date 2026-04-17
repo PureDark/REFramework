@@ -295,7 +295,6 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
 
     if (eyeGazeActionSet != NULL) {
         XrActiveActionSet activeActionSet{eyeGazeActionSet, XR_NULL_PATH};
-        XrTime time;
         XrActionsSyncInfo syncInfo{XR_TYPE_ACTIONS_SYNC_INFO};
         syncInfo.countActiveActionSets = 1;
         syncInfo.activeActionSets = &activeActionSet;
@@ -307,10 +306,8 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
         if (actionStatePose.isActive) {
             XrEyeGazeSampleTimeEXT eyeGazeSampleTime{XR_TYPE_EYE_GAZE_SAMPLE_TIME_EXT};
             XrSpaceLocation gazeLocation{XR_TYPE_SPACE_LOCATION, &eyeGazeSampleTime};
-            result = xrLocateSpace(gazeActionSpace, viewSpace, time, &gazeLocation);
+            result = xrLocateSpace(gazeActionSpace, viewSpace, frame_state.predictedDisplayTime, &gazeLocation);
             XrQuaternionf q = gazeLocation.pose.orientation;
-
-
 
             // ==============================================
             // Final gaze direction by applying quaternion
