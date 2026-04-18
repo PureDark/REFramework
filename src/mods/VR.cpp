@@ -708,6 +708,11 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
 
     bool is_foveated_pass = (is_using_afw_foveated() && m_multipass.pass == 0);
 
+    if (is_foveated_pass && m_scene_layer_data[layer].size() > 0) {
+        SceneLayerData& d = m_scene_layer_data[layer][0];
+        oldViewMatrix[eye_index] = d.old_view_matrix[eye_index];
+    }
+
     auto fix_motion_vectors = [&](SceneLayerData& d) {
         auto old_view_matrix = d.old_view_matrix[eye_index];
         auto old_projection_matrix = is_foveated_pass ? get_runtime()->foveated_projections[eye_index] : get_runtime()->projections[eye_index];
@@ -2950,11 +2955,13 @@ void VR::update_camera_data(int frame_count) {
     if (last_update_camera_data_frame_count < frame_count) {
         last_update_camera_data_frame_count = frame_count;
 
+        std::shared_lock _{get_runtime()->eyes_mtx};
+
         EyeIndex nEye = (m_render_frame_count % 2 == m_left_eye_interval) ? EyeLeft : EyeRight;
         EyeIndex nEyeOther = (m_render_frame_count % 2 == m_left_eye_interval) ? EyeRight : EyeLeft;
 
-        glm::mat4 matEyePosRender = get_current_eye_transform(false);
-        glm::mat4 matEyePosProj = get_current_eye_transform(true);
+        glm::mat4 matEyePosRender = get_runtime()->eyes[nEye];
+        glm::mat4 matEyePosProj = get_runtime()->eyes[nEyeOther];
 
         cameraData[nEye].camWorldToViewMatrix = glm::inverse(m_original_camera_matrix);
         cameraData[nEye].camViewToWorldMatrix = m_original_camera_matrix;
@@ -2963,9 +2970,9 @@ void VR::update_camera_data(int frame_count) {
         cameraData[nEye].destWorldToViewMatrix = glm::inverse(cameraData[nEye].destViewToWorldMatrix);
         cameraData[nEye].srcWorldToViewMatrix = glm::inverse(cameraData[nEye].srcViewToWorldMatrix);
 
-        cameraData[nEye].destViewToClipMatrix = to_reverseZ(get_current_projection_matrix(true));
+        cameraData[nEye].destViewToClipMatrix = to_reverseZ(get_runtime()->projections[nEyeOther]);
         cameraData[nEye].destClipToViewMatrix = glm::inverse(cameraData[nEye].destViewToClipMatrix);
-        cameraData[nEye].srcViewToClipMatrix = to_reverseZ(get_current_projection_matrix(false));
+        cameraData[nEye].srcViewToClipMatrix = to_reverseZ(get_runtime()->projections[nEye]);
         cameraData[nEye].srcClipToViewMatrix = glm::inverse(cameraData[nEye].srcViewToClipMatrix);
         cameraData[nEye].camViewToClipMatrix = cameraData[nEye].srcViewToClipMatrix;
         cameraData[nEye].camClipToViewMatrix = cameraData[nEye].srcClipToViewMatrix;
@@ -2979,8 +2986,8 @@ void VR::update_camera_data(int frame_count) {
         cameraDataForMV[nEye].srcViewToClipMatrix = to_reverseZ(get_runtime()->foveated_projections[nEye]);
         cameraDataForMV[nEye].srcClipToViewMatrix = glm::inverse(cameraDataForMV[nEye].srcViewToClipMatrix);
 
-        cameraDataForMV[nEye].srcViewToWorldMatrixPrev = cameraData[nEyeOther].destViewToWorldMatrix;
-        cameraDataForMV[nEye].srcWorldToViewMatrixPrev = cameraData[nEyeOther].destWorldToViewMatrix;
+        cameraDataForMV[nEye].srcViewToWorldMatrixPrev = glm::inverse(oldViewMatrix[nEye]);
+        cameraDataForMV[nEye].srcWorldToViewMatrixPrev = oldViewMatrix[nEye];
         cameraDataForMV[nEye].srcViewToClipMatrixPrev = cameraDataForMV[nEye].srcViewToClipMatrix;
         cameraDataForMV[nEye].srcClipToViewMatrixPrev = cameraDataForMV[nEye].srcClipToViewMatrix;
 
@@ -4770,8 +4777,6 @@ void VR::on_draw_ui() {
         m_framewarp_mode->draw("Framewarp Mode");
         m_enable_foveated_rendering->draw("Enable Foveated Rendering");
         m_foveated_ratio->draw("Foveated Ratio");
-        ImGui::DragFloat("MotionScale X", &m_motion_scale[0], 0.01f, -1.0f, 1.0f);
-        ImGui::DragFloat("MotionScale Y", &m_motion_scale[1], 0.01f, -1.0f, 1.0f);
     }
     ImGui::Separator();
 

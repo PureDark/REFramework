@@ -70,9 +70,7 @@ public:
     NVSDK_NGX_Handle* vrDLSSHandle[2] = {NULL, NULL};
     ffxContext vrContexts[2] = {NULL, NULL};
 
-    std::array<uint32_t, 2> m_jitter_indices{0, 0};
-    float m_jitter_offsets[2][2]{0.0f, 0.0f};
-    float m_motion_scale[2]{1.0f, 1.0f};
+    std::array<Matrix4x4f, 2> oldViewMatrix{};
 
     int last_update_camera_data_frame_count = 0;
     void update_camera_data(int frame_count);

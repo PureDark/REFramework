@@ -158,10 +158,11 @@ namespace pd {
 
 	struct CorrectMotionVectorsParams
 	{
-		TextureDesc* inMotionVectors;
-		TextureDesc* inDepth;
+		TextureDesc*            inMotionVectors;
+		TextureDesc*            inDepth;
 		CameraDataMVCorrection* cameraData;
-		float        InMotionScale[2] = { 0.0f, 0.0f };
+		float                   InMotionScale[2] = { 0.0f, 0.0f };
+		bool                    extractObjectOnlyMotion = false;
 	};
 
 #define MAX_SHADING_RATES 9

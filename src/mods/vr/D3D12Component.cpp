@@ -83,22 +83,14 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     if (texDesc[texIndex].pTexture != eye_texture.Get()) {
         texDesc[texIndex].pTexture = eye_texture.Get();
         texDesc[texIndex].initialState = D3D12_RESOURCE_STATE_PRESENT;
-        if (texIndex == 3) {
+        if (texIndex == 3)
             texDesc[texIndex].initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-            texDesc[texIndex].pTexture->SetName(L"texDesc[3]");
-        }
         vr->d3d12Renderer->SetupTextureDesc(texDesc[texIndex]);
     }
     if (texDesc[backbuffer_index].pTexture != backbuffer.Get()) {
         texDesc[backbuffer_index].pTexture = backbuffer.Get();
         texDesc[backbuffer_index].initialState = D3D12_RESOURCE_STATE_PRESENT;
         vr->d3d12Renderer->SetupTextureDesc(texDesc[backbuffer_index]);
-        if (backbuffer_index == 0)
-            texDesc[backbuffer_index].pTexture->SetName(L"texDesc[0]");
-        else if (backbuffer_index == 1)
-            texDesc[backbuffer_index].pTexture->SetName(L"texDesc[1]");
-        else if (backbuffer_index == 2)
-            texDesc[backbuffer_index].pTexture->SetName(L"texDesc[2]");
     }
     
     if (vr->m_enable_ui_fix->value() ) {
@@ -107,10 +99,6 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 vr->uiBufferDesc[i].pTexture = vr->uiBufferTex[i];
                 vr->uiBufferDesc[i].initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
                 vr->d3d12Renderer->SetupTextureDesc(vr->uiBufferDesc[i]);
-                if (i == 0)
-                    vr->uiBufferDesc[i].pTexture->SetName(L"vr.uiBufferDesc[0]");
-                else
-                    vr->uiBufferDesc[i].pTexture->SetName(L"vr.uiBufferDesc[1]");
             }
         }
         if (vr->is_using_afw_foveated() && vr->uiBufferTex[0]) {
@@ -118,7 +106,6 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             if (vr->multipassUIBufferDesc.pTexture == NULL || vr->multipassUIBufferDesc.pTexture->GetDesc().Width != colorDesc.Width ||
                 vr->multipassUIBufferDesc.pTexture->GetDesc().Height != colorDesc.Height || vr->multipassUIBufferDesc.pTexture->GetDesc().Format != desc.Format) {
                 vr->d3d12Renderer->CreateTexture(colorDesc.Width, colorDesc.Height, desc.Format, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, vr->multipassUIBufferDesc, false);
-                vr->multipassUIBufferDesc.pTexture->SetName(L"multipassUIBuffer");
             }
         }
     }
@@ -282,16 +269,18 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 cmdList->ResourceBarrier(_countof(barriers2), barriers2);
             }
         }
-        D3D12_RESOURCE_BARRIER barriers1[] = {CD3DX12_RESOURCE_BARRIER::Transition(
-            eyeFrameBuffer.color.pTexture, eyeFrameBuffer.color.initialState, D3D12_RESOURCE_STATE_RENDER_TARGET)};
-        FLOAT red[4] = {1, 0, 0, 0};
-        cmdList->ResourceBarrier(_countof(barriers1), barriers1);
+        if (vr->mDebug3) {
+            D3D12_RESOURCE_BARRIER barriers1[] = {CD3DX12_RESOURCE_BARRIER::Transition(
+                eyeFrameBuffer.color.pTexture, eyeFrameBuffer.color.initialState, D3D12_RESOURCE_STATE_RENDER_TARGET)};
+            FLOAT red[4] = {1, 0, 0, 0};
+            cmdList->ResourceBarrier(_countof(barriers1), barriers1);
 
-        cmdList->ClearRenderTargetView(eyeFrameBuffer.color.renderTargetViewHandle, red, 0, NULL);
+            cmdList->ClearRenderTargetView(eyeFrameBuffer.color.renderTargetViewHandle, red, 0, NULL);
 
-        D3D12_RESOURCE_BARRIER barriers2[] = {CD3DX12_RESOURCE_BARRIER::Transition(
-            eyeFrameBuffer.color.pTexture, D3D12_RESOURCE_STATE_RENDER_TARGET, eyeFrameBuffer.color.initialState)};
-        cmdList->ResourceBarrier(_countof(barriers2), barriers2);
+            D3D12_RESOURCE_BARRIER barriers2[] = {CD3DX12_RESOURCE_BARRIER::Transition(
+                eyeFrameBuffer.color.pTexture, D3D12_RESOURCE_STATE_RENDER_TARGET, eyeFrameBuffer.color.initialState)};
+            cmdList->ResourceBarrier(_countof(barriers2), barriers2);
+        }
     }
 
     vr->d3d12Renderer->EndCommandList(backbuffer_index);
