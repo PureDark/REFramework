@@ -294,7 +294,7 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
     float convergence_angle = VR::get()->get_foveated_offset_x();
     float offsetTop = -VR::get()->get_foveated_offset_y();
 
-    if (eyeGazeActionSet != NULL) {
+    if (eyeGazeActionSet != NULL && !VR::get()->is_force_fixed_foveated()) {
         XrActiveActionSet activeActionSet{eyeGazeActionSet, XR_NULL_PATH};
         XrActionsSyncInfo syncInfo{XR_TYPE_ACTIONS_SYNC_INFO};
         syncInfo.countActiveActionSets = 1;

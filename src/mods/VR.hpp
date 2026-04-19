@@ -46,7 +46,6 @@ public:
     ID3D12Resource* rawMotionVectorsTex = NULL;
 
     sdk::renderer::TargetState* motionVectorsState = NULL;
-    sdk::renderer::Texture* uiBufferNativeTex = NULL;
 
     TextureDesc uiBufferDesc[2];
     TextureDesc depthDesc[2];
@@ -79,6 +78,8 @@ public:
     float get_sharpness() { return m_sharpness->value(); };
     int get_vr_frame_count() { return m_frame_count; };
     bool is_left_eye() { return m_frame_count % 2 == m_left_eye_interval; };
+
+    bool is_force_fixed_foveated() { return m_force_fixed_foveated->value(); };
     float get_foveated_ratio() { return m_foveated_ratio->value(); };
 
     float get_foveated_offset_x() { return m_foveated_offset_x->value(); };
@@ -649,10 +650,11 @@ private:
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
     const ModSlider::Ptr m_ignore_motion_threshold{ModSlider::create(generate_name("IgnoreMotionThreshold"), 1.0f, 100.0f, 2.5f)};
     const ModToggle::Ptr m_enable_foveated_rendering{ModToggle::create(generate_name("EnableFoveatedRendering"), false)};
+    const ModToggle::Ptr m_force_fixed_foveated{ModToggle::create(generate_name("Force Fixed Foveated"), false)};
     const ModSlider::Ptr m_foveated_ratio{ModSlider::create(generate_name("FovatedRatio"), 0.3333333333f, 1.0f, 0.5f)};
     const ModSlider::Ptr m_foveated_fade{ModSlider::create(generate_name("FovatedFade"), 0.0f, 1.0f, 0.05f)};
     const ModSlider::Ptr m_foveated_rounded_radius{ModSlider::create(generate_name("FovatedRoundedRadius"), 0.0f, 1.0f, 0.1f)};
-    const ModSlider::Ptr m_foveated_offset_x{ModSlider::create(generate_name("FovatedOffsetX"), -1.0f, 1.0f, 0.10f)};
+    const ModSlider::Ptr m_foveated_offset_x{ModSlider::create(generate_name("FovatedOffsetX"), -1.0f, 1.0f, 0.045f)};
     const ModSlider::Ptr m_foveated_offset_y{ModSlider::create(generate_name("FovatedOffsetY"), -1.0f, 1.0f, -0.15f)};
 
     const ModCombo::Ptr m_framewarp_mode{ModCombo::create(generate_name("FramewarpMode"),
@@ -750,6 +752,7 @@ private:
         *m_fix_upscalers_wobbling,
         *m_fix_item_inspection,
         *m_enable_foveated_rendering,
+        *m_force_fixed_foveated,
         *m_foveated_ratio,
         *m_foveated_fade,
         *m_foveated_rounded_radius,

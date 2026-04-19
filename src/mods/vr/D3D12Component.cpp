@@ -240,8 +240,13 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             params.InEyeFrameBuffer = &s_CurrentEyeFrameBuffer;
             params.MotionVectorsType = ObjectOnly;
             params.isFoveated = true;
-            params.foveatedArea = RECT(vp.TopLeftX, vp.TopLeftY, vp.TopLeftX + vp.Width, vp.TopLeftY + vp.Height);
-            if (!vr->mDebug3)
+            auto foveatedVPOther = vr->get_runtime()->foveated_viewports[nEyeOther];
+            D3D12_VIEWPORT vpOther;
+            vpOther.TopLeftX = foveatedVPOther.TopLeftX * colorDesc.Width;
+            vpOther.TopLeftY = foveatedVPOther.TopLeftY * colorDesc.Height;
+            vpOther.Width = foveatedVPOther.Width * colorDesc.Width;
+            vpOther.Height = foveatedVPOther.Height * colorDesc.Height;
+            params.foveatedArea = RECT(vpOther.TopLeftX, vpOther.TopLeftY, vpOther.TopLeftX + vpOther.Width, vpOther.TopLeftY + vpOther.Height);
             EvaluateFrameWarp(params);
         }
 

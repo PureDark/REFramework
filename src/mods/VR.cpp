@@ -480,7 +480,6 @@ bool VR::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* r
     {
         if (parent_layer == scene_layers[i]) {
             uiBufferTex[i] = layer->get_ui_buffer_tex_d3d12();
-            uiBufferNativeTex = layer->get_ui_buffer_tex();
         }
     }
 
@@ -1033,19 +1032,6 @@ void WINAPI hk_ID3D12GraphicsCommandList_ClearRenderTargetView(ID3D12GraphicsCom
             vr->d3d12Renderer->Copy(This, vr->multipassBackupDesc[eyeIndex], tempBufferDesc[eyeIndex]);
         }
         return;
-
-        //ID3D12Resource* destTex = vr->m_multipass.eye_textures[eyeIndex].Get();
-        //if (destTex) {
-        //    D3D12_RESOURCE_BARRIER barriers1[] = {
-        //        CD3DX12_RESOURCE_BARRIER::Transition(rtvTex, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE),
-        //        CD3DX12_RESOURCE_BARRIER::Transition(destTex, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST)};
-        //    This->ResourceBarrier(_countof(barriers1), barriers1);
-        //    This->CopyResource(destTex, rtvTex);
-        //    D3D12_RESOURCE_BARRIER barriers2[] = {
-        //        CD3DX12_RESOURCE_BARRIER::Transition(rtvTex, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
-        //        CD3DX12_RESOURCE_BARRIER::Transition(destTex, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET)};
-        //    This->ResourceBarrier(_countof(barriers2), barriers2);
-        //}
     }
 
     return (This->*ptrClearRenderTargetView)(RenderTargetView, ColorRGBA, NumRects, pRects);
@@ -4797,6 +4783,10 @@ void VR::on_draw_ui() {
             delayInit = 30;
         }
         ImGui::PopID();
+        m_foveated_fade->draw("Foveated Fade");
+        m_foveated_rounded_radius->draw("Foveated Rounded Radius");
+        m_foveated_offset_x->draw("Foveated Offset X");
+        m_foveated_offset_y->draw("Foveated Offset Y");
     }
     ImGui::Separator();
 
