@@ -83,7 +83,17 @@ VRRuntime::Error OpenVR::consume_events(std::function<void(void*)> callback) {
 }
 
 VRRuntime::Error OpenVR::update_matrices(float nearz, float farz){
-    std::unique_lock __{ this->eyes_mtx };
+    std::unique_lock __{this->eyes_mtx};
+
+    float gaze_angle_x[2] = {0, 0};
+    float gaze_angle_y[2] = {0, 0};
+    float convergence_angle = VR::get()->get_foveated_offset_x();
+    float offsetTop = -VR::get()->get_foveated_offset_y();
+
+    gaze_angle_x[0] += convergence_angle;
+    gaze_angle_x[1] -= convergence_angle;
+    gaze_angle_y[0] += offsetTop;
+    gaze_angle_y[1] += offsetTop;
 
     for (int i = 0; i < 2; i++) {
         auto nEye = (vr::EVREye)i;
@@ -97,40 +107,34 @@ VRRuntime::Error OpenVR::update_matrices(float nearz, float farz){
 
         this->hmd->GetProjectionRaw(nEye, &this->raw_projections[nEye][0], &this->raw_projections[nEye][1], &this->raw_projections[nEye][2], &this->raw_projections[nEye][3]);
 
-        XrFovf fov;
-        fov.angleLeft = this->raw_projections[nEye][0];
-        fov.angleRight = this->raw_projections[nEye][1];
-        fov.angleUp = this->raw_projections[nEye][2];
-        fov.angleDown = this->raw_projections[nEye][3];
-
-        float L_full = tan(fov.angleLeft);
-        float R_full = tan(fov.angleRight);
-        float U_full = tan(fov.angleUp);
-        float D_full = tan(fov.angleDown);
+        float L_full = this->raw_projections[nEye][0];
+        float R_full = this->raw_projections[nEye][1];
+        float U_full = this->raw_projections[nEye][3];
+        float D_full = this->raw_projections[nEye][2];
+        float totalTanW = R_full - L_full;
+        float totalTanH = U_full - D_full;
 
         float scale_uv = VR::get()->get_foveated_ratio();
-        float gaze_uv_x = 0;
-        float gaze_uv_y = 0;
 
-        float L_fove = L_full * scale_uv + gaze_uv_x;
-        float R_fove = R_full * scale_uv + gaze_uv_x;
-        float U_fove = U_full * scale_uv + gaze_uv_y;
-        float D_fove = D_full * scale_uv + gaze_uv_y;
+        float gaze_tan_x = tan(gaze_angle_x[i]);
+        float gaze_tan_y = tan(gaze_angle_y[i]);
+
+        float L_fove = L_full * scale_uv + gaze_tan_x;
+        float R_fove = R_full * scale_uv + gaze_tan_x;
+        float U_fove = U_full * scale_uv - gaze_tan_y;
+        float D_fove = D_full * scale_uv - gaze_tan_y;
         
         XrMatrix4x4f_CreateProjection((XrMatrix4x4f*)&this->foveated_projections[i], GRAPHICS_D3D, L_fove, R_fove, U_fove, D_fove, nearz, farz);
 
-        float totalTanW = R_full - L_full;
         float u0 = (L_fove - L_full) / totalTanW;
         float u1 = (R_fove - L_full) / totalTanW;
 
-        // ´¹Ö± UV
-        float totalTanH = U_full - D_full;
         float v0 = (D_fove - D_full) / totalTanH;
         float v1 = (U_fove - D_full) / totalTanH;
 
         ViewPort vp = {};
         vp.TopLeftX = u0;
-        vp.TopLeftY = v0;
+        vp.TopLeftY = 1 - v1;
         vp.Width = (u1 - u0);
         vp.Height = (v1 - v0);
 

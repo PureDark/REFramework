@@ -48,14 +48,12 @@ public:
     sdk::renderer::TargetState* motionVectorsState = NULL;
     sdk::renderer::Texture* uiBufferNativeTex = NULL;
 
-    SIZE_T mvRtvPtr = {0};
-
     TextureDesc uiBufferDesc[2];
     TextureDesc depthDesc[2];
     TextureDesc motionVectorsDesc;
     TextureDesc motionVectorsCorrectedDesc;
-    TextureDesc multipassMVDesc;
 
+    TextureDesc foveatedDepthDesc;
 	TextureDesc multipassBackupDesc[2];
 
     TextureDesc multipassUIBufferDesc;
@@ -82,6 +80,19 @@ public:
     int get_vr_frame_count() { return m_frame_count; };
     bool is_left_eye() { return m_frame_count % 2 == m_left_eye_interval; };
     float get_foveated_ratio() { return m_foveated_ratio->value(); };
+
+    float get_foveated_offset_x() { return m_foveated_offset_x->value(); };
+    float get_foveated_offset_y() { return m_foveated_offset_y->value(); };
+
+    FoveatedCompositeParams get_foveated_composite_params() {
+        FoveatedCompositeParams params{};
+        params.fFadeLeft = m_foveated_fade->value();
+        params.fFadeRight = m_foveated_fade->value();
+        params.fFadeTop = m_foveated_fade->value();
+        params.fFadeBottom = m_foveated_fade->value();
+        params.fRoundedRadius = m_foveated_rounded_radius->value();
+        return params;
+    }
 
 public:
     enum RenderingTechnique {
@@ -629,7 +640,6 @@ private:
     const ModKey::Ptr m_set_standing_key{ ModKey::create(generate_name("SetStandingOriginKey")) };
     const ModKey::Ptr m_recenter_view_key{ ModKey::create(generate_name("RecenterViewKey")) };
     const ModToggle::Ptr m_decoupled_pitch{ ModToggle::create(generate_name("DecoupledPitch"), false) };
-    const ModToggle::Ptr m_use_afw{ModToggle::create(generate_name("AlternateFrameWrapping"), true)};
     const ModToggle::Ptr m_clear_before_framewarp{ModToggle::create(generate_name("ClearBeforeFramewarp"), false)};
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
     const ModToggle::Ptr m_enable_sharpening{ModToggle::create(generate_name("EnableSharpening"), true)};
@@ -639,14 +649,18 @@ private:
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
     const ModSlider::Ptr m_ignore_motion_threshold{ModSlider::create(generate_name("IgnoreMotionThreshold"), 1.0f, 100.0f, 2.5f)};
     const ModToggle::Ptr m_enable_foveated_rendering{ModToggle::create(generate_name("EnableFoveatedRendering"), false)};
-    const ModSlider::Ptr m_foveated_ratio{ModSlider::create(generate_name("Sharpness"), 0.1f, 1.0f, 0.333333333333f)};
+    const ModSlider::Ptr m_foveated_ratio{ModSlider::create(generate_name("FovatedRatio"), 0.3333333333f, 1.0f, 0.5f)};
+    const ModSlider::Ptr m_foveated_fade{ModSlider::create(generate_name("FovatedFade"), 0.0f, 1.0f, 0.05f)};
+    const ModSlider::Ptr m_foveated_rounded_radius{ModSlider::create(generate_name("FovatedRoundedRadius"), 0.0f, 1.0f, 0.1f)};
+    const ModSlider::Ptr m_foveated_offset_x{ModSlider::create(generate_name("FovatedOffsetX"), -1.0f, 1.0f, 0.10f)};
+    const ModSlider::Ptr m_foveated_offset_y{ModSlider::create(generate_name("FovatedOffsetY"), -1.0f, 1.0f, -0.15f)};
 
     const ModCombo::Ptr m_framewarp_mode{ModCombo::create(generate_name("FramewarpMode"),
         {
             "None",
             "AlternateEyeWarping",
             "PreviousFrameWarping",
-            "CombinedWarping",
+            "CombinedWarping"
         },
         (int)FrameWarpMode::CombinedWarping)};
     const ModCombo::Ptr m_rendering_technique{ 
@@ -729,10 +743,18 @@ private:
         *m_desktop_fix,
         *m_desktop_fix_skip_present,
         *m_enable_asynchronous_rendering,
+        *m_enable_ui_fix,
+        *m_framewarp_mode,
         *m_enable_sharpening,
         *m_sharpness,
         *m_fix_upscalers_wobbling,
-        *m_fix_item_inspection
+        *m_fix_item_inspection,
+        *m_enable_foveated_rendering,
+        *m_foveated_ratio,
+        *m_foveated_fade,
+        *m_foveated_rounded_radius,
+        *m_foveated_offset_x,
+        *m_foveated_offset_y,
     };
 
     bool m_use_rotation{true};

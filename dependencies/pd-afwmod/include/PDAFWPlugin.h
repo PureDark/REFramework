@@ -146,6 +146,8 @@ namespace pd {
 		bool             IsHudlessColor = true;          // specify whether InEyeColor is hudless or contaning UI, if the latter, will use UIColorAndAlpha to avoid reprojecting UI.
 		MVType           MotionVectorsType = Normal;
 		bool             Debug = false;
+		bool             isFoveated = false;
+		RECT             foveatedArea = {}; 
 	};
 
 	struct TonemapParams
@@ -252,8 +254,14 @@ namespace pd {
 		float fFadeRight = 0.05f;
 		float fFadeTop = 0.05f;
 		float fFadeBottom = 0.05f;
-		int   bRoundedCorner = 1;
 		float fRoundedRadius = 0.1f;
+	};
+
+	enum BlendType
+	{
+		NoBlend,        // No blend
+		OneMinusSrcAlpha,  // usual
+		PremulAlpha     // UI with premul-alpha
 	};
 
 	struct __declspec(novtable) D3D12RendererAPI
@@ -277,7 +285,7 @@ namespace pd {
 		virtual bool                        CreateTexture(int nWidth, int nHeight, DXGI_FORMAT format, D3D12_RESOURCE_STATES initialState, TextureDesc& textureDesc, bool createUAV) = 0;
 		virtual bool                        CreateFrameBuffer(int nWidth, int nHeight, FrameBufferDesc& framebufferDesc, D3D12_RESOURCE_STATES initialState, bool createUAV) = 0;
 		virtual void                        Clear(ID3D12GraphicsCommandList* cmdList, TextureDesc& texDesc, const FLOAT ColorRGBA[4]) = 0;
-		virtual void                        Blit(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, D3D12_VIEWPORT viewPort = {}, bool enableBlend = false) = 0;
+		virtual void                        Blit(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, D3D12_VIEWPORT viewPort = {}, BlendType enableBlend = NoBlend) = 0;
 		virtual void                        Copy(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc) = 0;
 		virtual void                        Sharpen(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, float sharpness) = 0;
 		virtual void                        Tonemap(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, TonemapParams params) = 0;

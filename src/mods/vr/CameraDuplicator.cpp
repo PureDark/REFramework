@@ -667,6 +667,7 @@ void CameraDuplicator::copy_camera_properties() {
                         set_vignetting->call(ctx, new_component, vignetting_old);
                     }
                 } else {
+                    set_vignetting->call(ctx, old_component, via::render::ToneMapping::Vignetting::Disable);
                     set_vignetting->call(ctx, new_component, via::render::ToneMapping::Vignetting::Disable);
                 }
             }
@@ -717,6 +718,17 @@ void CameraDuplicator::copy_camera_properties() {
 
                 if (temporal_aa_algorithm_old != temporal_aa_algorithm_new) {
                     set_temporal_aa_algorithm->call(ctx, new_component, temporal_aa_algorithm_old);
+                }
+            }
+        } else if (t_name_fnv == "via.render.VolumetricFogControl"_fnv) {
+            static auto t = t1;
+            static auto get_enabled = t->get_method("get_Enabled");
+            static auto set_enabled = t->get_method("set_Enabled");
+            if (get_enabled != nullptr && set_enabled != nullptr) {
+                const auto enabled_old = get_enabled->call<bool>(ctx, old_component);
+                const auto enabled_new = get_enabled->call<bool>(ctx, new_component);
+                if (enabled_old != enabled_new) {
+                    set_enabled->call(ctx, new_component, enabled_old);
                 }
             }
         }

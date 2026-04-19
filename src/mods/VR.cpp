@@ -710,14 +710,18 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
 
     if (is_foveated_pass && m_scene_layer_data[layer].size() > 0) {
         SceneLayerData& d = m_scene_layer_data[layer][0];
-        oldViewMatrix[eye_index] = d.old_view_matrix[eye_index];
+        if (is_fix_dlss()) {
+            oldViewMatrix[eye_index] = d.old_view_matrix[eye_index];
+        }
+        else {
+            oldViewMatrix[eye_index] = d.old_view_matrix[other_eye_index];
+        }
     }
 
     auto fix_motion_vectors = [&](SceneLayerData& d) {
         auto old_view_matrix = d.old_view_matrix[eye_index];
         auto old_projection_matrix = is_foveated_pass ? get_runtime()->foveated_projections[eye_index] : get_runtime()->projections[eye_index];
         d.scene_info->old_view_projection_matrix = old_projection_matrix * old_view_matrix;
-        d.old_view_matrix[eye_index] = d.scene_info->view_matrix;
     };
 
     auto& layer_data = m_scene_layer_data[layer];
@@ -730,6 +734,7 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
                 // TAA fix
                 d.scene_info->old_view_projection_matrix = d.view_projection_matrix;
             }
+            d.old_view_matrix[eye_index] = d.scene_info->view_matrix;
         }
     }
 }
@@ -879,6 +884,10 @@ NVSDK_NGX_Result hk_NVSDK_NGX_D3D12_EvaluateFeature(
                 TextureDesc src;
                 src.pTexture = motionVectors;
                 vr->d3d12Renderer->Copy(InCmdList, vr->motionVectorsDesc, src);
+                if (vr->foveatedDepthDesc.pTexture) {
+                    src.pTexture = depth;
+                    vr->d3d12Renderer->Copy(InCmdList, vr->foveatedDepthDesc, src);
+                }
 
                 if (vr->is_fix_dlss()) {
                     EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
@@ -2978,7 +2987,7 @@ void VR::update_camera_data(int frame_count) {
         cameraData[nEye].camClipToViewMatrix = cameraData[nEye].srcClipToViewMatrix;
 
         // src -> current eye current frame foveated 
-        // srcPrev -> current eye previous farme foveated
+        // srcPrev -> current eye previous farme foveated or other eye previous farme foveated if not using wobbling fix
         // dest -> current eye current frame foveated (to negate camera motion)
 
         cameraDataForMV[nEye].srcViewToWorldMatrix = cameraData[nEye].srcViewToWorldMatrix;
@@ -4014,16 +4023,6 @@ void VR::on_pre_end_rendering(void* entry) {
             //motionVectorsState = valid_scene_layers[0]->get_motion_vectors_state();
             if (valid_scene_layers.size() > 1) {
                 depthTex[1] = valid_scene_layers[1]->get_depth_stencil_d3d12();
-                auto rtv = valid_scene_layers[1]->get_motion_vectors_state()->get_rtv(0).get();
-                mvRtvPtr = *(SIZE_T*)((uintptr_t)rtv + 0xE8);
-                if (rtvMap.contains(mvRtvPtr)) {
-                    auto mvTex = rtvMap[mvRtvPtr];
-                    if (multipassMVDesc.pTexture != mvTex) {
-                        multipassMVDesc.pTexture = mvTex;
-                        multipassMVDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-                        d3d12Renderer->SetupTextureDesc(multipassMVDesc);
-                    }
-                }
             }
         } 
     }
@@ -4776,7 +4775,28 @@ void VR::on_draw_ui() {
         m_ignore_motion_threshold->draw("Ignore Motion Threshold");
         m_framewarp_mode->draw("Framewarp Mode");
         m_enable_foveated_rendering->draw("Enable Foveated Rendering");
-        m_foveated_ratio->draw("Foveated Ratio");
+        static int delayInit = -1;
+        static float pendingValue = m_foveated_ratio->value();
+        if (delayInit > 0 && --delayInit == 0) {
+            delayInit = -1;
+            float& value = m_foveated_ratio->value();
+            value = pendingValue;
+        }
+        if (ImGui::Button(" 0.33 ")) {
+            delayInit = 30;
+            pendingValue = 0.3333333333f;
+        }
+        ImGui::SameLine(0, 4.0f);
+        if (ImGui::Button(" 0.5 ")) {
+            delayInit = 30;
+            pendingValue = 0.5f;
+        }
+        ImGui::SameLine(0, 4.0f);
+        ImGui::PushID(*m_foveated_ratio);
+        if (ImGui::DragFloat("Foveated Ratio", &pendingValue, 0.01f, m_foveated_ratio->range().x, m_foveated_ratio->range().y)) {
+            delayInit = 30;
+        }
+        ImGui::PopID();
     }
     ImGui::Separator();
 

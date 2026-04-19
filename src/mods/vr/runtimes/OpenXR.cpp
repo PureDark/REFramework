@@ -291,7 +291,8 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
     }
     float gaze_angle_x[2] = {0, 0};
     float gaze_angle_y[2] = {0, 0};
-    static float convergence_angle = 0.10f;
+    float convergence_angle = VR::get()->get_foveated_offset_x();
+    float offsetTop = -VR::get()->get_foveated_offset_y();
 
     if (eyeGazeActionSet != NULL) {
         XrActiveActionSet activeActionSet{eyeGazeActionSet, XR_NULL_PATH};
@@ -350,6 +351,8 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
     } else {
         gaze_angle_x[0] += convergence_angle;
         gaze_angle_x[1] -= convergence_angle;
+        gaze_angle_y[0] += offsetTop;
+        gaze_angle_y[1] += offsetTop;
     }
 
     std::unique_lock __{ this->eyes_mtx };
