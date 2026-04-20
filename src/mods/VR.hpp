@@ -74,11 +74,14 @@ public:
     void update_camera_data(int frame_count);
     void get_camera_data();
 
+    int get_vr_frame_count() { return m_frame_count; };
+    bool is_left_eye() { return m_frame_count % 2 == m_left_eye_interval; };
+
     bool is_fix_dlss() { return m_fix_upscalers_wobbling->value(); };
     bool is_enable_sharpening() { return m_enable_sharpening->value(); };
     float get_sharpness() { return m_sharpness->value(); };
-    int get_vr_frame_count() { return m_frame_count; };
-    bool is_left_eye() { return m_frame_count % 2 == m_left_eye_interval; };
+
+    float get_foveated_outter_blur() { return m_foveated_outter_blurs->value(); };
 
     bool is_force_fixed_foveated() { return m_force_fixed_foveated->value(); };
     float get_foveated_ratio() { return m_foveated_ratio->value(); };
@@ -646,7 +649,7 @@ private:
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
     const ModToggle::Ptr m_enable_sharpening{ModToggle::create(generate_name("EnableSharpening"), true)};
     const ModToggle::Ptr m_fix_upscalers_wobbling{ModToggle::create(generate_name("UpscalersWobblingFix"), true)};
-    const ModToggle::Ptr m_disable_volumetric_fog{ModToggle::create(generate_name("DisableVolumetricFog"), false)};
+    const ModToggle::Ptr m_disable_volumetric_fog{ModToggle::create(generate_name("DisableVolumetricFog"), true)};
     const ModToggle::Ptr m_fix_item_inspection{ModToggle::create(generate_name("FixItemInspection"), true)};
     const ModSlider::Ptr m_sharpness{ModSlider::create(generate_name("Sharpness"), 0.0f, 1.0f, 0.6f)};
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
@@ -654,10 +657,11 @@ private:
     const ModToggle::Ptr m_enable_foveated_rendering{ModToggle::create(generate_name("EnableFoveatedRendering"), false)};
     const ModToggle::Ptr m_force_fixed_foveated{ModToggle::create(generate_name("Force Fixed Foveated"), false)};
     const ModSlider::Ptr m_foveated_ratio{ModSlider::create(generate_name("FovatedRatio"), 0.3333333333f, 1.0f, 0.5f)};
-    const ModSlider::Ptr m_foveated_fade{ModSlider::create(generate_name("FovatedFade"), 0.0f, 1.0f, 0.05f)};
-    const ModSlider::Ptr m_foveated_rounded_radius{ModSlider::create(generate_name("FovatedRoundedRadius"), 0.0f, 1.0f, 0.1f)};
-    const ModSlider::Ptr m_foveated_offset_x{ModSlider::create(generate_name("FovatedOffsetX"), -1.0f, 1.0f, 0.045f)};
-    const ModSlider::Ptr m_foveated_offset_y{ModSlider::create(generate_name("FovatedOffsetY"), -1.0f, 1.0f, -0.15f)};
+    const ModSlider::Ptr m_foveated_outter_blurs{ModSlider::create(generate_name("FoveatedOutterBlur"), 0.0f, 5.0f, 0.0f)};
+    const ModSlider::Ptr m_foveated_fade{ModSlider::create(generate_name("FovatedFade"), 0.0f, 1.0f, 0.1f)};
+    const ModSlider::Ptr m_foveated_rounded_radius{ModSlider::create(generate_name("FovatedRoundedRadius"), 0.0f, 1.0f, 0.0f)};
+    const ModSlider::Ptr m_foveated_offset_x{ModSlider::create(generate_name("FovatedOffsetX"), -1.0f, 1.0f, 0.05f)};
+    const ModSlider::Ptr m_foveated_offset_y{ModSlider::create(generate_name("FovatedOffsetY"), -1.0f, 1.0f, -0.05f)};
 
     const ModCombo::Ptr m_framewarp_mode{ModCombo::create(generate_name("FramewarpMode"),
         {

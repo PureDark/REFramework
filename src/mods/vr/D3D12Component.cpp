@@ -194,7 +194,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             }
             FLOAT black[4] = {0, 0, 0, 0};
             if (vr->multipassBackupDesc[nEye].pTexture) {
-                vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color);
+                vr->d3d12Renderer->Blur(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vr->get_foveated_outter_blur());
                  TonemapParams params;
                  params.fGamma = 1.10f;
                  params.fLowerLimit = 0.024f;

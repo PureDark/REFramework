@@ -7,6 +7,8 @@
 #include "HookManager.hpp"
 #include "CameraDuplicator.hpp"
 
+#include "sdk/REManagedObject.hpp"
+
 namespace vrmod {
 constexpr auto PRIORITY_OFFSET = 0x48;
 
@@ -498,11 +500,30 @@ void CameraDuplicator::copy_camera_properties() {
 
         const auto t_name_fnv = utility::hash(t1->get_full_name());
 
+        bool is_tonemap = t_name_fnv == "via.render.ToneMapping"_fnv;
+
         if (!m_getter_setters.contains(t1)) {
             const auto methods = t1->get_methods();
 
             for (auto& method : methods) {
                 const auto name = std::string{method.get_name()};
+
+                if (is_tonemap) {
+                    if (name == "get_ExposureEnable" || 
+                        name == "set_ExposureEnable" || 
+                        name == "get_EV" || 
+                        name == "set_EV" ||
+                        name == "get_SnappedRealEV" || 
+                        name == "get_RoundExposure" || 
+                        name == "set_RoundExposure" || 
+                        name == "get_AutoExposureMaxEV" || 
+                        name == "set_AutoExposureMaxEV" || 
+                        name == "get_AutoExposureMinEV" || 
+                        name == "set_AutoExposureMinEV" || 
+                        name == "get_EnableLocalExposure" || 
+                        name == "set_EnableLocalExposure")
+                        continue;
+                }
 
                 if (name.find("get_") == 0) {
                     spdlog::info("Found getter {}", name);
@@ -679,10 +700,81 @@ void CameraDuplicator::copy_camera_properties() {
                 const auto auto_exposure_old = get_auto_exposure->call<uint32_t>(ctx, old_component);
                 const auto auto_exposure_new = get_auto_exposure->call<uint32_t>(ctx, new_component);
 
-                if (auto_exposure_old != auto_exposure_new) {
-                    set_auto_exposure->call(ctx, new_component, auto_exposure_old);
+                //if (auto_exposure_old != auto_exposure_new) {
+                //    set_auto_exposure->call(ctx, new_component, auto_exposure_old);
+                //}
+                set_auto_exposure->call(ctx, new_component, via::render::ToneMapping::AutoExposure::Disable);
+            }
+            static auto set_ExposureEnable = t->get_method("set_ExposureEnable");
+            if (set_ExposureEnable != nullptr)
+                set_ExposureEnable->call(ctx, new_component, true);
+
+            static auto set_EnableLocalExposure = t->get_method("set_EnableLocalExposure");
+            if (set_EnableLocalExposure != nullptr)
+                set_EnableLocalExposure->call(ctx, new_component, false);
+
+            static REManagedObject* renderingManager = sdk::get_managed_singleton<::REManagedObject>("app.RenderingManager");
+            static REManagedObject* _toneMapping = nullptr;
+
+            if (!_toneMapping) {
+                auto type_info = utility::re_managed_object::get_type(renderingManager);
+                auto type_def = utility::re_type::get_type_definition(type_info);
+
+                const auto is_real_object = utility::re_managed_object::is_managed_object(renderingManager);
+                auto fields = type_def->get_fields();
+
+                if (fields.size() > 0) {
+
+                    for (auto f : fields) {
+                        const auto field_type = f->get_type();
+                        const auto field_name = f->get_name();
+                        const auto fieldptr_offset = f->get_offset_from_fieldptr();
+                        const auto is_valuetype = field_type->is_value_type();
+                        auto offset = fieldptr_offset;
+                        void* data = nullptr;
+                        void* ptr_to_data{nullptr};
+                        if (strcmp(field_name, "_ToneMapping") == 0) {
+                            if (renderingManager != nullptr) {
+                                offset += type_def->get_fieldptr_offset();
+                                data = Address{renderingManager}.get(offset);
+                                ptr_to_data = data;
+
+                                if (!is_valuetype) {
+                                    data = *(void**)data;
+                                    _toneMapping = (REManagedObject*)data;
+                                }
+                            }
+                        }
+                    }
                 }
-                //set_auto_exposure->call(ctx, new_component, via::render::ToneMapping::AutoExposure::Disable);
+            }
+
+            static VariableDescriptor* calcRealEV = nullptr;
+            if (calcRealEV == nullptr && _toneMapping) {
+                auto type_info = t->get_type();
+                auto descriptors = type_info->fields->variables->data->descriptors;
+                for (auto i = descriptors; i != descriptors + type_info->fields->variables->num; ++i) {
+                    auto variable = *i;
+
+                    if (variable == nullptr) {
+                        continue;
+                    }
+                    const auto name_fnv = utility::hash(variable->name);
+                    if (name_fnv == "calcRealEV"_fnv) {
+                        calcRealEV = variable;
+                    }
+                }
+            }
+
+            static auto get_SnappedRealEV = t->get_method("get_SnappedRealEV");
+            static auto set_EV = t->get_method("set_EV");
+            if (calcRealEV != nullptr && get_SnappedRealEV != nullptr && set_EV != nullptr) {
+                auto get_value_func = (void* (*)(VariableDescriptor*, REManagedObject*, void*))calcRealEV->function;
+                char raw_data[0x100]{0};
+                get_value_func(calcRealEV, _toneMapping, &raw_data);
+
+                const auto snappedRealEV = get_SnappedRealEV->call<float>(ctx, old_component);
+                set_EV->call(ctx, new_component, snappedRealEV);
             }
 
             static auto get_neighborhood_clamp = t->get_method("getNeighborhoodClamp");

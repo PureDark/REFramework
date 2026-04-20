@@ -957,8 +957,9 @@ ffxReturnCode_t hk_ffxDispatch(ffxContext* context, const ffxDispatchDescHeader*
         FfxApiResource mvApiResource = upscaleDesc->motionVectors;
         float mvScaleX = upscaleDesc->motionVectorScale[0];
         float mvScaleY = upscaleDesc->motionVectorScale[1];
-        if (vr->is_hmd_active() && mvApiResource.resource && vr->motionVectorsDesc.pTexture) {
+        if (vr->is_hmd_active() && depthApiResource.resource && mvApiResource.resource && vr->motionVectorsDesc.pTexture) {
             auto InCmdList = (ID3D12GraphicsCommandList*)upscaleDesc->commandList;
+            auto depth = (ID3D12Resource*)depthApiResource.resource;
             auto motionVectors = (ID3D12Resource*)mvApiResource.resource;
             auto desc1 = motionVectors->GetDesc();
             auto desc2 = vr->motionVectorsDesc.pTexture->GetDesc();
@@ -966,6 +967,10 @@ ffxReturnCode_t hk_ffxDispatch(ffxContext* context, const ffxDispatchDescHeader*
                 TextureDesc src;
                 src.pTexture = motionVectors;
                 vr->d3d12Renderer->Copy(InCmdList, vr->motionVectorsDesc, src);
+                if (vr->foveatedDepthDesc.pTexture) {
+                    src.pTexture = depth;
+                    vr->d3d12Renderer->Copy(InCmdList, vr->foveatedDepthDesc, src);
+                }
                 if (vr->is_fix_dlss()) {
                     EyeIndex nEye = (vr->get_vr_frame_count() % 2 == 0) ? EyeLeft : EyeRight;
                     auto currHandle = vr->vrContexts[0];
@@ -2589,18 +2594,24 @@ void VR::disable_bad_effects() {
         }();
     }
 
-    if (m_force_aa_settings->value() && get_antialiasing_method != nullptr && set_antialiasing_method != nullptr) {
-        const auto antialiasing = get_antialiasing_method->call<via::render::RenderConfig::AntiAliasingType>(context, render_config);
+    if (get_antialiasing_method != nullptr && set_antialiasing_method != nullptr) {
 
-        // Disable TAA
-        switch (antialiasing) {
-            case via::render::RenderConfig::AntiAliasingType::TAA: [[fallthrough]];
+        if (is_using_afw_foveated()) {
+            set_antialiasing_method->call<void*>(context, render_config, via::render::RenderConfig::AntiAliasingType::TAA);
+        } else if (m_force_aa_settings->value()) {
+            const auto antialiasing = get_antialiasing_method->call<via::render::RenderConfig::AntiAliasingType>(context, render_config);
+
+            // Disable TAA
+            switch (antialiasing) {
+            case via::render::RenderConfig::AntiAliasingType::TAA:
+                [[fallthrough]];
             case via::render::RenderConfig::AntiAliasingType::FXAA_TAA:
                 set_antialiasing_method->call<void*>(context, render_config, via::render::RenderConfig::AntiAliasingType::NONE);
                 spdlog::info("[VR] TAA disabled");
                 break;
             default:
                 break;
+            }
         }
     }
 
@@ -3030,7 +3041,8 @@ void VR::on_present() {
     }
     if (GetAsyncKeyState(VK_NUMPAD2) == 0 && btn2 == true) {
         btn2 = false;
-        mDebug2 = !mDebug2;
+        //mDebug2 = !mDebug2;
+        m_disable_volumetric_fog->toggle();
     }
     static bool btn3 = false;
     if (GetAsyncKeyState(VK_NUMPAD3) < 0 && btn3 == false) {
@@ -3051,7 +3063,7 @@ void VR::on_present() {
 
     // case 1: sequential frames and rendered frame == right eye (every two frames)
     // case 2: AFW and no foveated rendering (each frame)
-    // case 3: AFW and foveated rendering and rendered frame is FR frame
+    // case 3: AFW and foveated rendering
     if ((is_using_sf() && m_render_frame_count % 2 == m_right_eye_interval) || 
         (is_using_afw()) ||
         (is_using_afw_foveated())) {
@@ -3215,7 +3227,7 @@ void VR::on_present() {
 
     // case 1: sequential frames and rendered frame == right eye (every two frames)
     // case 2: AFW and no foveated rendering (each frame)
-    // case 3: AFW and foveated rendering and rendered frame is FR frame
+    // case 3: AFW and foveated rendering
     if ((is_using_sf() && m_render_frame_count % 2 == m_right_eye_interval) || 
         (is_using_afw()) ||
         (is_using_afw_foveated())) {
@@ -3240,7 +3252,7 @@ void VR::on_post_present() {
     
     // case 1: sequential frames and rendered frame == right eye (every two frames)
     // case 2: AFW and no foveated rendering (each frame)
-    // case 3: AFW and foveated rendering and rendered frame is FR frame
+    // case 3: AFW and foveated rendering
     if ((is_using_sf() && m_render_frame_count % 2 == m_right_eye_interval) || 
         (is_using_afw()) ||
         (is_using_afw_foveated())) {
@@ -4206,7 +4218,7 @@ void VR::on_wait_rendering(void* entry) {
     // to start render work as soon as possible
     // case 1: sequential frames and rendered frame == right eye (every two frames)
     // case 2: AFW and no foveated rendering (each frame)
-    // case 3: AFW and foveated rendering and rendered frame is FR frame
+    // case 3: AFW and foveated rendering
     if ((is_using_sf() && m_render_frame_count % 2 == m_right_eye_interval) || is_using_afw()|| is_using_afw_foveated()) {
         if (WaitForSingleObject(m_present_finished_event, 333) == WAIT_TIMEOUT) {
             timed_out = true;
@@ -4789,25 +4801,30 @@ void VR::on_draw_ui() {
             float& value = m_foveated_ratio->value();
             value = pendingValue;
         }
-        if (ImGui::Button(" 0.33 ")) {
-            delayInit = 30;
-            pendingValue = 0.3333333333f;
+        if (m_enable_foveated_rendering->value()) {
+            m_force_fixed_foveated->draw("Force Fixed Foveated Area");
+
+            if (ImGui::Button(" 0.33 ")) {
+                delayInit = 30;
+                pendingValue = 0.3333333333f;
+            }
+            ImGui::SameLine(0, 4.0f);
+            if (ImGui::Button(" 0.5 ")) {
+                delayInit = 30;
+                pendingValue = 0.5f;
+            }
+            ImGui::SameLine(0, 4.0f);
+            ImGui::PushID(*m_foveated_ratio);
+            if (ImGui::DragFloat("Foveated Ratio", &pendingValue, 0.01f, m_foveated_ratio->range().x, m_foveated_ratio->range().y)) {
+                delayInit = 90;
+            }
+            ImGui::PopID();
+            m_foveated_outter_blurs->draw("Foveated Outter Blur");
+            m_foveated_fade->draw("Foveated Fade");
+            m_foveated_rounded_radius->draw("Foveated Rounded Radius");
+            m_foveated_offset_x->draw("Foveated Offset X");
+            m_foveated_offset_y->draw("Foveated Offset Y");
         }
-        ImGui::SameLine(0, 4.0f);
-        if (ImGui::Button(" 0.5 ")) {
-            delayInit = 30;
-            pendingValue = 0.5f;
-        }
-        ImGui::SameLine(0, 4.0f);
-        ImGui::PushID(*m_foveated_ratio);
-        if (ImGui::DragFloat("Foveated Ratio", &pendingValue, 0.01f, m_foveated_ratio->range().x, m_foveated_ratio->range().y)) {
-            delayInit = 30;
-        }
-        ImGui::PopID();
-        m_foveated_fade->draw("Foveated Fade");
-        m_foveated_rounded_radius->draw("Foveated Rounded Radius");
-        m_foveated_offset_x->draw("Foveated Offset X");
-        m_foveated_offset_y->draw("Foveated Offset Y");
     }
     ImGui::Separator();
 
