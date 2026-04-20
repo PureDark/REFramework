@@ -646,6 +646,7 @@ private:
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
     const ModToggle::Ptr m_enable_sharpening{ModToggle::create(generate_name("EnableSharpening"), true)};
     const ModToggle::Ptr m_fix_upscalers_wobbling{ModToggle::create(generate_name("UpscalersWobblingFix"), true)};
+    const ModToggle::Ptr m_disable_volumetric_fog{ModToggle::create(generate_name("DisableVolumetricFog"), false)};
     const ModToggle::Ptr m_fix_item_inspection{ModToggle::create(generate_name("FixItemInspection"), true)};
     const ModSlider::Ptr m_sharpness{ModSlider::create(generate_name("Sharpness"), 0.0f, 1.0f, 0.6f)};
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
@@ -751,6 +752,7 @@ private:
         *m_enable_sharpening,
         *m_sharpness,
         *m_fix_upscalers_wobbling,
+        *m_disable_volumetric_fog,
         *m_fix_item_inspection,
         *m_enable_foveated_rendering,
         *m_force_fixed_foveated,

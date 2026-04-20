@@ -2128,6 +2128,27 @@ void VR::update_camera() {
         // Disable lens distortion
         set_lens_distortion(false);
 
+        
+        const auto camera_gameobject = utility::re_component::get_game_object((REComponent*)camera);
+        if (camera_gameobject != nullptr) {
+            const auto component = utility::re_component::find<REComponent>(camera_gameobject->transform, "via.render.VolumetricFogControl");
+            if (component != nullptr) {
+                const auto t = utility::re_managed_object::get_type_definition(component);
+                const auto t_name_fnv = utility::hash(t->get_full_name());
+                auto ctx = sdk::get_thread_context();
+                if (t_name_fnv == "via.render.VolumetricFogControl"_fnv) {
+                    static auto get_enabled = t->get_method("get_Enabled");
+                    static auto set_enabled = t->get_method("set_Enabled");
+                    if (get_enabled != nullptr && set_enabled != nullptr) {
+                        const auto enabled = get_enabled->call<bool>(ctx, component);
+                        if (enabled == m_disable_volumetric_fog->value()) {
+                            set_enabled->call(ctx, component, !m_disable_volumetric_fog->value());
+                        }
+                    }
+                }
+            }
+        }
+
     #if defined(RE2) || defined(RE3)
         if (FirstPerson::get()->will_be_used()) {
             m_needs_camera_restore = false;
@@ -4757,6 +4778,7 @@ void VR::on_draw_ui() {
         m_sharpness->draw("Sharpness");
         m_fix_upscalers_wobbling->draw("Fix Upscalers Wobbling");
         m_fix_item_inspection->draw("Fix Item Inspection Double Vision");
+        m_disable_volumetric_fog->draw("Disable Volumetric Fog");
         m_ignore_motion_threshold->draw("Ignore Motion Threshold");
         m_framewarp_mode->draw("Framewarp Mode");
         m_enable_foveated_rendering->draw("Enable Foveated Rendering");
