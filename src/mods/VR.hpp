@@ -68,6 +68,7 @@ public:
     ffxContext vrContexts[2] = {NULL, NULL};
 
     std::array<Matrix4x4f, 2> oldViewMatrix{};
+    std::array<Matrix4x4f, 2> oldFoveatedProjectionMatrix{};
 
     int last_update_camera_data_frame_count = 0;
     void update_camera_data(int frame_count);

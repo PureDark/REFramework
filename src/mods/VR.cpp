@@ -709,17 +709,14 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
 
     if (is_foveated_pass && m_scene_layer_data[layer].size() > 0) {
         SceneLayerData& d = m_scene_layer_data[layer][0];
-        if (is_fix_dlss()) {
-            oldViewMatrix[eye_index] = d.old_view_matrix[eye_index];
-        }
-        else {
-            oldViewMatrix[eye_index] = d.old_view_matrix[other_eye_index];
-        }
+        oldViewMatrix[eye_index] = is_fix_dlss() ? d.old_view_matrix[eye_index] : d.old_view_matrix[other_eye_index];
+        oldFoveatedProjectionMatrix[eye_index] = is_fix_dlss() ? get_runtime()->old_foveated_projections[1][eye_index]
+                                                               : get_runtime()->old_foveated_projections[0][other_eye_index];
     }
 
     auto fix_motion_vectors = [&](SceneLayerData& d) {
         auto old_view_matrix = d.old_view_matrix[eye_index];
-        auto old_projection_matrix = is_foveated_pass ? get_runtime()->foveated_projections[eye_index] : get_runtime()->projections[eye_index];
+        auto old_projection_matrix = is_foveated_pass ? get_runtime()->old_foveated_projections[1][eye_index] : get_runtime()->projections[eye_index];
         d.scene_info->old_view_projection_matrix = old_projection_matrix * old_view_matrix;
     };
 
@@ -733,7 +730,9 @@ void VR::on_scene_layer_update(sdk::renderer::layer::Scene* layer, void* render_
                 // TAA fix
                 d.scene_info->old_view_projection_matrix = d.view_projection_matrix;
             }
-            d.old_view_matrix[eye_index] = d.scene_info->view_matrix;
+            if (m_multipass.pass == 0) {
+                d.old_view_matrix[eye_index] = d.scene_info->view_matrix;
+            }
         }
     }
 }
@@ -2976,18 +2975,18 @@ void VR::update_camera_data(int frame_count) {
         // srcPrev -> current eye previous farme foveated or other eye previous farme foveated if not using wobbling fix
         // dest -> current eye current frame foveated (to negate camera motion)
 
-        cameraDataForMV[nEye].srcViewToWorldMatrix = cameraData[nEye].srcViewToWorldMatrix;
         cameraDataForMV[nEye].srcWorldToViewMatrix = cameraData[nEye].srcWorldToViewMatrix;
+        cameraDataForMV[nEye].srcViewToWorldMatrix = cameraData[nEye].srcViewToWorldMatrix;
         cameraDataForMV[nEye].srcViewToClipMatrix = to_reverseZ(get_runtime()->foveated_projections[nEye]);
         cameraDataForMV[nEye].srcClipToViewMatrix = glm::inverse(cameraDataForMV[nEye].srcViewToClipMatrix);
 
-        cameraDataForMV[nEye].srcViewToWorldMatrixPrev = glm::inverse(oldViewMatrix[nEye]);
         cameraDataForMV[nEye].srcWorldToViewMatrixPrev = oldViewMatrix[nEye];
-        cameraDataForMV[nEye].srcViewToClipMatrixPrev = cameraDataForMV[nEye].srcViewToClipMatrix;
-        cameraDataForMV[nEye].srcClipToViewMatrixPrev = cameraDataForMV[nEye].srcClipToViewMatrix;
+        cameraDataForMV[nEye].srcViewToWorldMatrixPrev = glm::inverse(cameraDataForMV[nEye].srcWorldToViewMatrixPrev);
+        cameraDataForMV[nEye].srcViewToClipMatrixPrev = oldFoveatedProjectionMatrix[nEye];
+        cameraDataForMV[nEye].srcClipToViewMatrixPrev = glm::inverse(cameraDataForMV[nEye].srcViewToClipMatrixPrev);
 
-        cameraDataForMV[nEye].destViewToWorldMatrix = cameraDataForMV[nEye].srcViewToWorldMatrix;
         cameraDataForMV[nEye].destWorldToViewMatrix = cameraDataForMV[nEye].srcWorldToViewMatrix;
+        cameraDataForMV[nEye].destViewToWorldMatrix = cameraDataForMV[nEye].srcViewToWorldMatrix;
         cameraDataForMV[nEye].destViewToClipMatrix = cameraDataForMV[nEye].srcViewToClipMatrix;
         cameraDataForMV[nEye].destClipToViewMatrix = cameraDataForMV[nEye].srcClipToViewMatrix;
     }
@@ -3105,7 +3104,6 @@ void VR::on_present() {
     }
     if (GetAsyncKeyState(VK_NUMPAD7) == 0 && btn7 == true) {
         btn7 = false;
-        //m_use_afr->toggle();
         int32_t& value = m_rendering_technique->value();
         value = (value + 1) % 2;
     }
@@ -3115,6 +3113,7 @@ void VR::on_present() {
     }
     if (GetAsyncKeyState(VK_NUMPAD8) == 0 && btn8 == true) {
         btn8 = false;
+        m_force_fixed_foveated->toggle();
     }
     static bool btn9 = false;
     if (GetAsyncKeyState(VK_NUMPAD9) < 0 && btn9 == false) {

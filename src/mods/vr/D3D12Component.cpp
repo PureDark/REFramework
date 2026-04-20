@@ -193,11 +193,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 params.IsHudlessColor = false;
             }
             FLOAT black[4] = {0, 0, 0, 0};
-            if (vr->multipassBackupDesc[nEye].pTexture && !vr->mDebug1) {
-                if (vr->mDebug2) {
-                    vr->d3d12Renderer->Clear(cmdList, eyeFrameBuffer.color, black);
-                    vr->d3d12Renderer->Clear(cmdList, s_CurrentEyeFrameBuffer.color, black);
-                }
+            if (vr->multipassBackupDesc[nEye].pTexture) {
                 vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color);
                  TonemapParams params;
                  params.fGamma = 1.10f;
@@ -222,6 +218,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 mvparams.cameraData = &vr->cameraDataForMV[nEye];
                 mvparams.InMotionScale[0] = (float)vr->motionVectorsDesc.pTexture->GetDesc().Width;
                 mvparams.InMotionScale[1] = (float)vr->motionVectorsDesc.pTexture->GetDesc().Height;
+                mvparams.extractObjectOnlyMotion = true;
                 vr->d3d12Renderer->CorrectMotionVectors(cmdList, vr->motionVectorsCorrectedDesc, mvparams);
                 vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.motionVectors, vr->motionVectorsCorrectedDesc, vp);
             }

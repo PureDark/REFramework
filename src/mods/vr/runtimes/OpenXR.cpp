@@ -382,6 +382,11 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
         // Update projection matrix
         XrMatrix4x4f_CreateProjection((XrMatrix4x4f*)&this->projections[i], GRAPHICS_D3D, L_full, R_full, U_full, D_full, nearz, farz);
 
+        // current => [0] => [1]
+        // stores two frames
+        this->old_foveated_projections[1][i] = this->old_foveated_projections[0][i];
+        this->old_foveated_projections[0][i] = this->foveated_projections[i];
+
         XrMatrix4x4f_CreateProjection((XrMatrix4x4f*)&this->foveated_projections[i], GRAPHICS_D3D, L_fove, R_fove, U_fove, D_fove, nearz, farz);
 
         float u0 = (L_fove - L_full) / totalTanW;

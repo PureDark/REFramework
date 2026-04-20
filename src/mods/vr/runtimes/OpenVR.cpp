@@ -90,6 +90,14 @@ VRRuntime::Error OpenVR::update_matrices(float nearz, float farz){
     float convergence_angle = VR::get()->get_foveated_offset_x();
     float offsetTop = -VR::get()->get_foveated_offset_y();
 
+    vr::HmdVector2_t NdcLeft, NdcRight;
+    if (!VR::get()->is_force_fixed_foveated() && this->hmd->GetEyeTrackedFoveationCenter(&NdcLeft, &NdcRight)) {
+        gaze_angle_x[0] = atanf(NdcLeft.v[0]);
+        gaze_angle_y[0] = -atanf(NdcLeft.v[1]);
+        gaze_angle_x[1] = atanf(NdcRight.v[0]);
+        gaze_angle_y[1] = -atanf(NdcRight.v[1]);
+    }
+
     gaze_angle_x[0] += convergence_angle;
     gaze_angle_x[1] -= convergence_angle;
     gaze_angle_y[0] += offsetTop;
@@ -123,7 +131,12 @@ VRRuntime::Error OpenVR::update_matrices(float nearz, float farz){
         float R_fove = R_full * scale_uv + gaze_tan_x;
         float U_fove = U_full * scale_uv - gaze_tan_y;
         float D_fove = D_full * scale_uv - gaze_tan_y;
-        
+
+        // current => [0] => [1]
+        // stores two frames
+        this->old_foveated_projections[1][i] = this->old_foveated_projections[0][i];
+        this->old_foveated_projections[0][i] = this->foveated_projections[i];
+
         XrMatrix4x4f_CreateProjection((XrMatrix4x4f*)&this->foveated_projections[i], GRAPHICS_D3D, L_fove, R_fove, U_fove, D_fove, nearz, farz);
 
         float u0 = (L_fove - L_full) / totalTanW;
