@@ -4,7 +4,6 @@
 #include <d3d12.h>
 #include <dxgi1_2.h>
 #include <../../../dependencies/glm/glm/glm.hpp>
-#include "../../../build64_all/_deps/directxtk12-src/Src/d3dx12.h"
 
 namespace pd {
 	struct DeviceParams
@@ -58,12 +57,12 @@ namespace pd {
 		ID3D12Resource*               pTexture = nullptr;
 		int                           srvPos = -1;
 		int                           uavPos = -1;
-		CD3DX12_GPU_DESCRIPTOR_HANDLE shaderResourceViewHandle;
-		CD3DX12_GPU_DESCRIPTOR_HANDLE unorderedAccessViewHandle;
+		D3D12_GPU_DESCRIPTOR_HANDLE shaderResourceViewHandle;
+		D3D12_GPU_DESCRIPTOR_HANDLE unorderedAccessViewHandle;
 		union
 		{
-			CD3DX12_CPU_DESCRIPTOR_HANDLE renderTargetViewHandle;
-			CD3DX12_CPU_DESCRIPTOR_HANDLE depthStencilViewHandle;
+			D3D12_CPU_DESCRIPTOR_HANDLE renderTargetViewHandle;
+			D3D12_CPU_DESCRIPTOR_HANDLE depthStencilViewHandle;
 		};
 		D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_COMMON;
 	};
