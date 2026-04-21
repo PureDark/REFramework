@@ -710,8 +710,10 @@ void CameraDuplicator::copy_camera_properties() {
                 set_ExposureEnable->call(ctx, new_component, true);
 
             static auto set_EnableLocalExposure = t->get_method("set_EnableLocalExposure");
-            if (set_EnableLocalExposure != nullptr)
+            if (set_EnableLocalExposure != nullptr) {
+                set_EnableLocalExposure->call(ctx, old_component, false);
                 set_EnableLocalExposure->call(ctx, new_component, false);
+            }
 
             static REManagedObject* renderingManager = sdk::get_managed_singleton<::REManagedObject>("app.RenderingManager");
             static REManagedObject* _toneMapping = nullptr;
