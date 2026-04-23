@@ -187,26 +187,53 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             vp.Height = foveatedVP.Height * colorDesc.Height;
             vp.MinDepth = 0;
             vp.MaxDepth = 1;
-            if (vr->m_enable_ui_fix->value() && vr->multipassUIBufferDesc.pTexture) {
-                vr->d3d12Renderer->Blit(cmdList, vr->multipassUIBufferDesc, vr->uiBufferDesc[1]);
-                params.InUIColorAlpha = &vr->multipassUIBufferDesc;
-                params.IsHudlessColor = false;
-            }
             FLOAT black[4] = {0, 0, 0, 0};
             if (vr->multipassBackupDesc[nEye].pTexture) {
-                vr->d3d12Renderer->Blur(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, vr->get_foveated_outter_blur());
-                 TonemapParams params;
-                 params.fGamma = 1.10f;
-                 params.fLowerLimit = 0.024f;
-                 params.fUpperLimit = 0.982f;
-                 params.fConvertToLimit = 0.958f;
-                 vr->d3d12Renderer->Tonemap(cmdList, vr->multipassBackupDesc[nEye], vr->uiBufferDesc[0], params);
-                //vr->d3d12Renderer->Blit(cmdList, vr->multipassBackupDesc[nEye], vr->uiBufferDesc[0], {}, PremulAlpha);
-                vr->d3d12Renderer->FoveatedComposite(cmdList, eyeFrameBuffer.color, vr->multipassBackupDesc[nEye], vp, vr->get_foveated_composite_params());
-                vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.depth, vr->depthDesc[1]);
+                float edgeCutoutRatio = vr->get_edge_scan_line_fix_range();
+                float blurRadius = vr->get_foveated_periphery_blur();
+                edgeCutoutRatio = 1.0f - 1.0f / (1.0f + edgeCutoutRatio);
+                auto desc = s_CurrentEyeFrameBuffer.color.pTexture->GetDesc();
+                D3D12_BOX srcBox = (nEye == EyeRight) ? CD3DX12_BOX(edgeCutoutRatio * desc.Width, 0, desc.Width, desc.Height)
+                                                      : CD3DX12_BOX(0, 0, (1 - edgeCutoutRatio) * desc.Width, desc.Height);
+                if (vr->mDebug1 || (edgeCutoutRatio <= 0 && blurRadius <= 0)) {
+                    vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color);
+                    vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.depth, vr->depthDesc[1]);
+                }else if (edgeCutoutRatio > 0 && blurRadius <= 0) {
+                    vr->d3d12Renderer->Crop(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, srcBox);
+                    vr->d3d12Renderer->Crop(cmdList, eyeFrameBuffer.depth, vr->depthDesc[1], srcBox);
+                } else if (edgeCutoutRatio > 0 && blurRadius > 0) {
+                    vr->d3d12Renderer->Crop(cmdList, otherEyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, srcBox);
+                    vr->d3d12Renderer->Blur(cmdList, eyeFrameBuffer.color, otherEyeFrameBuffer.color, blurRadius);
+                    vr->d3d12Renderer->Crop(cmdList, eyeFrameBuffer.depth, vr->depthDesc[1], srcBox);
+                } else {
+                    vr->d3d12Renderer->Blur(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color, blurRadius);
+                    vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.depth, vr->depthDesc[1]);
+                }
                 vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.depth, vr->foveatedDepthDesc, vp);
+
+                if (vr->m_enable_ui_fix->value() && vr->multipassUIBufferDesc.pTexture) {
+                    if (edgeCutoutRatio > 0) {
+                        vr->d3d12Renderer->Crop(cmdList, vr->multipassUIBufferDesc, vr->uiBufferDesc[1], srcBox);
+                    } else {
+                        vr->d3d12Renderer->Blit(cmdList, vr->multipassUIBufferDesc, vr->uiBufferDesc[1]);
+                    }
+                    params.InUIColorAlpha = &vr->multipassUIBufferDesc;
+                    params.IsHudlessColor = false;
+                }
+                TonemapParams params;
+                params.fGamma = 1.10f;
+                params.fLowerLimit = 0.024f;
+                params.fUpperLimit = 0.982f;
+                params.fConvertToLimit = 0.958f;
+                vr->d3d12Renderer->Tonemap(cmdList, vr->multipassBackupDesc[nEye], vr->uiBufferDesc[0], params);
+                vr->d3d12Renderer->FoveatedComposite(cmdList, eyeFrameBuffer.color, vr->multipassBackupDesc[nEye], vp, vr->get_foveated_composite_params());
             } else {
                 vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.color, s_CurrentEyeFrameBuffer.color);
+                if (vr->m_enable_ui_fix->value() && vr->multipassUIBufferDesc.pTexture) {
+                    vr->d3d12Renderer->Blit(cmdList, vr->multipassUIBufferDesc, vr->uiBufferDesc[1]);
+                    params.InUIColorAlpha = &vr->multipassUIBufferDesc;
+                    params.IsHudlessColor = false;
+                }
             }
 
 

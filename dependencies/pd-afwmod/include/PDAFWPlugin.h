@@ -292,6 +292,7 @@ namespace pd {
 		virtual void                        CorrectMotionVectors(ID3D12GraphicsCommandList* cmdList, TextureDesc& correctedMVDesc, CorrectMotionVectorsParams& params) = 0;
 		virtual void                        FoveatedComposite(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, D3D12_VIEWPORT viewPort = {}, FoveatedCompositeParams params = {}) = 0;
 		virtual void                        Blur(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, float blurRadius) = 0;
+		virtual void                        Crop(ID3D12GraphicsCommandList* cmdList, TextureDesc& dstDesc, TextureDesc& srcDesc, D3D12_BOX srcBox = {}, D3D12_VIEWPORT viewPort = {}) = 0;
 		virtual void                        ApplyHiddenAreaMesh(ID3D12GraphicsCommandList* cmdList, TextureDesc& depthDesc, D3D12_VIEWPORT viewPort, VextexBufferDesc& vextexDesc) = 0;
 		virtual void                        GenerateVRSImage(ID3D12GraphicsCommandList* cmdList, TextureDesc& vrsImageDesc, VRSParams params) = 0;
 		virtual VRSInfo                     GetVRSInfo() = 0;

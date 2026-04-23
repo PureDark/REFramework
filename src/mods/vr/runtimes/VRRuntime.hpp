@@ -127,6 +127,7 @@ struct VRRuntime {
     std::array<std::array<Matrix4x4f, 2>, 2> old_foveated_projections{};
     std::array<Matrix4x4f, 2> foveated_projections{};
     std::array<Matrix4x4f, 2> projections{};
+    std::array<Matrix4x4f, 2> afw_projections{};
     std::array<Matrix4x4f, 2> eyes{};
 
     typedef struct ViewPort {

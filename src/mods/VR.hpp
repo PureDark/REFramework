@@ -81,13 +81,13 @@ public:
     bool is_enable_sharpening() { return m_enable_sharpening->value(); };
     float get_sharpness() { return m_sharpness->value(); };
 
-    float get_foveated_outter_blur() { return m_foveated_outter_blurs->value(); };
-
     bool is_force_fixed_foveated() { return m_force_fixed_foveated->value(); };
+    float get_foveated_periphery_blur() { return m_foveated_periphery_blurs->value(); };
     float get_foveated_ratio() { return m_foveated_ratio->value(); };
-
     float get_foveated_offset_x() { return m_foveated_offset_x->value(); };
     float get_foveated_offset_y() { return m_foveated_offset_y->value(); };
+
+    float get_edge_scan_line_fix_range() { return m_edge_scan_line_fix_range->value(); };
 
     FoveatedCompositeParams get_foveated_composite_params() {
         FoveatedCompositeParams params{};
@@ -657,11 +657,12 @@ private:
     const ModToggle::Ptr m_enable_foveated_rendering{ModToggle::create(generate_name("EnableFoveatedRendering"), false)};
     const ModToggle::Ptr m_force_fixed_foveated{ModToggle::create(generate_name("Force Fixed Foveated"), false)};
     const ModSlider::Ptr m_foveated_ratio{ModSlider::create(generate_name("FovatedRatio"), 0.3333333333f, 1.0f, 0.5f)};
-    const ModSlider::Ptr m_foveated_outter_blurs{ModSlider::create(generate_name("FoveatedOutterBlur"), 0.0f, 5.0f, 0.0f)};
+    const ModSlider::Ptr m_foveated_periphery_blurs{ModSlider::create(generate_name("FoveatedPeripheryBlur"), 0.0f, 5.0f, 0.0f)};
     const ModSlider::Ptr m_foveated_fade{ModSlider::create(generate_name("FovatedFade"), 0.0f, 1.0f, 0.1f)};
     const ModSlider::Ptr m_foveated_rounded_radius{ModSlider::create(generate_name("FovatedRoundedRadius"), 0.0f, 1.0f, 0.0f)};
     const ModSlider::Ptr m_foveated_offset_x{ModSlider::create(generate_name("FovatedOffsetX"), -1.0f, 1.0f, 0.05f)};
     const ModSlider::Ptr m_foveated_offset_y{ModSlider::create(generate_name("FovatedOffsetY"), -1.0f, 1.0f, -0.05f)};
+    const ModSlider::Ptr m_edge_scan_line_fix_range{ModSlider::create(generate_name("EdgeScanLineFixRange"), 0.0f, 0.5f, 0.08f)};
 
     const ModCombo::Ptr m_framewarp_mode{ModCombo::create(generate_name("FramewarpMode"),
         {
@@ -765,6 +766,7 @@ private:
         *m_foveated_rounded_radius,
         *m_foveated_offset_x,
         *m_foveated_offset_y,
+        *m_edge_scan_line_fix_range,
     };
 
     bool m_use_rotation{true};

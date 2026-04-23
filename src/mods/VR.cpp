@@ -2596,9 +2596,10 @@ void VR::disable_bad_effects() {
 
     if (get_antialiasing_method != nullptr && set_antialiasing_method != nullptr) {
 
-        if (is_using_afw_foveated()) {
-            set_antialiasing_method->call<void*>(context, render_config, via::render::RenderConfig::AntiAliasingType::TAA);
-        } else if (m_force_aa_settings->value()) {
+        //if (is_using_afw_foveated()) {
+        //    set_antialiasing_method->call<void*>(context, render_config, via::render::RenderConfig::AntiAliasingType::TAA);
+        //} else 
+        if (m_force_aa_settings->value()) {
             const auto antialiasing = get_antialiasing_method->call<via::render::RenderConfig::AntiAliasingType>(context, render_config);
 
             // Disable TAA
@@ -2996,9 +2997,9 @@ void VR::update_camera_data(int frame_count) {
         cameraData[nEye].destWorldToViewMatrix = glm::inverse(cameraData[nEye].destViewToWorldMatrix);
         cameraData[nEye].srcWorldToViewMatrix = glm::inverse(cameraData[nEye].srcViewToWorldMatrix);
 
-        cameraData[nEye].destViewToClipMatrix = to_reverseZ(get_runtime()->projections[nEyeOther]);
+        cameraData[nEye].destViewToClipMatrix = to_reverseZ(get_runtime()->afw_projections[nEyeOther]);
         cameraData[nEye].destClipToViewMatrix = glm::inverse(cameraData[nEye].destViewToClipMatrix);
-        cameraData[nEye].srcViewToClipMatrix = to_reverseZ(get_runtime()->projections[nEye]);
+        cameraData[nEye].srcViewToClipMatrix = to_reverseZ(get_runtime()->afw_projections[nEye]);
         cameraData[nEye].srcClipToViewMatrix = glm::inverse(cameraData[nEye].srcViewToClipMatrix);
         cameraData[nEye].camViewToClipMatrix = cameraData[nEye].srcViewToClipMatrix;
         cameraData[nEye].camClipToViewMatrix = cameraData[nEye].srcClipToViewMatrix;
@@ -3041,8 +3042,8 @@ void VR::on_present() {
     }
     if (GetAsyncKeyState(VK_NUMPAD2) == 0 && btn2 == true) {
         btn2 = false;
-        //mDebug2 = !mDebug2;
-        m_disable_volumetric_fog->toggle();
+        mDebug2 = !mDebug2;
+        //m_disable_volumetric_fog->toggle();
     }
     static bool btn3 = false;
     if (GetAsyncKeyState(VK_NUMPAD3) < 0 && btn3 == false) {
@@ -4819,11 +4820,12 @@ void VR::on_draw_ui() {
                 delayInit = 90;
             }
             ImGui::PopID();
-            m_foveated_outter_blurs->draw("Foveated Outter Blur");
+            m_foveated_periphery_blurs->draw("Foveated Periphery Blur");
             m_foveated_fade->draw("Foveated Fade");
             m_foveated_rounded_radius->draw("Foveated Rounded Radius");
             m_foveated_offset_x->draw("Foveated Offset X");
             m_foveated_offset_y->draw("Foveated Offset Y");
+            m_edge_scan_line_fix_range->draw("Edge Scan Line Fix Range");
         }
     }
     ImGui::Separator();
