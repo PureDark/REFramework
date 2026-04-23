@@ -148,14 +148,18 @@ VRRuntime::Error OpenVR::update_matrices(float nearz, float farz){
 
         XrMatrix4x4f_CreateProjection((XrMatrix4x4f*)&this->afw_projections[i], GRAPHICS_D3D, L_full, R_full, U_full, D_full, nearz, farz);
 
-        float edgeCutout = vr->get_edge_scan_line_fix_range();
-        if (edgeCutout > 0) {
-            float edgeCutoutTanW = totalTanW * edgeCutout;
+        // To fix scan line artifacts in the periphery, add extra fov to the other eye towards the current eye
+        // This is to reduce the gap area between eyes when using TAA.
+        if (vr->is_using_afw_foveated()) {
+            float edgeExtend = vr->get_edge_scan_line_fix_range();
+            if (edgeExtend > 0) {
+                float edgeExtendTanW = totalTanW * edgeExtend;
 
-            if (i == 0)
-                L_full -= edgeCutoutTanW;
-            else
-                R_full += edgeCutoutTanW;
+                if (i == 1)
+                    L_full -= edgeExtendTanW;
+                else
+                    R_full += edgeExtendTanW;
+            }
         }
 
         // Update projection matrix

@@ -347,8 +347,8 @@ VRRuntime::Error OpenXR::update_matrices(float nearz, float farz) {
             gaze_angle_x[0] = stable_gaze_x + convergence_angle;
             gaze_angle_x[1] = stable_gaze_x - convergence_angle;
             // Pitch
-            gaze_angle_y[0] = stable_gaze_y;
-            gaze_angle_y[1] = stable_gaze_y;
+            gaze_angle_y[0] = stable_gaze_y + offsetTop;
+            gaze_angle_y[1] = stable_gaze_y + offsetTop;
         }
     } else {
         gaze_angle_x[0] += convergence_angle;

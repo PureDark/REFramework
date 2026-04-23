@@ -2596,10 +2596,9 @@ void VR::disable_bad_effects() {
 
     if (get_antialiasing_method != nullptr && set_antialiasing_method != nullptr) {
 
-        //if (is_using_afw_foveated()) {
-        //    set_antialiasing_method->call<void*>(context, render_config, via::render::RenderConfig::AntiAliasingType::TAA);
-        //} else 
-        if (m_force_aa_settings->value()) {
+        if (is_using_afw_foveated()) {
+            set_antialiasing_method->call<void*>(context, render_config, via::render::RenderConfig::AntiAliasingType::TAA);
+        } else if (m_force_aa_settings->value()) {
             const auto antialiasing = get_antialiasing_method->call<via::render::RenderConfig::AntiAliasingType>(context, render_config);
 
             // Disable TAA
@@ -3052,6 +3051,8 @@ void VR::on_present() {
     if (GetAsyncKeyState(VK_NUMPAD3) == 0 && btn3 == true) {
         btn3 = false;
         mDebug3 = !mDebug3;
+        mDebug2 = false;
+        mDebug1 = false;
     }
     static bool btn4 = false;
     if (GetAsyncKeyState(VK_NUMPAD4) < 0 && btn4 == false) {
