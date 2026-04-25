@@ -3355,7 +3355,7 @@ bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_conte
         case "Gui_ui0440"_fnv: // Black bars in cutscenes
             game_object->shouldDraw = false;
             return false;
-        case "GuiTimelineEvent_ui1640_00"_fnv:
+        case "GuiTimelineEvent_ui1640_00"_fnv: // monitor in first cutscene
         case "GuiPlayerGimmick0040"_fnv:  //blood analyzer
             return true;
 #endif
@@ -3629,6 +3629,10 @@ bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_conte
                             ui_scale = 1.0f;
                             break;
                         default:
+                            if (!seenGuiNames.contains(name_hash)) {
+                                seenGuiNames[name_hash] = 1;
+                                return true;
+                            }
                             break;
                         }
 
