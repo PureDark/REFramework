@@ -284,6 +284,12 @@ public:
     auto get_action_grip() const { return m_action_grip; }
     auto get_action_joystick() const { return m_action_joystick; }
     auto get_action_joystick_click() const { return m_action_joystick_click; }
+    auto get_action_joystick_touch() const { return m_action_joystick_touch; }
+    auto get_action_trigger_touch() const { return m_action_trigger_touch; }
+    auto get_action_a_button_touch() const { return m_action_a_button_touch; }
+    auto get_action_b_button_touch() const { return m_action_b_button_touch; }
+    auto get_action_thumbrest_touch() const { return m_action_thumbrest_touch; }
+    auto get_action_touchpad_touch() const { return m_action_touchpad_touch; }
     auto get_action_a_button() const { return m_action_a_button; }
     auto get_action_b_button() const { return m_action_b_button; }
     auto get_action_weapon_dial() const { return m_action_weapon_dial; }
@@ -501,6 +507,12 @@ private:
     vr::VRActionHandle_t m_action_grip{ };
     vr::VRActionHandle_t m_action_joystick{};
     vr::VRActionHandle_t m_action_joystick_click{};
+    vr::VRActionHandle_t m_action_joystick_touch{};
+    vr::VRActionHandle_t m_action_trigger_touch{};
+    vr::VRActionHandle_t m_action_a_button_touch{};
+    vr::VRActionHandle_t m_action_b_button_touch{};
+    vr::VRActionHandle_t m_action_thumbrest_touch{};
+    vr::VRActionHandle_t m_action_touchpad_touch{};
     vr::VRActionHandle_t m_action_a_button{};
     vr::VRActionHandle_t m_action_b_button{};
     vr::VRActionHandle_t m_action_dpad_up{};
@@ -529,6 +541,12 @@ private:
         { "/actions/default/in/Grip", m_action_grip },
         { "/actions/default/in/Joystick", m_action_joystick },
         { "/actions/default/in/JoystickClick", m_action_joystick_click },
+        { "/actions/default/in/JoystickTouch", m_action_joystick_touch },
+        { "/actions/default/in/TriggerTouch", m_action_trigger_touch },
+        { "/actions/default/in/AButtonTouch", m_action_a_button_touch },
+        { "/actions/default/in/BButtonTouch", m_action_b_button_touch },
+        { "/actions/default/in/ThumbrestTouch", m_action_thumbrest_touch },
+        { "/actions/default/in/TouchpadTouch", m_action_touchpad_touch },
         { "/actions/default/in/AButton", m_action_a_button },
         { "/actions/default/in/BButton", m_action_b_button },
         { "/actions/default/in/DPad_Up", m_action_dpad_up },

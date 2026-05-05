@@ -227,19 +227,31 @@ public:
 
     static inline std::vector<InteractionBinding> s_bindings_map {
         {"/user/hand/*/input/grip/pose", "pose"},
+        // Buttons / digital actions
+        // Some interaction profiles expose trigger/grip as /click instead of the bare component path.
         {"/user/hand/*/input/trigger", "trigger"}, // oculus?
+        {"/user/hand/*/input/trigger/click", "trigger"}, // index/wmr/etc
         {"/user/hand/*/input/squeeze", "grip"}, // oculus/vive/index
+        {"/user/hand/*/input/squeeze/click", "grip"}, // wmr/etc
         {"/user/hand/*/input/x/click", "abutton"}, // oculus?
         {"/user/hand/*/input/y/click", "bbutton"}, // oculus?
         {"/user/hand/*/input/a/click", "abutton"}, // oculus?
         {"/user/hand/*/input/b/click", "bbutton"}, // oculus?
         {"/user/hand/*/input/thumbstick", "joystick"}, // oculus?
         {"/user/hand/*/input/thumbstick/click", "joystickclick"}, // oculus?
+        {"/user/hand/*/input/thumbstick/touch", "joysticktouch"},
+        {"/user/hand/*/input/trigger/touch", "triggertouch"},
+        {"/user/hand/*/input/x/touch", "abuttontouch"},
+        {"/user/hand/*/input/y/touch", "bbuttontouch"},
+        {"/user/hand/*/input/a/touch", "abuttontouch"},
+        {"/user/hand/*/input/b/touch", "bbuttontouch"},
+        {"/user/hand/*/input/thumbrest/touch", "thumbresttouch"},
         {"/user/hand/*/input/system/click", "systembutton"}, // oculus/vive/index
         {"/user/hand/*/input/menu/click", "systembutton"}, // oculus/vive/index
 
         {"/user/hand/*/input/trackpad", "touchpad"}, // vive & others
         {"/user/hand/*/input/trackpad/click", "touchpadclick"}, // vive & others
+        {"/user/hand/*/input/trackpad/touch", "touchpadtouch"}, // vive/wmr/index capacitive touch
         {"/user/hand/*/output/haptic", "haptic"}, // most of them
 
         {"/user/hand/right/input/a/click", "re3_dodge"},
@@ -264,6 +276,7 @@ public:
     static inline std::vector<std::string> s_supported_controllers {
         "/interaction_profiles/khr/simple_controller",
         "/interaction_profiles/oculus/touch_controller",
+        "/interaction_profiles/meta/touch_controller_plus",
         "/interaction_profiles/oculus/go_controller",
         "/interaction_profiles/valve/index_controller",
         "/interaction_profiles/microsoft/motion_controller",
