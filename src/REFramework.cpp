@@ -504,6 +504,8 @@ REFramework::REFramework(HMODULE reframework_module)
     startup_lookup_thread->detach();
 #endif
 
+    LooseTextureLoader::get().early_initialize();
+
 #if FAULTY_FILE_DETECTOR_ENABLED
     FaultyFileDetector::early_init();
 #endif
@@ -2339,7 +2341,7 @@ bool REFramework::init_d3d12() {
 
     m_d3d12.cmd_ctxs.clear();
 
-    for (auto i = 0; i < 3; ++i) {
+    for (auto i = 0; i < 9; ++i) {
         auto& ctx = m_d3d12.cmd_ctxs.emplace_back(std::make_unique<d3d12::CommandContext>());
 
         if (!ctx->setup(L"Framework::m_d3d12.cmd_ctx")) {

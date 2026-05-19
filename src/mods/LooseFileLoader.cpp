@@ -47,6 +47,8 @@ void LooseFileLoader::on_config_load(const utility::Config& cfg) {
         option.config_load(cfg);
     }
 
+    m_texture_loader.on_config_load(cfg);
+
     /*if (!m_attempted_hook && m_enabled->value()) {
         hook();
     }*/
@@ -56,6 +58,8 @@ void LooseFileLoader::on_config_save(utility::Config& cfg) {
     for (IModValue& option : m_options) {
         option.config_save(cfg);
     }
+
+    m_texture_loader.on_config_save(cfg);
 }
 
 void LooseFileLoader::on_draw_ui() {
@@ -144,6 +148,8 @@ void LooseFileLoader::on_draw_ui() {
             }
         }
     }
+
+    m_texture_loader.on_draw_ui();
 }
 
 void LooseFileLoader::hook() {
@@ -447,4 +453,28 @@ uint64_t LooseFileLoader::path_to_hash_hook(void* This, const wchar_t* path) {
     }
 
     return result;
+}
+
+bool LooseFileLoader::can_loosely_load_file(const wchar_t* path) {
+    if (!m_enabled->value()) {
+        return false;
+    }
+
+    if (path == nullptr || path[0] == L'\0') {
+        return false;
+    }
+
+#if TDB_VER > 67
+    auto hash = m_path_to_hash_hook->get_original<decltype(path_to_hash_hook)>()(path);
+    return handle_path(path, hash);
+#else
+    return safe_exists(path);
+#endif
+}
+
+void LooseFileLoader::early_initialize() {
+#if ENABLE_LOOSE_TEXTURE_LOADER
+    hook();
+    m_texture_loader.early_initialize();
+#endif
 }
