@@ -70,8 +70,6 @@ public:
     std::array<Matrix4x4f, 2> oldViewMatrix{};
     std::array<Matrix4x4f, 2> oldFoveatedProjectionMatrix{};
 
-    std::unordered_map<size_t, int> seenGuiNames;
-
     int last_update_camera_data_frame_count = 0;
     void update_camera_data(int frame_count);
     void get_camera_data();

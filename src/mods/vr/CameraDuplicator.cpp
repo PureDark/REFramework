@@ -718,7 +718,7 @@ void CameraDuplicator::copy_camera_properties() {
             static REManagedObject* renderingManager = sdk::get_managed_singleton<::REManagedObject>("app.RenderingManager");
             static REManagedObject* _toneMapping = nullptr;
 
-            if (!_toneMapping) {
+            if (renderingManager  && !_toneMapping) {
                 auto type_info = utility::re_managed_object::get_type(renderingManager);
                 auto type_def = utility::re_type::get_type_definition(type_info);
 
