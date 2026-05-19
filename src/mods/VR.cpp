@@ -4798,7 +4798,7 @@ void VR::on_draw_ui() {
         m_fix_item_inspection->draw("Fix Item Inspection Double Vision");
         m_disable_volumetric_fog->draw("Disable Volumetric Fog");
         m_ignore_motion_threshold->draw("Ignore Motion Threshold");
-        m_framewarp_mode->draw("Framewarp Mode");
+#if defined(RE9)
         m_enable_foveated_rendering->draw("Enable Foveated Rendering");
         static int delayInit = -1;
         static float pendingValue = m_foveated_ratio->value();
@@ -4832,6 +4832,7 @@ void VR::on_draw_ui() {
             m_foveated_offset_y->draw("Foveated Offset Y");
             m_edge_scan_line_fix_range->draw("Edge Scan Line Fix Range");
         }
+#endif
     }
     ImGui::Separator();
 

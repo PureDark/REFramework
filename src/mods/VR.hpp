@@ -193,8 +193,12 @@ public:
         return m_rendering_technique->value() == RenderingTechnique::ALTERNATE_FRAME_WARPING && is_foveated_rendering();
     }
 
-    bool is_foveated_rendering() const { 
+    bool is_foveated_rendering() const {
+#if defined(RE9)
         return m_enable_foveated_rendering->value();
+#else
+        return false;
+#endif
     }
 
     RenderingTechnique get_rendering_technique() const {
@@ -777,6 +781,7 @@ private:
         *m_fix_upscalers_wobbling,
         *m_disable_volumetric_fog,
         *m_fix_item_inspection,
+#if defined(RE9)
         *m_enable_foveated_rendering,
         *m_force_fixed_foveated,
         *m_foveated_ratio,
@@ -785,6 +790,7 @@ private:
         *m_foveated_offset_x,
         *m_foveated_offset_y,
         *m_edge_scan_line_fix_range,
+#endif
     };
 
     bool m_use_rotation{true};
