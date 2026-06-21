@@ -5,7 +5,8 @@
 #include <dxgi1_2.h>
 #include <../../../dependencies/glm/glm/glm.hpp>
 
-namespace pd {
+namespace pd
+{
 	struct DeviceParams
 	{
 		ID3D11Device*        d3d11Device = NULL;
@@ -17,8 +18,8 @@ namespace pd {
 
 	struct FrameWarpInitParams
 	{
-		int hmdWidth;
-		int hmdHeight;
+		int         hmdWidth;
+		int         hmdHeight;
 		DXGI_FORMAT eyeFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 		DXGI_FORMAT backbufferFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
 	};
@@ -53,15 +54,15 @@ namespace pd {
 	struct TextureDesc
 	{
 		TextureDesc() {};
-		ImageType                     type = Image;
-		ID3D12Resource*               pTexture = nullptr;
-		int                           srvPos = -1;
-		int                           uavPos = -1;
-		D3D12_GPU_DESCRIPTOR_HANDLE shaderResourceViewHandle;
-		D3D12_GPU_DESCRIPTOR_HANDLE unorderedAccessViewHandle;
+		ImageType                   type = Image;
+		ID3D12Resource*             pTexture = nullptr;
+		int                         srvPos = -1;
+		int                         uavPos = -1;
+		D3D12_GPU_DESCRIPTOR_HANDLE shaderResourceViewHandle{ 0 };
+		D3D12_GPU_DESCRIPTOR_HANDLE unorderedAccessViewHandle{ 0 };
 		union
 		{
-			D3D12_CPU_DESCRIPTOR_HANDLE renderTargetViewHandle;
+			D3D12_CPU_DESCRIPTOR_HANDLE renderTargetViewHandle{ 0 };
 			D3D12_CPU_DESCRIPTOR_HANDLE depthStencilViewHandle;
 		};
 		D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_COMMON;
@@ -157,13 +158,21 @@ namespace pd {
 		float fConvertToLimit;
 	};
 
+	enum CorrectMVType
+	{
+		SwapCameraMotion,
+		ExtractObjectMotion,
+		ScaleObjectMotion  
+	};
+
 	struct CorrectMotionVectorsParams
 	{
-		TextureDesc*            inMotionVectors;
-		TextureDesc*            inDepth;
-		CameraDataMVCorrection* cameraData;
+		TextureDesc*            InMotionVectors;
+		TextureDesc*            InDepth;
+		CameraDataMVCorrection* CameraData;
 		float                   InMotionScale[2] = { 0.0f, 0.0f };
-		bool                    extractObjectOnlyMotion = false;
+		CorrectMVType           CorrectMVType = SwapCameraMotion;
+		float                   ObjectMotionScale = 1.0f;
 	};
 
 #define MAX_SHADING_RATES 9
@@ -246,6 +255,25 @@ namespace pd {
 		float           foveationCenter[2] = { 0, 0 };    ///< The center of the foveated region.
 		VRSFovRadius    foveationRadius;                  ///< The radius of the foveated regions, expected squared by the shader.
 	} VRSParams;
+
+	// Vector with 2 floats.
+	struct Float2
+	{
+		float x;
+		float y;
+
+		Float2() :
+			x(0.f), y(0.f)
+		{}
+
+		Float2(float scalar) :
+			x(scalar), y(scalar)
+		{}
+
+		Float2(float _x, float _y) :
+			x(_x), y(_y)
+		{}
+	};
 
 	struct FoveatedCompositeParams
 	{

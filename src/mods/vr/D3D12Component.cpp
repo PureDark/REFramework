@@ -240,12 +240,12 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             vr->d3d12Renderer->Clear(cmdList, eyeFrameBuffer.motionVectors, black);
             if (vr->motionVectorsDesc.pTexture && vr->motionVectorsCorrectedDesc.pTexture) {
                 CorrectMotionVectorsParams mvparams;
-                mvparams.inMotionVectors = &vr->motionVectorsDesc;
-                mvparams.inDepth = &vr->foveatedDepthDesc;
-                mvparams.cameraData = &vr->cameraDataForMV[nEye];
+                mvparams.InMotionVectors = &vr->motionVectorsDesc;
+                mvparams.InDepth = &vr->foveatedDepthDesc;
+                mvparams.CameraData = &vr->cameraDataForMV[nEye];
                 mvparams.InMotionScale[0] = (float)vr->motionVectorsDesc.pTexture->GetDesc().Width;
                 mvparams.InMotionScale[1] = (float)vr->motionVectorsDesc.pTexture->GetDesc().Height;
-                mvparams.extractObjectOnlyMotion = true;
+                mvparams.CorrectMVType = ExtractObjectMotion;
                 vr->d3d12Renderer->CorrectMotionVectors(cmdList, vr->motionVectorsCorrectedDesc, mvparams);
                 vr->d3d12Renderer->Blit(cmdList, eyeFrameBuffer.motionVectors, vr->motionVectorsCorrectedDesc, vp);
             }
