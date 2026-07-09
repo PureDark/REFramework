@@ -2,8 +2,8 @@
 #include <array>
 #include <optional>
 
-#include <spdlog/spdlog.h>
 #include <bddisasm.h>
+#include <spdlog/spdlog.h>
 
 #include "sdk/ResourceManager.hpp"
 
@@ -60,8 +60,11 @@ void LooseTextureLoader::on_config_save(utility::Config& cfg) {
 
 void LooseTextureLoader::on_draw_ui() {
 #if !ENABLE_LOOSE_TEXTURE_LOADER
-        return;
+    return;
 #else
+#if TDB_VER < 81
+    return;
+#endif
 
     if (ImGui::TreeNode("Loose Texture")) {
         if (m_enabled->draw("Enable")) {
@@ -76,12 +79,10 @@ void LooseTextureLoader::on_draw_ui() {
             g_framework->request_save_config();
         }
 
-        ImGui::TextWrapped(
-            "The game caches textures and only reloads them from disk when nothing references them anymore.\n"
-            "Enabling this option forces a reload every time, bypassing the cache.\n"
-            "WARNING: This creates duplicate texture instances in memory and can be very memory-intensive.\n"
-            "Only use this while actively editing textures, and disable it during normal play."
-        );
+        ImGui::TextWrapped("The game caches textures and only reloads them from disk when nothing references them anymore.\n"
+                           "Enabling this option forces a reload every time, bypassing the cache.\n"
+                           "WARNING: This creates duplicate texture instances in memory and can be very memory-intensive.\n"
+                           "Only use this while actively editing textures, and disable it during normal play.");
 
         ImGui::Separator();
 
@@ -118,6 +119,10 @@ void LooseTextureLoader::on_draw_ui() {
 
 void LooseTextureLoader::early_initialize() {
 #if ENABLE_LOOSE_TEXTURE_LOADER
+    // Only TDB>=81 games (MHWILDS+) have the DStorage-based loose texture path.
+#if TDB_VER < 81
+    return;
+#endif
     hook_dstorage_path_checks();
     hook_dstorage_enqueue_chain();
     hook_resource_path_hashing();
@@ -198,7 +203,7 @@ void LooseTextureLoader::hook_dstorage_enqueue_chain() {
         return;
     }
 
-    auto enqueue_func = utility::find_function_with_refs(game, { *dstorage_file_open_func, *list_too_long_str });
+    auto enqueue_func = utility::find_function_with_refs(game, {*dstorage_file_open_func, *list_too_long_str});
     if (!enqueue_func) {
         spdlog::error("[LooseTextureLoader]: Could not find enqueue DirectStorage texture upload function!");
         return;
@@ -240,14 +245,16 @@ void LooseTextureLoader::hook_dstorage_enqueue_chain() {
 
     spdlog::info("[LooseTextureLoader]: Found prepare enqueue thunk at 0x{:X}", prepare_enqueue_func_thunk);
 
-    m_prepare_enqueue_texture_upload_hook = safetyhook::create_mid((void*)prepare_enqueue_func_thunk, &LooseTextureLoader::handle_prepare_enqueue_texture_upload_wrapper);
+    m_prepare_enqueue_texture_upload_hook =
+        safetyhook::create_mid((void*)prepare_enqueue_func_thunk, &LooseTextureLoader::handle_prepare_enqueue_texture_upload_wrapper);
     if (m_prepare_enqueue_texture_upload_hook) {
         spdlog::info("[LooseTextureLoader]: Hooked prepare enqueue at 0x{:X}", prepare_enqueue_func_thunk);
     } else {
         spdlog::error("[LooseTextureLoader]: Failed to hook prepare enqueue at 0x{:X}!", prepare_enqueue_func_thunk);
     }
 
-    m_start_enqueue_texture_upload_hook = safetyhook::create_mid((void*)*enqueue_func, &LooseTextureLoader::handle_start_enqueue_texture_upload_wrapper);
+    m_start_enqueue_texture_upload_hook =
+        safetyhook::create_mid((void*)*enqueue_func, &LooseTextureLoader::handle_start_enqueue_texture_upload_wrapper);
     if (m_start_enqueue_texture_upload_hook) {
         spdlog::info("[LooseTextureLoader]: Hooked start enqueue at 0x{:X}", *enqueue_func);
     } else {
@@ -269,28 +276,28 @@ void LooseTextureLoader::hook_resource_path_hashing() {
     }
 
     // Known xxhash constants to identify the hash function
-    static const std::array<uint64_t, 3> hash_constants = {
-        0xC2B2AE3D27D4EB4F,
-        0x9E3779B185EBCA87,
-        0x27D4EB2F165667C5
-    };
+    static const std::array<uint64_t, 3> hash_constants = {0xC2B2AE3D27D4EB4F, 0x9E3779B185EBCA87, 0x27D4EB2F165667C5};
 
     // Collect all direct call sites within create_resource
-    struct CallSite { uintptr_t call_addr; uintptr_t target_addr; };
+    struct CallSite {
+        uintptr_t call_addr;
+        uintptr_t target_addr;
+    };
     std::vector<CallSite> call_sites;
 
-    utility::exhaustive_decode((uint8_t*)resource_create_func, fnc_bounds->end - fnc_bounds->start, [&](utility::ExhaustionContext& ctx) -> utility::ExhaustionResult {
-        if (ctx.instrux.Instruction == ND_INS_CALLNR) {
-            if (auto target = utility::resolve_displacement(ctx.addr)) {
-                call_sites.push_back({ ctx.addr, *target });
+    utility::exhaustive_decode((uint8_t*)resource_create_func, fnc_bounds->end - fnc_bounds->start,
+        [&](utility::ExhaustionContext& ctx) -> utility::ExhaustionResult {
+            if (ctx.instrux.Instruction == ND_INS_CALLNR) {
+                if (auto target = utility::resolve_displacement(ctx.addr)) {
+                    call_sites.push_back({ctx.addr, *target});
+                }
+                return utility::ExhaustionResult::STEP_OVER;
             }
-            return utility::ExhaustionResult::STEP_OVER;
-        }
-        if (ctx.instrux.Category == ND_CAT_CALL) {
-            return utility::ExhaustionResult::STEP_OVER;
-        }
-        return utility::ExhaustionResult::CONTINUE;
-    });
+            if (ctx.instrux.Category == ND_CAT_CALL) {
+                return utility::ExhaustionResult::STEP_OVER;
+            }
+            return utility::ExhaustionResult::CONTINUE;
+        });
 
     // For each call target, check if it contains xxhash constants
     uintptr_t hash_call_addr = 0;
@@ -316,7 +323,8 @@ void LooseTextureLoader::hook_resource_path_hashing() {
 
         if (found_constant) {
             hash_call_addr = site.call_addr;
-            spdlog::info("[LooseTextureLoader]: Found resource path hash call at 0x{:X} -> target 0x{:X}", site.call_addr, site.target_addr);
+            spdlog::info(
+                "[LooseTextureLoader]: Found resource path hash call at 0x{:X} -> target 0x{:X}", site.call_addr, site.target_addr);
             break;
         }
     }
@@ -355,20 +363,165 @@ void LooseTextureLoader::find_get_path_to_resource_func() {
 
     for (auto ref : format_refs) {
         auto func = utility::find_function_start(ref + 4);
-        if (!func) continue;
+        if (!func)
+            continue;
 
         auto func_bounds = utility::determine_function_bounds(*func);
-        if (!func_bounds) continue;
+        if (!func_bounds)
+            continue;
 
-        bool specific_cmp_with_12_found = false;
+        spdlog::info("[LooseTextureLoader]: Analyzing function at 0x{:X} for get_path_to_resource", *func);
+
+        if (utility::find_string_reference_in_path(*func, L"ResourceManager::parallelProc", false)) {
+            // Definitely not.
+            spdlog::info("[LooseTextureLoader]: Skipping function at 0x{:X} because it references ResourceManager::parallelProc", *func);
+            continue;
+        }
+
+        bool specific_first_cmp_found = false;
         bool specific_second_mov_found = false;
+        bool stm_string_found = false;
+        bool test_byte_ptr_2_found = false;
+        bool cmp_2_found = false;
 
-        utility::exhaustive_decode((uint8_t*)*func, func_bounds->end - func_bounds->start, [&](utility::ExhaustionContext& ctx) -> utility::ExhaustionResult {
-            if (ctx.instrux.Category == ND_CAT_CALL) {
-                return utility::ExhaustionResult::STEP_OVER;
+        uintptr_t current_module = (uintptr_t)game;
+        uintptr_t current_module_end = current_module + utility::get_module_size((HMODULE)current_module).value_or(0);
+
+        bool landed_in_wcsstr = false;
+        size_t callstack_level = 0;
+        uintptr_t last_instr = 0;
+        uintptr_t last_last_instr = 0;
+
+        std::unordered_set<uintptr_t> call_targets{};
+        std::unordered_set<uintptr_t> return_targets{};
+
+        // Do a first pass to see if we ever land in wcsstr.
+        utility::exhaustive_decode((uint8_t*)*func, 10000, [&](utility::ExhaustionContext& ctx) -> utility::ExhaustionResult {
+            const auto ip = (uint8_t*)ctx.addr;
+
+            if (call_targets.contains(ctx.addr)) {
+                callstack_level++;
             }
 
+            if (ctx.instrux.Category == ND_CAT_CALL) {
+                if (ctx.resolved_target != 0) {
+                    call_targets.insert(ctx.resolved_target);
+                } else if (ctx.instrux.IsRipRelative && ip[0] == 0xFF && ip[1] == 0x15) { // call qword ptr [rip+0xdeadbeef]
+                    const auto dest = utility::calculate_absolute((uintptr_t)ip + 2);
+
+                    if (dest != 0 && dest != (uintptr_t)ip && !IsBadReadPtr((void*)dest, sizeof(void*))) {
+                        const auto real_dest = *(uintptr_t*)dest;
+
+                        if (real_dest != 0 && real_dest != (uintptr_t)ip && !IsBadReadPtr((void*)real_dest, sizeof(void*))) {
+                            call_targets.insert(real_dest);
+                        }
+                    }
+                }
+
+                return_targets.insert(ctx.addr + ctx.instrux.Length);
+            }
+
+            // if ret instruction, reduce callstack level
+            if (return_targets.contains(ctx.addr)) {
+                if (callstack_level > 0) {
+                    callstack_level--;
+                    spdlog::info(
+                        "[LooseTextureLoader]: Return instruction at 0x{:X}, reducing callstack level to {}", ctx.addr, callstack_level);
+                }
+            }
+
+            if (landed_in_wcsstr) {
+                return utility::ExhaustionResult::BREAK;
+            }
+
+            if (ctx.addr < current_module || ctx.addr >= current_module_end) {
+                current_module = (uintptr_t)utility::get_module_within(ctx.addr).value_or(nullptr);
+                if (current_module) {
+                    current_module_end = current_module + utility::get_module_size((HMODULE)current_module).value_or(0);
+                    spdlog::info("[LooseTextureLoader]: Entered module 0x{:X}-0x{:X} at 0x{:X} from 0x{:X}, 0x{:X}", current_module,
+                        current_module_end, ctx.addr, last_instr, last_last_instr);
+
+                    // Check if GetProcAddress(module, "wcsstr") == ctx.addr.
+                    if (GetProcAddress((HMODULE)current_module, "wcsstr") == (void*)ctx.addr) {
+                        if (callstack_level > 1) {
+                            spdlog::info("[LooseTextureLoader]: Landed in wcsstr at 0x{:X} with callstack level {}, ignoring", ctx.addr,
+                                callstack_level);
+                            return utility::ExhaustionResult::CONTINUE;
+                        }
+
+                        landed_in_wcsstr = true;
+                        spdlog::info("[LooseTextureLoader]: Landed in bad wcsstr at 0x{:X}", ctx.addr);
+                        return utility::ExhaustionResult::BREAK;
+                    }
+                } else {
+                    current_module_end = 0;
+                }
+
+                return utility::ExhaustionResult::BREAK;
+            }
+
+            last_last_instr = last_instr;
+            last_instr = ctx.addr;
+
+            return utility::ExhaustionResult::CONTINUE;
+        });
+
+        if (landed_in_wcsstr) {
+            spdlog::info("[LooseTextureLoader]: Skipping function at 0x{:X} because it called wcsstr", *func);
+            continue;
+        }
+
+        utility::exhaustive_decode(
+            (uint8_t*)*func, func_bounds->end - func_bounds->start, [&](utility::ExhaustionContext& ctx) -> utility::ExhaustionResult {
+                if (ctx.instrux.Category == ND_CAT_CALL) {
+                    // Follow call and check for stm string
+                    if (!stm_string_found && *(uint8_t*)ctx.addr == 0xE8) { // CALL with relative displacement
+                        const auto call_target = utility::calculate_absolute(ctx.addr + 1);
+
+                        if (call_target && (utility::find_string_reference_in_path(call_target, L"STM", false) ||
+                                               utility::find_string_reference_in_path(call_target, L"EGS", false))) {
+                            stm_string_found = true;
+                            spdlog::info(
+                                "[LooseTextureLoader]: Found STM/EGS string reference in call at 0x{:X} -> 0x{:X}", ctx.addr, call_target);
+                        }
+                    }
+
+                    return utility::ExhaustionResult::STEP_OVER;
+                }
+
+                // If there's a test instruction testing [mem], 2, then set test_byte_ptr_2_found to true
+                if (!test_byte_ptr_2_found && ctx.instrux.Instruction == ND_INS_TEST) {
+                    if (ctx.instrux.OperandsCount >= 2) {
+                        const auto& op1 = ctx.instrux.Operands[0];
+                        const auto& op2 = ctx.instrux.Operands[1];
+
+                        if (op1.Type == ND_OP_MEM && op2.Type == ND_OP_IMM && op2.Info.Immediate.Imm == 2) {
+                            test_byte_ptr_2_found = true;
+                            spdlog::info("[LooseTextureLoader]: Found TEST [mem], 2 instruction at 0x{:X}", ctx.addr);
+                            // break out immediately, this is not what we want.
+                            return utility::ExhaustionResult::BREAK;
+                        }
+                    }
+                }
+
+                // if there's a CMP instruction with immediate 2, set cmp_2_found to true
+                if (!cmp_2_found && ctx.instrux.Instruction == ND_INS_CMP) {
+                    if (ctx.instrux.OperandsCount >= 2) {
+                        const auto& op2 = ctx.instrux.Operands[1];
+
+                        if (op2.Type == ND_OP_IMM && op2.Info.Immediate.Imm == 2) {
+                            cmp_2_found = true;
+                            spdlog::info("[LooseTextureLoader]: Found CMP with immediate 2 at 0x{:X}", ctx.addr);
+                            // break out immediately, this is not what we want.
+                            return utility::ExhaustionResult::BREAK;
+                        }
+                    }
+                }
+
             // Count CMP instructions with immediate 12
+            // Actually don't do this because the game
+            // can obfuscate the immediates (e.g. cmp [mem], 12 becomes cmp [mem], global ^ constant)
+#if 0
             if (!specific_cmp_with_12_found && ctx.instrux.Instruction == ND_INS_CMP) {
                 if (ctx.instrux.OperandsCount >= 2) {
                     const auto& op1 = ctx.instrux.Operands[0];
@@ -382,26 +535,44 @@ void LooseTextureLoader::find_get_path_to_resource_func() {
                     }
                 }
             }
+#endif
 
-            if (specific_cmp_with_12_found && !specific_second_mov_found) {
-                if (ctx.instrux.Instruction == ND_INS_MOV || ctx.instrux.Instruction == ND_INS_MOVZX) {
+                // Instead, look for any cmp with the first mem disp.
+                if (!specific_first_cmp_found && ctx.instrux.Instruction == ND_INS_CMP) {
                     if (ctx.instrux.OperandsCount >= 2) {
-                        const auto& src = ctx.instrux.Operands[1];
-                        if (src.Type == ND_OP_MEM && src.Info.Memory.Disp == EXPECTED_SECOND_MEM_DISP) {
-                            specific_second_mov_found = true;
+                        const auto& op1 = ctx.instrux.Operands[0];
+                        const auto& op2 = ctx.instrux.Operands[1];
+
+                        if (op1.Type == ND_OP_MEM && op1.Info.Memory.Disp == EXPECTED_FIRST_MEM_DISP) {
+                            specific_first_cmp_found = true;
+                            spdlog::info(
+                                "[LooseTextureLoader]: Found CMP with mem disp 0x{:X} at 0x{:X}", EXPECTED_FIRST_MEM_DISP, ctx.addr);
                         }
                     }
                 }
-            }
 
-            if (specific_cmp_with_12_found && specific_second_mov_found) {
-                return utility::ExhaustionResult::BREAK;
-            }
+                if (specific_first_cmp_found && !specific_second_mov_found) {
+                    if (ctx.instrux.Instruction == ND_INS_MOV || ctx.instrux.Instruction == ND_INS_MOVZX) {
+                        if (ctx.instrux.OperandsCount >= 2) {
+                            const auto& src = ctx.instrux.Operands[1];
+                            if (src.Type == ND_OP_MEM && src.Info.Memory.Disp == EXPECTED_SECOND_MEM_DISP) {
+                                specific_second_mov_found = true;
+                                spdlog::info(
+                                    "[LooseTextureLoader]: Found MOV with mem disp 0x{:X} at 0x{:X}", EXPECTED_SECOND_MEM_DISP, ctx.addr);
+                            }
+                        }
+                    }
+                }
 
-            return utility::ExhaustionResult::CONTINUE;
-        });
+                if (specific_first_cmp_found && specific_second_mov_found && stm_string_found) {
+                    spdlog::info("[LooseTextureLoader]: Found function with matching format string, CMP, and MOV at 0x{:X}", ctx.addr);
+                    return utility::ExhaustionResult::BREAK;
+                }
 
-        if (specific_cmp_with_12_found && specific_second_mov_found) {
+                return utility::ExhaustionResult::CONTINUE;
+            });
+
+        if (specific_first_cmp_found && specific_second_mov_found && stm_string_found && !test_byte_ptr_2_found && !cmp_2_found) {
             m_get_native_path_to_resource_func = (GetNativeResourcePath)*func;
             spdlog::info("[LooseTextureLoader]: Found get_path_to_resource at 0x{:X}", *func);
             return;
@@ -414,9 +585,7 @@ void LooseTextureLoader::find_get_path_to_resource_func() {
 std::optional<uintptr_t> LooseTextureLoader::find_direct_storage_file_open_function() {
     // This is the GUID of IDStorageFile: {5DE95E7B-5A95-6848-A73C-243B29F4B8DA}
     static const uint8_t dstorage_file_guid[] = {
-        0x7B, 0x5E, 0xE9, 0x5D, 0x5A, 0x95, 0x68, 0x48,
-        0xA7, 0x3C, 0x24, 0x3B, 0x29, 0xF4, 0xB8, 0xDA
-    };
+        0x7B, 0x5E, 0xE9, 0x5D, 0x5A, 0x95, 0x68, 0x48, 0xA7, 0x3C, 0x24, 0x3B, 0x29, 0xF4, 0xB8, 0xDA};
 
     const auto game = utility::get_executable();
     const auto guid_location = utility::scan_data(game, dstorage_file_guid, sizeof(dstorage_file_guid));
@@ -439,14 +608,15 @@ std::optional<uintptr_t> LooseTextureLoader::find_direct_storage_file_open_funct
 }
 
 void LooseTextureLoader::handle_path_check_to_open_dstorage_file(safetyhook::Context& context) {
-    if (!m_enabled->value()) return;
+    if (!m_enabled->value())
+        return;
 
-    wchar_t *target_path = (wchar_t*)context.rcx;
-    wchar_t *search_str = (wchar_t*)context.rdx;
-    
+    wchar_t* target_path = (wchar_t*)context.rcx;
+    wchar_t* search_str = (wchar_t*)context.rdx;
+
     // Search if our path contains .tex extension, if yes, replace rdx with ".tex" to make wcsstr return true
     if (target_path && search_str && wcsstr(target_path, TEX_FILE_EXTENSION) != nullptr) {
-        //spdlog::info("[LooseTextureLoader]: Detected loose .tex file, patching to bypass it! Path: {}", utility::narrow(target_path));
+        // spdlog::info("[LooseTextureLoader]: Detected loose .tex file, patching to bypass it! Path: {}", utility::narrow(target_path));
         context.rdx = (uint64_t)TEX_FILE_EXTENSION;
     }
 }
@@ -472,7 +642,7 @@ REPakEntryData* LooseTextureLoader::borrow_pak_entry_data(uintptr_t dstorage_fil
     entry->handle_info.pak_data = &entry->file_info;
     entry->handle_info.index_in_pak = FAKE_INVALID_INDEX_IN_PAK;
 
-    //spdlog::info("[LooseTextureLoader]: Pool grew to {} entries", m_pak_entry_data_pool.size());
+    // spdlog::info("[LooseTextureLoader]: Pool grew to {} entries", m_pak_entry_data_pool.size());
     return &entry->handle_info;
 }
 
@@ -508,8 +678,8 @@ void LooseTextureLoader::handle_prepare_enqueue_texture_upload(safetyhook::Conte
 
     pak_entry_data = borrow_pak_entry_data(stream->dstorage_file_ptr);
     stream->set_pak_entry_data(pak_entry_data);
-    
-    //spdlog::info("[LooseTextureLoader]: Filled REUnkFileInfoFromHandle for modded stream file at 0x{:X}", (uintptr_t)stream);
+
+    // spdlog::info("[LooseTextureLoader]: Filled REUnkFileInfoFromHandle for modded stream file at 0x{:X}", (uintptr_t)stream);
 }
 
 void LooseTextureLoader::handle_start_enqueue_texture_upload(safetyhook::Context& context) {
@@ -540,7 +710,8 @@ void LooseTextureLoader::handle_start_enqueue_texture_upload(safetyhook::Context
 }
 
 void LooseTextureLoader::handle_resource_hash_path(safetyhook::Context& context) {
-    if (!m_enabled->value()) return;
+    if (!m_enabled->value())
+        return;
 
     // rcx: path (wchar_t*)
     // rdx: size of hash (bytes)
@@ -568,7 +739,7 @@ void LooseTextureLoader::handle_resource_hash_path(safetyhook::Context& context)
     }
 
     if (resource_type == ResourceType::None) {
-         return;
+        return;
     }
 
     bool localize = false;
@@ -585,17 +756,12 @@ void LooseTextureLoader::handle_resource_hash_path(safetyhook::Context& context)
 
     if (m_get_native_path_to_resource_func != nullptr) {
         auto texture_type = get_resource_re_type(resource_type);
-        
+
         static constexpr const int MIN_PATH_LENGTH = 1024;
 
         path_check_against_loose_file.resize(path_view.length() * 2 + MIN_PATH_LENGTH);
         path_check_against_loose_file_filled = m_get_native_path_to_resource_func(
-            get_resource_manager(),
-            path_check_against_loose_file.data(),
-            path_view.data(),
-            texture_type,
-            localize
-        );
+            get_resource_manager(), path_check_against_loose_file.data(), path_view.data(), texture_type, localize);
     }
 
     if (!path_check_against_loose_file_filled) {
