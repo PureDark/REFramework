@@ -39,6 +39,7 @@
 #include "TemporalUpscaler.hpp"
 
 #include "VR.hpp"
+#include "../../build64_all/_deps/directxtk12-src/Src/d3dx12.h"
 
 std::shared_ptr<TemporalUpscaler>& TemporalUpscaler::get() {
     static std::shared_ptr instance = std::make_shared<TemporalUpscaler>();
@@ -316,7 +317,13 @@ void TemporalUpscaler::on_early_present() {
                     backbufferDesc[backbuffer_index].renderTargetViewHandle =
                         d3d12Renderer->GetRTV(backbufferDesc[backbuffer_index].pTexture);
                 }
-                extractedUIBufferDesc = d3d12Renderer->ExtractUI(cmdList, hudlessDesc, finalColorDesc);
+
+                auto desc = finalColorDesc.pTexture->GetDesc();
+                if (extractedUIBufferDesc.pTexture == NULL || extractedUIBufferDesc.pTexture->GetDesc().Width != desc.Width ||
+                    extractedUIBufferDesc.pTexture->GetDesc().Height != desc.Height) {
+                    d3d12Renderer->CreateTexture(desc.Width, desc.Height, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, extractedUIBufferDesc, true);
+                }
+                d3d12Renderer->ExtractUI(cmdList, extractedUIBufferDesc, hudlessDesc, finalColorDesc);
                 // TonemapParams params;
                 // params.fGamma = 1.10f;
                 // params.fLowerLimit = 0.024f;
@@ -520,7 +527,8 @@ void TemporalUpscaler::on_early_present() {
         if (m_afw_backend_loaded && d3d12Renderer && cmdList) {
             if (m_enable_ui_fix->value() && !is_vr_multipass  && extractedUIBufferDesc.pTexture && finalColorDesc.pTexture) {
                 CD3DX12_VIEWPORT vp(backbufferDesc[backbuffer_index].pTexture);
-                d3d12Renderer->Blit(cmdList, backbufferDesc[backbuffer_index], extractedUIBufferDesc, vp, debug2);
+                auto blend = debug2 ? OneMinusSrcAlpha : NoBlend;
+                d3d12Renderer->Blit(cmdList, backbufferDesc[backbuffer_index], extractedUIBufferDesc, vp, blend);
             }
             d3d12Renderer->EndCommandList(backbuffer_index);
         }
