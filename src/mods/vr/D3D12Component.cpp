@@ -86,8 +86,7 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     FrameWarpEvaluateParams params;
     if (vr->is_using_afw() && (!m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture || !m_eyeFrameBuffers.eyeFrameBuffers[1].color.pTexture))
         force_reset();
-    if (vr->is_using_afw() && m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture && vr->depthTex && vr->motionVectorsTex &&
-        vr->m_framewarp_mode->value() > 0) {
+    if (vr->is_using_afw() && m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture && vr->depthTex && vr->motionVectorsTex && vr->m_framewarp_mode->value() > 0) {
         static TextureDesc texDesc[4];
         int texIndex = m_backbuffer_is_8bit ? backbuffer_index : 3;
         if (texDesc[texIndex].pTexture != eye_texture.Get()) {
@@ -138,7 +137,9 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             params.InUIColorAlpha = NULL;
             params.IsHudlessColor = true;
         }
+
         auto colorDesc = s_CurrentEyeFrameBuffer.color.pTexture->GetDesc();
+
         params.MotionVectorsType = TemporalUpscaler::get()->activated() ? Normal : FromOtherEye;
         params.InMotionScale[0] = (float)colorDesc.Width / 2.0f;
         params.InMotionScale[1] = -1.0f * ((float)colorDesc.Height / 2.0f);
@@ -181,9 +182,9 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     if (frame_count % 2 == vr->m_left_eye_interval && !is_multipass) {
         // OpenXR texture
         if (runtime->is_openxr() && vr->m_openxr->ready()) {
-            m_openxr.copy(0, eye_texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT);
+            m_openxr.copy(0, m_openvr.get_left().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
             if (vr->is_using_afw()) {
-                m_openxr.copy(1, m_openvr.get_right().texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT);
+                m_openxr.copy(1, m_openvr.get_right().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
             }
         }
 
@@ -298,9 +299,9 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 vr->m_multipass.eye_textures[0].Reset();
                 vr->m_multipass.eye_textures[1].Reset();
             } else {
-                m_openxr.copy(1, eye_texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT);
+                m_openxr.copy(1, m_openvr.get_right().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
                 if (vr->is_using_afw()) {
-                    m_openxr.copy(0, m_openvr.get_left().texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT);
+                    m_openxr.copy(0, m_openvr.get_left().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
                 }
             }
         }
@@ -610,9 +611,11 @@ void D3D12Component::setup() {
     //#############################
     static uint32_t lastSize[2]{0, 0};
     static DXGI_FORMAT lastFormat = DXGI_FORMAT_UNKNOWN;
-    if (vr->is_using_afw() && (lastSize[0] != backbuffer_desc.Width || lastSize[1] != backbuffer_desc.Height || lastFormat != rt_desc.Format)) {
-        FrameWarpInitParams params = {backbuffer_desc.Width, backbuffer_desc.Height, rt_desc.Format};
+    if ((lastSize[0] != vr->get_hmd_width() || lastSize[1] != vr->get_hmd_height() || lastFormat != rt_desc.Format)) {
+        FrameWarpInitParams params = {vr->get_hmd_width(), vr->get_hmd_height(), rt_desc.Format};
         m_eyeFrameBuffers = InitFrameWarp(params);
+        lastSize[0] = vr->get_hmd_width();
+        lastSize[1] = vr->get_hmd_height();
     }
     //#############################
     //#Frame Warp Module End
@@ -864,6 +867,9 @@ std::optional<std::string> D3D12Component::OpenXR::create_swapchains() {
 
         for (uint32_t j = 0; j < image_count; ++j) {
             ctx.textures[j] = {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR};
+            ctx.texture_contexts[j] = std::make_unique<d3d12::TextureContext>();
+            ctx.texture_contexts[j]->commands.setup(
+                (std::wstring{L"OpenXR Commands "} + std::to_wstring(i) + L" " + std::to_wstring(j)).c_str());
         }
 
         result = xrEnumerateSwapchainImages(swapchain.handle, image_count, &image_count, (XrSwapchainImageBaseHeader*)&ctx.textures[0]);
@@ -871,38 +877,6 @@ std::optional<std::string> D3D12Component::OpenXR::create_swapchains() {
         if (result != XR_SUCCESS) {
             spdlog::error("[VR] Failed to enumerate swapchain images after texture creation.");
             return "Failed to enumerate swapchain images after texture creation.";
-        }
-
-        for (uint32_t j = 0; j < image_count; ++j) {
-            uint32_t real_index{};
-            XrSwapchainImageAcquireInfo acquire_info{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-
-            result = xrAcquireSwapchainImage(swapchain.handle, &acquire_info, &real_index);
-            if (result != XR_SUCCESS) {
-                spdlog::error("[VR] Failed to acquire swapchain image.");
-                return "Failed to acquire swapchain image.";
-            }
-
-            XrSwapchainImageWaitInfo wait_info{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-            result = xrWaitSwapchainImage(swapchain.handle, &wait_info);
-
-            if (result != XR_SUCCESS) {
-                spdlog::error("[VR] Failed to wait for swapchain image.");
-                return "Failed to wait for swapchain image.";
-            }
-
-            ctx.texture_contexts[real_index] = std::make_unique<d3d12::TextureContext>();
-            ctx.texture_contexts[real_index]->setup(device, ctx.textures[real_index].texture, swapchain_format, swapchain_format, (std::wstring{L"OpenXR Swapchain "} + std::to_wstring(i) + L" " + std::to_wstring(real_index)).c_str());
-
-            XrSwapchainImageReleaseInfo release_info{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-            result = xrReleaseSwapchainImage(swapchain.handle, &release_info);
-
-            if (result != XR_SUCCESS) {
-                spdlog::error("[VR] Failed to release swapchain image.");
-                return "Failed to release swapchain image.";
-            }
-
-            //ctx.texture_contexts[j]->texture = ctx.textures[j].texture;
         }
     }
 
