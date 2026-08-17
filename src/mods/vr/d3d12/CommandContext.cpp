@@ -126,7 +126,7 @@ void CommandContext::copy(ID3D12Resource* src, ID3D12Resource* dst, D3D12_RESOUR
     this->has_commands = true;
 }
 
-void CommandContext::copy_region(ID3D12Resource* src, ID3D12Resource* dst, D3D12_BOX* src_box, D3D12_RESOURCE_STATES src_state, D3D12_RESOURCE_STATES dst_state) {
+void CommandContext::copy_region(ID3D12Resource* src, ID3D12Resource* dst, D3D12_BOX* src_box, D3D12_RESOURCE_STATES src_state, D3D12_RESOURCE_STATES dst_state, UINT dst_x, UINT dst_y) {
     std::scoped_lock _{this->mtx};
 
     if (src == nullptr || dst == nullptr) {
@@ -169,7 +169,7 @@ void CommandContext::copy_region(ID3D12Resource* src, ID3D12Resource* dst, D3D12
     dst_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
     dst_loc.SubresourceIndex = 0;
 
-    this->cmd_list->CopyTextureRegion(&dst_loc, 0, 0, 0, &src_loc, src_box);
+    this->cmd_list->CopyTextureRegion(&dst_loc, dst_x, dst_y, 0, &src_loc, src_box);
 
     // Switch back to present.
     src_barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;

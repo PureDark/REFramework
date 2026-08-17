@@ -1,3 +1,7 @@
+#include <algorithm>
+#include <array>
+#include <string_view>
+
 #include <spdlog/spdlog.h>
 
 #include "mods/BackBufferRenderer.hpp"
@@ -154,7 +158,20 @@ void Mods::on_post_frame() const {
 }
 
 void Mods::on_draw_ui() const {
+    // Only these mods are allowed to draw their tree in the menu, everything else stays hidden.
+    // ScriptRunner also draws the "Script Generated UI" tree.
+    static const std::array<std::string_view, 2> visible_mods {
+        "ScriptRunner",
+        "TemporalUpscaler" // shows up as "Upscaler"
+    };
+
     for (auto& mod : m_mods) {
+        const auto name = mod->get_name();
+
+        if (std::find(visible_mods.begin(), visible_mods.end(), name) == visible_mods.end()) {
+            continue;
+        }
+
         mod->on_draw_ui();
     }
 }

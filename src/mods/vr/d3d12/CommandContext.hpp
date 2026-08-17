@@ -18,9 +18,13 @@ struct CommandContext {
     void copy(ID3D12Resource* src, ID3D12Resource* dst, 
         D3D12_RESOURCE_STATES src_state = D3D12_RESOURCE_STATE_PRESENT,
         D3D12_RESOURCE_STATES dst_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    void copy_region(ID3D12Resource* src, ID3D12Resource* dst, D3D12_BOX* src_box, 
+    // dst_x/dst_y: linke obere Ecke IM ZIEL. Damit laesst sich der kopierte Ausschnitt
+    // versetzt ablegen -- das ist unter OpenXR das Gegenstueck zu den verschobenen
+    // Submit-Bounds von OpenVR (VR::get_shifted_bounds).
+    void copy_region(ID3D12Resource* src, ID3D12Resource* dst, D3D12_BOX* src_box,
         D3D12_RESOURCE_STATES src_state = D3D12_RESOURCE_STATE_PRESENT,
-        D3D12_RESOURCE_STATES dst_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        D3D12_RESOURCE_STATES dst_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+        UINT dst_x = 0, UINT dst_y = 0);
     void clear_rtv(ID3D12Resource* dst, D3D12_CPU_DESCRIPTOR_HANDLE rtv, const float* color, 
         D3D12_RESOURCE_STATES dst_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     void clear_rtv(TextureContext& tex, const float* color, D3D12_RESOURCE_STATES dst_state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);

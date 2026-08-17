@@ -103,7 +103,9 @@ void VR::on_view_get_size(REManagedObject* scene_view, float* result) {
         return;
     }
 
-    if (m_disable_backbuffer_size_override) {
+    // is_vr_suspended(): flat mode keeps the game's own window/backbuffer size,
+    // otherwise the "flat" frame would still be rendered at HMD resolution and aspect.
+    if (m_disable_backbuffer_size_override || is_vr_suspended()) {
         return;
     }
 
@@ -250,7 +252,9 @@ void VR::on_view_get_size(REManagedObject* scene_view, float* result) {
 }
 
 void VR::on_camera_get_projection_matrix(REManagedObject* camera, Matrix4x4f* result) {
-    if (result == nullptr || !g_framework->is_ready() || !is_hmd_active() || m_disable_projection_matrix_override) {
+    // should_suspend_camera_overrides(): canvas mode needs the engine's own projection.
+    if (result == nullptr || !g_framework->is_ready() || !is_hmd_active() || m_disable_projection_matrix_override ||
+        should_suspend_camera_overrides()) {
         return;
     }
 
@@ -293,7 +297,8 @@ Matrix4x4f* VR::gui_camera_get_projection_matrix_hook(REManagedObject* camera, M
 
     auto& vr = VR::get();
 
-    if (result == nullptr || !g_framework->is_ready() || !vr->is_hmd_active() || vr->m_disable_gui_camera_projection_matrix_override) {
+    if (result == nullptr || !g_framework->is_ready() || !vr->is_hmd_active() || vr->m_disable_gui_camera_projection_matrix_override ||
+        vr->should_suspend_camera_overrides()) {
         return original_func(camera, result);
     }
 
@@ -325,7 +330,7 @@ void VR::on_camera_get_view_matrix(REManagedObject* camera, Matrix4x4f* result) 
         return;
     }
 
-    if (!is_hmd_active() || m_disable_view_matrix_override) {
+    if (!is_hmd_active() || m_disable_view_matrix_override || should_suspend_camera_overrides()) {
         return;
     }
 
@@ -468,7 +473,8 @@ bool VR::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* r
 
     // just don't render anything at all.
     // overlays just seem to break stuff in VR.
-    if (!is_hmd_active()) {
+    // is_vr_suspended(): flat mode wants the engine's own overlays back.
+    if (!is_hmd_active() || is_vr_suspended()) {
         return true;
     }
 
@@ -489,7 +495,8 @@ bool VR::on_pre_overlay_layer_update(sdk::renderer::layer::Overlay* layer, void*
 }
 
 bool VR::on_pre_post_effect_layer_draw(sdk::renderer::layer::PostEffect* layer, void* render_ctx) {
-    if (!is_hmd_active()) {
+    // is_vr_suspended(): the distortion fix below is a VR-only correction.
+    if (!is_hmd_active() || is_vr_suspended()) {
         return true;
     }
 
@@ -522,6 +529,9 @@ bool VR::on_pre_post_effect_layer_draw(sdk::renderer::layer::PostEffect* layer, 
     return true;
 }
 
+// Kein is_vr_suspended()-Check: wird mitten im Frame suspendiert, muss der im
+// Pre-Hook gemerkte Distortion-Type trotzdem zurueckgestellt werden. Der Restore
+// haengt ohnehin an m_set_next_post_effect_distortion_type.
 void VR::on_post_effect_layer_draw(sdk::renderer::layer::PostEffect* layer, void* render_ctx) {
     if (!is_hmd_active()) {
         return;
@@ -550,7 +560,8 @@ bool VR::on_pre_scene_layer_draw(sdk::renderer::layer::Scene* layer, void* rende
 }
 
 void VR::on_prepare_output_layer_draw(sdk::renderer::layer::PrepareOutput* layer, void* render_context) {
-    if (!is_hmd_active()) {
+    // is_vr_suspended(): this only re-points the output at the VR eye textures.
+    if (!is_hmd_active() || is_vr_suspended()) {
         return;
     }
 
@@ -985,7 +996,74 @@ void VR::on_lua_state_created(sol::state& lua) {
         "set_handle_pause", [](VR* vr, bool state) { 
             return vr->get_runtime()->handle_pause = state;
         },
-        "unhide_crosshair", &VR::unhide_crosshair
+        "unhide_crosshair", &VR::unhide_crosshair,
+        "is_gui_projection_matrix_override_disabled", &VR::is_gui_projection_matrix_override_disabled,
+        "set_gui_projection_matrix_override_disabled", &VR::set_gui_projection_matrix_override_disabled,
+        "is_gui_element_override_disabled", &VR::is_gui_element_override_disabled,
+        "set_gui_element_override_disabled", &VR::set_gui_element_override_disabled,
+        // [LUA 2026-08-15] Neigung des Overlay-Zeigestrahls (Grad, negativ = nach unten).
+        // Damit laesst sich der Wert aus einem Script setzen -- der ImGui-Slider bleibt
+        // bestehen, beide schreiben dieselbe Variable.
+        "get_overlay_pointer_pitch", &VR::get_overlay_pointer_pitch,
+        "set_overlay_pointer_pitch", &VR::set_overlay_pointer_pitch,
+        "is_mono_rendering", &VR::is_mono_rendering,
+        "set_mono_rendering", &VR::set_mono_rendering,
+        "get_mono_rendering_eye", &VR::get_mono_rendering_eye,
+        "set_mono_rendering_eye", &VR::set_mono_rendering_eye,
+        "is_mono_projection", &VR::is_mono_projection,
+        "set_mono_projection", &VR::set_mono_projection,
+        "is_vr_suspended", &VR::is_vr_suspended,
+        "set_vr_suspended", &VR::set_vr_suspended,
+        "is_map_face_glue", &VR::is_map_face_glue,
+        "set_map_face_glue", &VR::set_map_face_glue,
+        "get_map_glue_distance", &VR::get_map_glue_distance,
+        "set_map_glue_distance", &VR::set_map_glue_distance,
+        "get_map_glue_layer_gap", &VR::get_map_glue_layer_gap,
+        "set_map_glue_layer_gap", &VR::set_map_glue_layer_gap,
+        // Die Pin-Liste aus Lua: Name wie im Spiel ("Gui_ui3104"), order = Reihenfolge
+        // (0 = hinten). Gehasht wird hier, damit die Scripte nichts davon wissen muessen.
+        "add_glue_gui", [](VR* vr, const char* name, int order) {
+            if (name == nullptr) { return; }
+            vr->set_glue_gui_hash(utility::hash(std::string{name}), order);
+        },
+        "remove_glue_gui", [](VR* vr, const char* name) {
+            if (name == nullptr) { return; }
+            vr->remove_glue_gui_hash(utility::hash(std::string{name}));
+        },
+        "clear_glue_guis", &VR::clear_glue_guis,
+        "reset_glue_guis", &VR::reset_glue_guis,
+        "get_glue_gui_count", &VR::get_glue_gui_count,
+        "is_flatscreen_overlay", &VR::is_flatscreen_overlay,
+        "set_flatscreen_overlay", &VR::set_flatscreen_overlay,
+        "get_flatscreen_overlay_width", &VR::get_flatscreen_overlay_width,
+        "set_flatscreen_overlay_width", &VR::set_flatscreen_overlay_width,
+        "get_flatscreen_overlay_distance", &VR::get_flatscreen_overlay_distance,
+        "set_flatscreen_overlay_distance", &VR::set_flatscreen_overlay_distance,
+        "is_projection_matrix_override_disabled", &VR::is_projection_matrix_override_disabled,
+        "set_projection_matrix_override_disabled", &VR::set_projection_matrix_override_disabled,
+        "is_view_matrix_override_disabled", &VR::is_view_matrix_override_disabled,
+        "set_view_matrix_override_disabled", &VR::set_view_matrix_override_disabled,
+        "get_image_shift_x", &VR::get_image_shift_x,
+        "set_image_shift_x", &VR::set_image_shift_x,
+        "get_image_shift_y", &VR::get_image_shift_y,
+        "set_image_shift_y", &VR::set_image_shift_y,
+        "is_using_multipass", &VR::is_using_multipass,
+        "is_pose_freeze", &VR::is_pose_freeze,
+        "set_pose_freeze", &VR::set_pose_freeze,
+        "get_pose_freeze_submit", &VR::get_pose_freeze_submit,
+        "set_pose_freeze_submit", &VR::set_pose_freeze_submit,
+        "get_blank_eye", &VR::get_blank_eye,
+        "set_blank_eye", &VR::set_blank_eye,
+        "get_projection_zoom", &VR::get_projection_zoom,
+        "set_projection_zoom", &VR::set_projection_zoom,
+        "get_projection_fov", &VR::get_projection_fov,
+        "set_projection_fov", &VR::set_projection_fov,
+        "get_projection_shift_x", &VR::get_projection_shift_x,
+        "set_projection_shift_x", &VR::set_projection_shift_x,
+        "get_projection_shift_y", &VR::get_projection_shift_y,
+        "set_projection_shift_y", &VR::set_projection_shift_y,
+        "is_zoom_scaling_eye_offset", &VR::is_zoom_scaling_eye_offset,
+        "set_zoom_scales_eye_offset", &VR::set_zoom_scales_eye_offset
     );
 
     lua["vrmod"] = this;
@@ -2473,6 +2551,10 @@ Vector4f VR::get_current_offset() {
 
     std::shared_lock _{ get_runtime()->eyes_mtx };
 
+    if (m_mono_rendering) {
+        return apply_zoom_eye_offset(get_runtime()->eyes[m_mono_rendering_eye == 0 ? vr::Eye_Left : vr::Eye_Right])[3];
+    }
+
     const auto count = is_using_multipass() ? m_multipass.pass : m_frame_count;
 
     if (count % 2 == m_left_eye_interval) {
@@ -2484,6 +2566,31 @@ Vector4f VR::get_current_offset() {
     //return Vector4f{m_eye_distance, 0.0f, 0.0f, 0.0f};
 }
 
+// [ZOOM_DEPTH 2026-08-14] Der Zoom vergroessert nicht nur das Bild, sondern auch die
+// Parallaxe zwischen den Augen -- und genau daraus liest das Gehirn die Entfernung. Bei
+// 2x Zoom wirkt der Augenabstand wie ein doppelter, das Ziel "rueckt naeher", und jede
+// Zoomstufe verlangt neues Einstellen der Augen (im Spiel so beschrieben und gemessen).
+// Ein echtes Fernglas loest das ueber eine kleinere Basis: Basis = IPD / Vergroesserung.
+// Genau das machen wir hier, damit die wahrgenommene Tiefe ueber alle Stufen gleich bleibt.
+Matrix4x4f VR::apply_zoom_eye_offset(Matrix4x4f eye) const {
+    if (!m_zoom_shrinks_ipd->value()) {
+        return eye;
+    }
+
+    const auto zoom = m_last_zoom_factor;
+
+    if (zoom <= 1.0f) {
+        return eye;
+    }
+
+    eye[3].x /= zoom;
+    eye[3].y /= zoom;
+    eye[3].z /= zoom;
+    eye[3].w = 1.0f;
+
+    return eye;
+}
+
 Matrix4x4f VR::get_current_eye_transform(bool flip) {
     if (!is_hmd_active()) {
         return glm::identity<Matrix4x4f>();
@@ -2491,14 +2598,78 @@ Matrix4x4f VR::get_current_eye_transform(bool flip) {
 
     std::shared_lock _{get_runtime()->eyes_mtx};
 
+    if (m_mono_rendering) {
+        return apply_zoom_eye_offset(get_runtime()->eyes[m_mono_rendering_eye == 0 ? vr::Eye_Left : vr::Eye_Right]);
+    }
+
     const auto count = is_using_multipass() ? m_multipass.pass : m_frame_count;
     const auto mod_count = flip ? m_right_eye_interval : m_left_eye_interval;
 
     if (count % 2 == mod_count) {
-        return get_runtime()->eyes[vr::Eye_Left];
+        return apply_zoom_eye_offset(get_runtime()->eyes[vr::Eye_Left]);
     }
 
-    return get_runtime()->eyes[vr::Eye_Right];
+    return apply_zoom_eye_offset(get_runtime()->eyes[vr::Eye_Right]);
+}
+
+// Scales the projection we already have instead of building a new one: handedness,
+// near/far and the per-eye off-center asymmetry all stay exactly as the runtime made them.
+Matrix4x4f VR::apply_projection_tweaks(Matrix4x4f proj) const {
+    auto zoom = m_projection_zoom;
+
+    // An explicit FOV wins - derive the factor from the projection itself, where
+    // proj[1][1] is 1 / tan(vertical half fov).
+    if (m_projection_fov > 0.0f) {
+        const auto current = proj[1][1];
+
+        if (current > 0.0f) {
+            const auto target = glm::tan(glm::radians(m_projection_fov) * 0.5f);
+
+            if (target > 0.0001f) {
+                zoom = (1.0f / target) / current;
+            }
+        }
+    }
+
+    // [ZOOM_DEPTH] Faktor merken -- apply_zoom_eye_offset braucht ihn, und im FOV-Modus
+    // kennt man ihn ohne die Projektion nicht.
+    m_last_zoom_factor = zoom;
+
+    if (zoom != 1.0f) {
+        proj[0][0] *= zoom;
+        proj[1][1] *= zoom;
+
+        // [ZOOM_STEREO 2026-08-14] Die Off-Center-Terme NICHT mitskalieren.
+        //
+        // Frueher stand hier "sonst rutscht das Bild seitlich, statt auf denselben Punkt
+        // zuzulaufen" -- das gilt fuers Einzelbild. Im Stereobild ist es genau falsch
+        // herum: proj[2][0]/[2][1] sind pro Auge verschieden (das HMD-Frustum ist
+        // asymmetrisch, links und rechts spiegelbildlich). Multipliziert man sie mit dem
+        // Zoom, waechst der Versatz ZWISCHEN den Augen mit dem Zoomfaktor mit, der
+        // binokulare Overlap wandert und man schielt -- im Spiel gemessen: je mehr Zoom,
+        // desto schlimmer.
+        //
+        // So bleibt der Punkt geradeaus (x=0) fuer jedes Auge an seiner Bildstelle: beide
+        // zoomen um IHRE eigene Blickachse und die Bilder bleiben fusionierbar.
+        if (m_zoom_scales_eye_offset->value()) {
+            proj[2][0] *= zoom;
+            proj[2][1] *= zoom;
+        }
+    }
+
+    proj[2][0] += m_projection_shift_x;
+    proj[2][1] += m_projection_shift_y;
+
+    // [2026-08-11] Hier stand der Bild-Versatz fuer OpenXR (proj[2][0] += shift * 2).
+    // Wieder RAUS: die Projektion verschiebt die gerenderte WELT, waehrend das
+    // Fadenkreuz als GUI-Element stehen bleibt -- der Treffpunkt wanderte damit gegen
+    // das Fadenkreuz, und weil der Zoom oben dieselben Off-Center-Terme skaliert, war
+    // der Versatz zusaetzlich zoomabhaengig. Unter OpenVR verschiebt der Regler den
+    // AUSSCHNITT des fertigen Bildes (get_shifted_bounds), nicht die Welt. Genau das
+    // macht XR jetzt auch, als versetzte Kopie in die Swapchain
+    // (D3D12Component::OpenXR::copy, Abschnitt IMAGE_SHIFT).
+
+    return proj;
 }
 
 Matrix4x4f VR::get_current_projection_matrix(bool flip) {
@@ -2508,14 +2679,21 @@ Matrix4x4f VR::get_current_projection_matrix(bool flip) {
 
     std::shared_lock _{get_runtime()->eyes_mtx};
 
+    // Mono only overrides the projection when explicitly asked for. Each display must
+    // normally keep its own off-center frustum, otherwise the two identical images sit
+    // laterally offset and the eyes cannot fuse them.
+    if (m_mono_rendering && m_mono_projection) {
+        return apply_projection_tweaks(get_runtime()->projections[m_mono_rendering_eye == 0 ? (uint32_t)VRRuntime::Eye::LEFT : (uint32_t)VRRuntime::Eye::RIGHT]);
+    }
+
     const auto count = is_using_multipass() ? m_multipass.pass : m_frame_count;
     const auto mod_count = flip ? m_right_eye_interval : m_left_eye_interval;
 
     if (count % 2 == mod_count) {
-        return get_runtime()->projections[(uint32_t)VRRuntime::Eye::LEFT];
+        return apply_projection_tweaks(get_runtime()->projections[(uint32_t)VRRuntime::Eye::LEFT]);
     }
 
-    return get_runtime()->projections[(uint32_t)VRRuntime::Eye::RIGHT];
+    return apply_projection_tweaks(get_runtime()->projections[(uint32_t)VRRuntime::Eye::RIGHT]);
 }
 
 Matrix4x4f VR::get_projection_matrix(uint32_t pass) {
@@ -2525,11 +2703,16 @@ Matrix4x4f VR::get_projection_matrix(uint32_t pass) {
 
     std::shared_lock _{get_runtime()->eyes_mtx};
 
-    if (pass % 2 == 0) {
-        return get_runtime()->projections[(uint32_t)VRRuntime::Eye::LEFT];
+    // See get_current_projection_matrix: per-eye frustum stays unless mono projection is on.
+    if (m_mono_rendering && m_mono_projection) {
+        return apply_projection_tweaks(get_runtime()->projections[m_mono_rendering_eye == 0 ? (uint32_t)VRRuntime::Eye::LEFT : (uint32_t)VRRuntime::Eye::RIGHT]);
     }
 
-    return get_runtime()->projections[(uint32_t)VRRuntime::Eye::RIGHT];
+    if (pass % 2 == 0) {
+        return apply_projection_tweaks(get_runtime()->projections[(uint32_t)VRRuntime::Eye::LEFT]);
+    }
+
+    return apply_projection_tweaks(get_runtime()->projections[(uint32_t)VRRuntime::Eye::RIGHT]);
 }
 
 Matrix4x4f VR::get_eye_transform(uint32_t pass) {
@@ -2539,11 +2722,26 @@ Matrix4x4f VR::get_eye_transform(uint32_t pass) {
 
     std::shared_lock _{get_runtime()->eyes_mtx};
 
-    if (pass % 2 == 0) {
-        return get_runtime()->eyes[vr::Eye_Left];
+    if (m_mono_rendering) {
+        return apply_zoom_eye_offset(get_runtime()->eyes[m_mono_rendering_eye == 0 ? vr::Eye_Left : vr::Eye_Right]);
     }
 
-    return get_runtime()->eyes[vr::Eye_Right];
+    if (pass % 2 == 0) {
+        return apply_zoom_eye_offset(get_runtime()->eyes[vr::Eye_Left]);
+    }
+
+    return apply_zoom_eye_offset(get_runtime()->eyes[vr::Eye_Right]);
+}
+
+// [XR_UI_POINTER 2026-08-14] Laeuft direkt nach ImGui::NewFrame (REFramework::call_on_frame).
+// Nur hier darf in eine DrawList gezeichnet werden -- OverlayComponent setzt dort den roten
+// Zeigerpunkt aufs Menue.
+void VR::on_frame() {
+    if (!get_runtime()->ready()) {
+        return;
+    }
+
+    m_overlay_component.on_frame();
 }
 
 void VR::on_pre_imgui_frame() {
@@ -2689,6 +2887,21 @@ void VR::on_present() {
     }
     if (GetAsyncKeyState(VK_NUMPAD8) == 0 && btn8 == true) {
         btn8 = false;
+
+        // [TECHNIQUE_CYCLE 2026-08-15] Numpad 7 direkt darueber springt nur zwischen
+        // Multipass und AFW -- unter beiden zeichnet das Desktop-Fenster nur jeden zweiten
+        // Frame voll (D3D12Component.cpp:573), das ImGui-Menue flackert dabei und
+        // verschluckt Klicks. Zum Einstellen braucht es deshalb auch AFR und Sequential.
+        // Dieser Block laesst alle VIER Techniken durchlaufen und ruehrt Numpad 7 nicht an.
+        // Der Wechsel selbst ist derselbe Schreibzugriff, den auch das Combo im Menue macht
+        // (VR.cpp:4585) -- also kein neuer Zustand, nur ein zweiter Weg dorthin.
+        int32_t& technique = m_rendering_technique->value();
+        technique = (technique + 1) % 4;
+
+        static const char* const s_technique_names[] = {
+            "Alternating/AFR", "Two Frame Sequential", "Single Frame Multipass", "Alternate Frame Warping"
+        };
+        spdlog::info("[VR] Rendering technique -> {} ({})", technique, s_technique_names[technique]);
     }
     static bool btn9 = false;
     if (GetAsyncKeyState(VK_NUMPAD9) < 0 && btn9 == false) {
@@ -2810,10 +3023,104 @@ struct GUIRestoreData {
 
 thread_local std::vector<std::unique_ptr<GUIRestoreData>> g_elements_to_reset{};
 
+// [RE4 MAP GLUE 2026-08-10] Die GUIs der Karte, am 2026-08-10 bei offener Karte gemessen:
+//   3100 Navigationskreuz, 3101 Funde, 3103, 3104 Karte, 3120/3121 Karten-Ebenen.
+// 3120 ist die einzige, die als ViewType World hereinkommt -- alle anderen sind Screen.
+// Explizite Liste, kein Praefix-Raten.
+// [GLUE-LISTE 2026-08-10] Welche GUIs am Kopf gepinnt werden, steht NICHT mehr im Code,
+// sondern in m_glue_guis (Name-Hash -> Reihenfolge). Ein Script kann die Liste jederzeit
+// umbauen, ein neuer Problem-Fall braucht also kein Compile mehr.
+//
+// Die Reihenfolge staffelt die Ebenen um `layer_gap` nach vorn: 0 = am weitesten hinten.
+// Notwendig, weil bei exakt gleicher Distanz nur noch die Zeichenreihenfolge entscheidet
+// und eine deckende Ebene die darunter schluckt -- gemessen am 2026-08-10, da war der
+// Kartenumriss weg. 2 mm reichen; bei 1,5 m sind das 0,13 % Groesse, also unsichtbar.
+//
+// Vorbelegung = die sechs Karten-GUIs: Kartenkoerper hinten, Umriss darueber, dann die
+// Funde, das Navigationskreuz ganz vorn.
+void VR::reset_glue_guis() {
+    std::scoped_lock _{m_glue_guis_mutex};
+
+    m_glue_guis_initialized = true;
+    // Cast, weil "..."_fnv hier size_t liefert und der Schluessel uint32_t ist (C4267).
+    m_glue_guis = {
+        { (uint32_t)"Gui_ui3120"_fnv, 0 },   // Karten-Ebene
+        { (uint32_t)"Gui_ui3121"_fnv, 1 },   // Karte + Dekoration
+        { (uint32_t)"Gui_ui3104"_fnv, 2 },   // Kartenumriss
+        { (uint32_t)"Gui_ui3103"_fnv, 3 },
+        { (uint32_t)"Gui_ui3101"_fnv, 4 },   // Funde
+        { (uint32_t)"Gui_ui3100"_fnv, 5 },   // Navigationskreuz
+    };
+}
+
+bool VR::is_glue_gui(uint32_t name_hash, int* order_out) {
+    std::scoped_lock _{m_glue_guis_mutex};
+
+    // Erstzugriff: Karten-GUIs vorbelegen. Ein bewusstes clear_glue_guis() setzt das Flag
+    // ebenfalls, eine absichtlich geleerte Liste bleibt also leer.
+    if (!m_glue_guis_initialized) {
+        m_glue_guis_initialized = true;
+        m_glue_guis = {
+            { (uint32_t)"Gui_ui3120"_fnv, 0 },
+            { (uint32_t)"Gui_ui3121"_fnv, 1 },
+            { (uint32_t)"Gui_ui3104"_fnv, 2 },
+            { (uint32_t)"Gui_ui3103"_fnv, 3 },
+            { (uint32_t)"Gui_ui3101"_fnv, 4 },
+            { (uint32_t)"Gui_ui3100"_fnv, 5 },
+        };
+    }
+
+    const auto it = m_glue_guis.find(name_hash);
+
+    if (it == m_glue_guis.end()) {
+        return false;
+    }
+
+    if (order_out != nullptr) {
+        *order_out = it->second;
+    }
+
+    return true;
+}
+
+void VR::set_glue_gui_hash(uint32_t name_hash, int order) {
+    std::scoped_lock _{m_glue_guis_mutex};
+    m_glue_guis_initialized = true;
+    m_glue_guis[name_hash] = order;
+}
+
+void VR::remove_glue_gui_hash(uint32_t name_hash) {
+    std::scoped_lock _{m_glue_guis_mutex};
+    m_glue_guis_initialized = true;
+    m_glue_guis.erase(name_hash);
+}
+
+void VR::clear_glue_guis() {
+    std::scoped_lock _{m_glue_guis_mutex};
+    m_glue_guis_initialized = true;
+    m_glue_guis.clear();
+}
+
+size_t VR::get_glue_gui_count() {
+    std::scoped_lock _{m_glue_guis_mutex};
+    return m_glue_guis.size();
+}
+
 bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_context) {
     REF_PROFILE_FUNCTION();
 
     inside_gui_draw = true;
+
+    // This hook is what places every GUI element in VR space (2D UI distance, world-space
+    // scale). It runs independently of the camera matrices, which is why a map's markers
+    // keep their own depth even when the camera is left native - so hand the element back
+    // untouched, same as the early-out below.
+    //   should_suspend_camera_overrides(): canvas mode, the engine draws its own UI.
+    //   m_disable_gui_element_override:    explicit switch, belongs with the projection
+    //                                      override (see VR.hpp for why).
+    if (should_suspend_camera_overrides() || m_disable_gui_element_override) {
+        return true;
+    }
 
     if (!get_runtime()->ready()) {
         return true;
@@ -2900,7 +3207,15 @@ bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_conte
         if (view != nullptr) {
             const auto current_view_type = sdk::call_object_func<uint32_t>(view, "get_ViewType", context, view);
 
-            if (current_view_type == (uint32_t)via::gui::ViewType::Screen) {
+            // [RE4 MAP GLUE] Gui_ui3120 kommt als World herein und wuerde hier sonst
+            // durchrutschen -- genau deshalb hing diese eine Ebene weiter in der 3D-Szene,
+            // waehrend alle anderen Karten-Layer vorne angeheftet wurden. Der Original-
+            // ViewType landet unten in restore_data und wird nach dem Zeichnen
+            // zurueckgeschrieben, der Eingriff gilt also nur fuer diesen Frame.
+            int map_layer = 0;
+            const bool map_glue = m_map_face_glue && is_glue_gui(name_hash, &map_layer);
+
+            if (current_view_type == (uint32_t)via::gui::ViewType::Screen || map_glue) {
                 static sdk::RETypeDefinition* via_render_mesh_typedef = nullptr;
 
                 if (via_render_mesh_typedef == nullptr) {
@@ -3068,6 +3383,15 @@ bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_conte
                         bool wants_face_glue = false;
                         auto ui_distance = m_ui_distance_option->value();
 
+                        // [RE4 MAP GLUE] Die Karte soll als EIN Stueck am Kopf haengen:
+                        // dieselbe Rotation (Face-Glue) UND dieselbe Ankerposition fuer
+                        // jede ihrer Ebenen. Sonst ankert jede Ebene an der Spielkamera,
+                        // waehrend der Kopf sich frei bewegt -- das ist die Parallaxe,
+                        // die Umriss, Navkreuz und Funde gegeneinander schieben laesst.
+                        if (map_glue) {
+                            wants_face_glue = true;
+                        }
+
                         switch (name_hash) {
                         case "damage_ui2102"_fnv:
                         case "NightVision_Filter"_fnv:
@@ -3126,7 +3450,13 @@ bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_conte
 
                         // glues the GUI to the camera rotation and position
                         if (wants_face_glue) {
-                            ui_distance = 5.0f;
+                            // [RE4 MAP GLUE] Die 5 m sind fuer Vollbild-Filter gedacht;
+                            // die Karte will man dichter und regelbar haben. Der Index
+                            // staffelt die Ebenen um Millimeter, damit die Reihenfolge
+                            // feststeht und keine Ebene eine andere schluckt.
+                            ui_distance = map_glue
+                                ? (m_map_glue_distance - map_layer * m_map_glue_layer_gap)
+                                : 5.0f;
 
                             wanted_rotation = glm::extractMatrixRotation(m_render_camera_matrix) * Matrix4x4f{
                                 -1, 0, 0, 0,
@@ -3168,11 +3498,17 @@ bool VR::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_conte
                         const auto wanted_rotation_mat = Matrix4x4f{wanted_rotation};
 
                         gui_matrix = wanted_rotation_mat;
-                        gui_matrix[3] = camera_position + (wanted_rotation_mat[2] * ui_distance) + (wanted_rotation_mat[0] * right_world_adjust);
+                        // [RE4 MAP GLUE] Anker ist der KOPF (m_render_camera_matrix), nicht
+                        // die Spielkamera. Nur so bekommen alle Karten-Ebenen exakt denselben
+                        // Ursprung und koennen sich nicht mehr gegeneinander verschieben.
+                        const auto anchor_position = map_glue ? m_render_camera_matrix[3] : camera_position;
+                        gui_matrix[3] = anchor_position + (wanted_rotation_mat[2] * ui_distance) + (wanted_rotation_mat[0] * right_world_adjust);
                         gui_matrix[3].w = 1.0f;
 
                         // Scales the GUI so it's not massive.
-                        if (!wants_face_glue) {
+                        // [RE4 MAP GLUE] Die Karte braucht die Skalierung weiterhin -- ohne sie
+                        // steht sie riesig im Raum; nur die echten Vollbild-Filter lassen sie aus.
+                        if (!wants_face_glue || map_glue) {
                             const auto scale = 1.0f / ui_scale;
                             gui_matrix = glm::scale(gui_matrix, Vector3f{ scale, scale, scale });
                         }
@@ -4262,6 +4598,21 @@ void VR::openvr_input_to_re_engine() {
     }
 }
 
+// Called from TemporalUpscaler::on_draw_ui so the technique sits at the end of the "Upscaler" tree.
+// The framewarp options live here too: the VR tree itself is hidden by the mod filter in Mods.cpp,
+// so this is the only place they can still be reached.
+void VR::draw_rendering_technique_ui() {
+    m_rendering_technique->draw("Rendering Technique");
+
+    if (m_rendering_technique->value() == ALTERNATE_FRAME_WARPING) {
+        m_clear_before_framewarp->draw("Clear Before Framewarp");
+        m_framewarp_debug->draw("Debug Framewarp");
+        m_enable_ui_fix->draw("Enable Framewarp UI Fix");
+        m_ignore_motion_threshold->draw("Ignore Motion Threshold");
+        m_framewarp_mode->draw("Framewarp Mode");
+    }
+}
+
 void VR::on_draw_ui() {
     // create VR tree entry in menu (imgui)
     if (get_runtime()->loaded) {
@@ -4359,15 +4710,8 @@ void VR::on_draw_ui() {
 
     ImGui::Separator();
 
-    m_rendering_technique->draw("Rendering Technique");
-    if (m_rendering_technique->value() == ALTERNATE_FRAME_WARPING) {
-        m_clear_before_framewarp->draw("Clear Before Framewarp");
-        m_framewarp_debug->draw("Debug Framewarp");
-        m_enable_ui_fix->draw("Enable Framewarp UI Fix");
-        m_ignore_motion_threshold->draw("Ignore Motion Threshold");
-        m_framewarp_mode->draw("Framewarp Mode");
-    }
-    ImGui::Separator();
+    // "Rendering Technique" and the framewarp options are drawn at the end of the Upscaler
+    // tree instead (draw_rendering_technique_ui)
 
     m_decoupled_pitch->draw("Decoupled Camera Pitch");
 
@@ -4416,11 +4760,79 @@ void VR::on_draw_ui() {
 
     ImGui::Checkbox("Disable Projection Matrix Override", &m_disable_projection_matrix_override);
     ImGui::Checkbox("Disable GUI Projection Matrix Override", &m_disable_gui_camera_projection_matrix_override);
+    ImGui::Checkbox("Disable GUI Element Override", &m_disable_gui_element_override);
     ImGui::Checkbox("Disable View Matrix Override", &m_disable_view_matrix_override);
     ImGui::Checkbox("Disable Backbuffer Size Override", &m_disable_backbuffer_size_override);
     ImGui::Checkbox("Disable Temporal Fix", &m_disable_temporal_fix);
     ImGui::Checkbox("Disable Post Effect Fix", &m_disable_post_effect_fix);
-    
+
+    ImGui::Checkbox("Force Mono Rendering", &m_mono_rendering);
+
+    if (m_mono_rendering) {
+        int mono_eye = (int)m_mono_rendering_eye;
+
+        if (ImGui::Combo("Mono Rendering Eye", &mono_eye, "Left\0Right\0")) {
+            m_mono_rendering_eye = (uint32_t)mono_eye;
+        }
+
+        ImGui::Checkbox("Mono Forces Projection Too", &m_mono_projection);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Off (default): each eye keeps its own frustum, the identical images fuse into one flat picture.\n"
+                              "On: both eyes also get the chosen eye's frustum - the images no longer line up.");
+        }
+    }
+
+    ImGui::Checkbox("Suspend VR (true flat)", &m_vr_suspended);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Parks every engine override at once: camera, projection, GUI projection, GUI elements,\n"
+                          "backbuffer size, engine overlays and the post effect fix. The game renders exactly as it\n"
+                          "would flat (including the orthographic GUI camera the map needs) and both eyes get the\n"
+                          "same image. Frames are still submitted, so the headset does not freeze.\n"
+                          "Scriptable as vrmod:set_vr_suspended(true).");
+    }
+
+    ImGui::Checkbox("Glue Map To Head (RE4)", &m_map_face_glue);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Pins every layer of the map (Gui_ui3100/3101/3103/3104/3120/3121) to the SAME\n"
+                          "anchor: the head, at the distance below, with one shared rotation. Without this each\n"
+                          "layer is anchored to the game camera and re-oriented from its own distance, which is\n"
+                          "what makes outline, navigation cross and pickups slide against each other in the HMD.\n"
+                          "Scriptable as vrmod:set_map_face_glue(true).");
+    }
+
+    if (m_map_face_glue) {
+        ImGui::SliderFloat("Map Distance (m)", &m_map_glue_distance, 0.2f, 10.0f);
+        ImGui::SliderFloat("Map Layer Gap (m)", &m_map_glue_layer_gap, 0.0f, 0.05f);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Stagger between the map layers. At exactly 0 every layer sits in the same plane\n"
+                              "and draw order decides - an opaque layer then swallows the outline.");
+        }
+    }
+
+    ImGui::Checkbox("Flatscreen Canvas", &m_flatscreen_overlay);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Renders the game exactly as it looks on a monitor and shows it as a flat quad in front of you.\n"
+                          "All camera overrides are suspended while this is on. OpenVR + D3D12 only.");
+    }
+
+    if (m_flatscreen_overlay) {
+        ImGui::SliderFloat("Canvas Width (m)", &m_flatscreen_overlay_width, 0.1f, 20.0f);
+        ImGui::SliderFloat("Canvas Distance (m)", &m_flatscreen_overlay_distance, 0.1f, 20.0f);
+    }
+
+    ImGui::SliderFloat("Image Shift X", &m_image_shift_x, -0.5f, 0.5f);
+    ImGui::SliderFloat("Image Shift Y", &m_image_shift_y, -0.5f, 0.5f);
+
+    int blank_eye = m_blank_eye + 1;   // -1/0/1 -> 0/1/2 for the combo
+    if (ImGui::Combo("Blank Eye", &blank_eye, "Off\0Left\0Right\0")) {
+        m_blank_eye = blank_eye - 1;
+    }
+
+    ImGui::SliderFloat("Projection Zoom", &m_projection_zoom, 0.1f, 10.0f);
+    ImGui::SliderFloat("Projection FOV (0 = off)", &m_projection_fov, 0.0f, 120.0f);
+    ImGui::SliderFloat("Projection Shift X", &m_projection_shift_x, -1.0f, 1.0f);
+    ImGui::SliderFloat("Projection Shift Y", &m_projection_shift_y, -1.0f, 1.0f);
+
     const double min_ = 0.0;
     const double max_ = 25.0;
     ImGui::SliderScalar("Prediction Scale", ImGuiDataType_Double, &m_openxr->prediction_scale, &min_, &max_);
@@ -4501,6 +4913,16 @@ std::array<RECamera*, 2> VR::get_cameras() const {
 }
 
 Vector4f VR::get_position(uint32_t index) const {
+    // [POSE_FREEZE 2026-08-11] Auch die HMD-POSITION einfrieren, nicht nur die Rotation.
+    // Gemessen im Scope: die Kameraposition streute bis 9 mm pro Sekunde bei Kopfbewegung
+    // und 0,3-0,6 mm in Ruhe, weil das Script sie nur zweimal je Frame ueber
+    // standing_origin nachzieht, gerendert aber mit der frischen Position wird.
+    // Eingefroren bleibt der Augen-Versatz trotzdem einstellbar: er steckt in
+    // standing_origin, und die Differenz dazu wird weiter live gerechnet.
+    if (index == 0 && m_pose_freeze) {
+        return m_frozen_hmd_position;
+    }
+
     if (index >= vr::k_unMaxTrackedDeviceCount) {
         return Vector4f{};
     }
@@ -4613,7 +5035,60 @@ Vector4f VR::get_angular_velocity_unsafe(uint32_t index) const {
     return Vector4f{};
 }
 
+// [POSE_FREEZE 2026-08-11] Ab hier liefert die HMD-Rotation ueberall denselben Wert.
+// Beim Einschalten wird die aktuelle Rotation gemerkt -- get_rotation() ist zu diesem
+// Zeitpunkt noch ungefiltert, weil m_pose_freeze erst danach gesetzt wird.
+void VR::set_pose_freeze(bool on) {
+    if (on == m_pose_freeze) {
+        return;
+    }
+
+    if (on) {
+        m_frozen_hmd_rotation = glm::normalize(glm::quat{get_rotation(0)});
+        m_frozen_hmd_position = get_position(0);
+    }
+
+    m_pose_freeze = on;
+
+    // Dasselbe an die OpenXR-Runtime durchreichen: sie haengt die Pose an den
+    // Compositor-Layer, und ohne das reprojiziert die Runtime das eingefrorene Bild
+    // weiter gegen die echte Kopfbewegung. OpenVR braucht das nicht -- dort steckt die
+    // Blickrichtung bereits in der gerenderten Textur.
+    if (m_openxr != nullptr) {
+        m_openxr->pose_freeze = on;
+        m_openxr->frozen_orientation = XrQuaternionf{m_frozen_hmd_rotation.x, m_frozen_hmd_rotation.y,
+                                                     m_frozen_hmd_rotation.z, m_frozen_hmd_rotation.w};
+    }
+}
+
+// [POSE_FREEZE/SUBMIT] Die Pose, die unter OpenVR als "dafuer wurde gerendert" mitgeht.
+// Modus 1 gibt die eingefrorene Blickrichtung an (Compositor dreht die Differenz nach,
+// Bild bleibt weltfest), Modus 2 die frische (Compositor dreht nichts nach, Bild klebt am
+// Display). Die POSITION ist immer die echte.
+vr::HmdMatrix34_t VR::get_submit_pose() const {
+    auto live = get_raw_transform(0);
+
+    if (m_pose_freeze_submit != 1) {
+        return live;
+    }
+
+    const auto rot = glm::mat3_cast(m_frozen_hmd_rotation);
+
+    for (auto row = 0; row < 3; ++row) {
+        for (auto col = 0; col < 3; ++col) {
+            live.m[row][col] = rot[col][row];
+        }
+    }
+
+    return live;
+}
+
 Matrix4x4f VR::get_rotation(uint32_t index) const {
+    // [POSE_FREEZE] Gilt NUR fuer das HMD (index 0), die Haende bleiben live.
+    if (index == 0 && m_pose_freeze) {
+        return Matrix4x4f{m_frozen_hmd_rotation};
+    }
+
     if (get_runtime()->is_openvr()) {
         if (index >= vr::k_unMaxTrackedDeviceCount) {
             return glm::identity<Matrix4x4f>();
@@ -4656,13 +5131,23 @@ Matrix4x4f VR::get_transform(uint32_t index) const {
 
         auto& pose = get_openvr_poses()[index];
         auto matrix = Matrix4x4f{ *(Matrix3x4f*)&pose.mDeviceToAbsoluteTracking };
-        return glm::rowMajor4(matrix);
+        auto out = glm::rowMajor4(matrix);
+
+        // [POSE_FREEZE] Rotation eingefroren, Position bleibt echt.
+        if (index == 0 && m_pose_freeze) {
+            auto frozen = Matrix4x4f{m_frozen_hmd_rotation};
+            frozen[3] = out[3];
+            return frozen;
+        }
+
+        return out;
     } else if (get_runtime()->is_openxr()) {
         std::shared_lock _{ get_runtime()->pose_mtx };
 
         // HMD rotation
         if (index == 0 && !m_openxr->stage_views.empty()) {
-            auto mat = Matrix4x4f{*(glm::quat*)&m_openxr->view_space_location.pose.orientation};
+            auto mat = Matrix4x4f{m_pose_freeze ? m_frozen_hmd_rotation
+                                                : *(glm::quat*)&m_openxr->view_space_location.pose.orientation};
             mat[3] = Vector4f{*(Vector3f*)&m_openxr->view_space_location.pose.position, 1.0f};
             return mat;
         } else if (index > 0) {

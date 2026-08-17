@@ -3,6 +3,8 @@
 #include <chrono>
 #include <bitset>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <shared_mutex>
 
 #include <openvr.h>
@@ -64,6 +66,8 @@ public:
     void on_lua_state_created(sol::state& lua) override;
 
     void on_pre_imgui_frame() override;
+    // Laeuft innerhalb des ImGui-Frames -- dort zeichnet OverlayComponent den Zeigerpunkt.
+    void on_frame() override;
     void on_present() override;
     void on_post_present() override;
     void on_update_transform(RETransform* transform) override;
@@ -78,6 +82,22 @@ public:
     void on_application_entry(void* entry, const char* name, size_t hash) override;
 
     void on_draw_ui() override;
+    // Drawn by the Upscaler UI, the rendering technique lives at the end of that tree
+    void draw_rendering_technique_ui();
+    // Neigung des Zeigestrahls in Grad (negativ = nach unten).
+    float get_overlay_pointer_pitch() const {
+        return m_overlay_pointer_pitch->value();
+    }
+
+    // [LUA 2026-08-15] Setter, damit der Wert aus einem Lua-Script kommen kann statt aus der
+    // ImGui-UI -- im Headset ist ImGui nicht lesbar, eingestellt wird am Desktop bzw. per JSON.
+    // Geklemmt auf denselben Bereich wie der Slider (-60 .. +60 Grad).
+    void set_overlay_pointer_pitch(float deg) {
+        if (deg < -60.0f) { deg = -60.0f; }
+        if (deg >  60.0f) { deg =  60.0f; }
+        m_overlay_pointer_pitch->value() = deg;
+    }
+
     void on_device_reset() override;
 
     void on_config_load(const utility::Config& cfg) override;
@@ -186,6 +206,388 @@ public:
 
     void toggle_hmd_oriented_audio() {
         m_hmd_oriented_audio->toggle();
+    }
+
+    // "Disable GUI Projection Matrix Override" checkbox, exposed to Lua
+    bool is_gui_projection_matrix_override_disabled() const {
+        return m_disable_gui_camera_projection_matrix_override;
+    }
+
+    void set_gui_projection_matrix_override_disabled(bool state) {
+        m_disable_gui_camera_projection_matrix_override = state;
+    }
+
+    // Stops on_pre_gui_draw_element from repositioning GUI elements in VR space (the
+    // hook behind "2D UI Distance" / "World-Space UI Scale"), handing each element back
+    // untouched instead.
+    //
+    // Belongs together with the projection override above: a screen that draws through an
+    // ORTHOGRAPHIC gui camera - RE4's map does, measured live: OrthographicRH - has no
+    // parallax at all, every layer sits exactly on top of the others. Keeping that matrix
+    // while still placing the individual elements in space is a contradiction, and it is
+    // what makes a map's markers drift against its outline. Separate flag so both halves
+    // can be compared on their own.
+    bool is_gui_element_override_disabled() const {
+        return m_disable_gui_element_override;
+    }
+
+    void set_gui_element_override_disabled(bool state) {
+        m_disable_gui_element_override = state;
+    }
+
+    // Mono rendering. Both eyes render from the same eye transform, so both displays
+    // end up showing the exact same image (scopes, binoculars, map).
+    bool is_mono_rendering() const {
+        return m_mono_rendering;
+    }
+
+    void set_mono_rendering(bool state) {
+        m_mono_rendering = state;
+    }
+
+    uint32_t get_mono_rendering_eye() const {
+        return m_mono_rendering_eye;
+    }
+
+    // 0 = left eye, 1 = right eye
+    void set_mono_rendering_eye(uint32_t eye) {
+        m_mono_rendering_eye = eye != 0 ? 1 : 0;
+    }
+
+    // Whether mono rendering also forces the chosen eye's PROJECTION matrix onto both eyes.
+    //
+    // Default (false) is what you almost always want: both eyes render from the same
+    // position, but each display keeps its own off-center frustum, so the two identical
+    // images still line up and fuse into one flat picture.
+    //
+    // With this on, both displays get the same asymmetric frustum. The pixels are then
+    // identical but sit laterally offset on the right panel, and the eyes can no longer
+    // fuse them - the image visibly refuses to come together. Kept switchable only so
+    // both variants can be compared without another rebuild.
+    bool is_mono_projection() const {
+        return m_mono_projection;
+    }
+
+    void set_mono_projection(bool state) {
+        m_mono_projection = state;
+    }
+
+    // --- Flatscreen canvas ---------------------------------------------------
+    // Shows the finished game frame as a flat quad in front of the head (a SteamVR
+    // overlay) instead of stretching it across both eyes as a stereo image. While it
+    // runs, all camera overrides are suspended, so the engine renders exactly what it
+    // would render on a monitor - every UI layer then sits relative to the others just
+    // like it does on a TV, which is something no stereo setting can achieve.
+    //
+    // Requirements: OpenVR and D3D12. Under OpenXR or D3D11 nothing happens at all.
+    // Everything here is additive and off by default; with the flag off, not a single
+    // existing code path changes.
+    bool is_flatscreen_overlay() const {
+        return m_flatscreen_overlay;
+    }
+
+    void set_flatscreen_overlay(bool state) {
+        m_flatscreen_overlay = state;
+    }
+
+    // Width of the canvas in meters (height follows from the frame's aspect ratio).
+    float get_flatscreen_overlay_width() const {
+        return m_flatscreen_overlay_width;
+    }
+
+    void set_flatscreen_overlay_width(float width) {
+        if (width < 0.1f) { width = 0.1f; }
+        if (width > 20.0f) { width = 20.0f; }
+        m_flatscreen_overlay_width = width;
+    }
+
+    // Distance of the canvas in front of the head, in meters.
+    float get_flatscreen_overlay_distance() const {
+        return m_flatscreen_overlay_distance;
+    }
+
+    void set_flatscreen_overlay_distance(float distance) {
+        if (distance < 0.1f) { distance = 0.1f; }
+        if (distance > 20.0f) { distance = 20.0f; }
+        m_flatscreen_overlay_distance = distance;
+    }
+
+    // --- Suspend: echtes Flatscreen ------------------------------------------
+    // Parkt saemtliche Engine-Eingriffe auf einmal: Kamera-, Projektions-, GUI-
+    // Projektions- und GUI-Element-Override, die HMD-Groesse fuer den Backbuffer
+    // sowie die Overlay-/PostEffect-Layer-Eingriffe. Das Spiel rendert dann so,
+    // als liefe es flach -- inklusive der orthografischen GUI-Kamera, an der die
+    // Karte sonst scheitert; beide Augen bekommen dasselbe Bild.
+    //
+    // Was BEWUSST weiterlaeuft: der Frame-Zyklus der Runtime (Submit bzw.
+    // xrEndFrame). Eine Runtime, die kein Frame mehr bekommt, reprojiziert das
+    // alte weiter -- das Headset wuerde einfrieren statt flach zu zeigen.
+    //
+    // Default false, und jede Abfrage ist ein zusaetzliches ||: solange kein
+    // Script set_vr_suspended(true) ruft, ist der Code bitgleich zu vorher.
+    bool is_vr_suspended() const {
+        return m_vr_suspended;
+    }
+
+    void set_vr_suspended(bool state) {
+        m_vr_suspended = state;
+    }
+
+    // --- RE4: Karte am Kopf festpinnen --------------------------------------
+    // Messbefund 2026-08-10: on_pre_gui_draw_element heftet jede Screen-View vor die
+    // SPIELKAMERA (m_original_camera_matrix) und dreht/skaliert sie aus ihrem eigenen
+    // Abstand zum Render-Auge. Der Kopf bewegt sich davon unabhaengig -- deshalb driften
+    // Kartenumriss, Navigationskreuz und Funde im HMD gegeneinander, obwohl die Karte am
+    // Monitor korrekt aussieht (ihre GUI-Kamera ist orthografisch, dort gibt es keine
+    // Parallaxe). Gui_ui3120 kam obendrein als World herein und wurde gar nicht angefasst.
+    //
+    // Mit diesem Flag bekommen alle sechs Karten-GUIs denselben Anker (den Kopf), dieselbe
+    // Distanz und dieselbe Rotation -- sie koennen sich dann gar nicht mehr gegeneinander
+    // verschieben. Default aus; bei false ist der Code bitgleich zu vorher.
+    bool is_map_face_glue() const {
+        return m_map_face_glue;
+    }
+
+    void set_map_face_glue(bool state) {
+        m_map_face_glue = state;
+    }
+
+    // Staffelung der Karten-Ebenen in Metern (Default 2 mm). 0 = alle exakt gleich weit,
+    // dann entscheidet die Zeichenreihenfolge und eine Ebene kann eine andere schlucken.
+    float get_map_glue_layer_gap() const {
+        return m_map_glue_layer_gap;
+    }
+
+    void set_map_glue_layer_gap(float gap) {
+        if (gap < 0.0f) { gap = 0.0f; }
+        if (gap > 0.05f) { gap = 0.05f; }
+        m_map_glue_layer_gap = gap;
+    }
+
+    // --- Welche GUIs gepinnt werden: Liste, KEIN Hardcode --------------------
+    // Frueher standen die sechs Karten-GUIs fest im Code. Jetzt ist es eine Liste
+    // Name-Hash -> Reihenfolge, die ein Script zur Laufzeit fuellt: eine neue Problem-GUI
+    // braucht damit kein Compile mehr, nur eine Zeile Lua. Ohne Zutun stehen die sechs
+    // Karten-GUIs drin, das Verhalten bleibt also wie gehabt.
+    // Die Reihenfolge (0 = am weitesten hinten) staffelt die Ebenen um `layer_gap`.
+    bool is_glue_gui(uint32_t name_hash, int* order_out = nullptr);
+    void set_glue_gui_hash(uint32_t name_hash, int order);
+    void remove_glue_gui_hash(uint32_t name_hash);
+    void clear_glue_guis();
+    void reset_glue_guis();          // zurueck auf die sechs Karten-GUIs
+    size_t get_glue_gui_count();
+
+    float get_map_glue_distance() const {
+        return m_map_glue_distance;
+    }
+
+    void set_map_glue_distance(float distance) {
+        if (distance < 0.2f) { distance = 0.2f; }
+        if (distance > 10.0f) { distance = 10.0f; }
+        m_map_glue_distance = distance;
+    }
+
+    // True while the engine must be left alone (canvas mode or suspend). Deliberately
+    // separate from the m_disable_*_override checkboxes so those keep whatever was set there.
+    bool should_suspend_camera_overrides() const {
+        return m_flatscreen_overlay || m_vr_suspended;
+    }
+
+    // Canvas mode shows the finished monitor frame on a quad in front of the head.
+    // For that to look like a TV, the stereo image behind it must go away - otherwise
+    // the canvas merely floats in front of a still-rendered (and, with the overrides
+    // suspended, badly distorted) world. So both eyes get black while it is on.
+    //
+    // Black is submitted, the submit itself is NOT skipped: a runtime that gets no
+    // frame starts reprojecting the previous one, which is exactly the judder we are
+    // trying to avoid. The eye textures are cleared instead of filled.
+    bool should_blank_all_eyes() const {
+        return m_flatscreen_overlay;
+    }
+
+    // The two remaining override checkboxes, exposed so a script can reach them without
+    // the VR menu (which a release build may not show at all).
+    bool is_projection_matrix_override_disabled() const {
+        return m_disable_projection_matrix_override;
+    }
+
+    void set_projection_matrix_override_disabled(bool state) {
+        m_disable_projection_matrix_override = state;
+    }
+
+    bool is_view_matrix_override_disabled() const {
+        return m_disable_view_matrix_override;
+    }
+
+    void set_view_matrix_override_disabled(bool state) {
+        m_disable_view_matrix_override = state;
+    }
+
+    // --- Projection tweaks (scope zoom) --------------------------------------
+    // A scope zoom is nothing but a narrow FOV on the game camera - and that FOV is
+    // exactly what gets thrown away in VR, because the projection is built from the
+    // headset frustum instead. These let a script put the zoom back.
+    //
+    // Applied to the projection we already have rather than building a new matrix, so
+    // handedness, near/far and the per-eye asymmetry all survive untouched.
+    //
+    // zoom: factor, 1.0 = off (2.0 = twice as close).
+    float get_projection_zoom() const {
+        return m_projection_zoom;
+    }
+
+    void set_projection_zoom(float zoom) {
+        if (zoom < 0.01f) { zoom = 0.01f; }
+        if (zoom > 50.0f) { zoom = 50.0f; }
+        m_projection_zoom = zoom;
+    }
+
+    // [ZOOM_STEREO] Siehe m_zoom_scales_eye_offset. Umschaltbar, um beide Varianten im
+    // Spiel zu vergleichen, ohne neu zu bauen.
+    bool is_zoom_scaling_eye_offset() const {
+        return m_zoom_scales_eye_offset->value();
+    }
+
+    void set_zoom_scales_eye_offset(bool state) {
+        m_zoom_scales_eye_offset->value() = state;
+    }
+
+    // [ZOOM_DEPTH] Siehe m_zoom_shrinks_ipd.
+    bool is_zoom_shrinking_ipd() const {
+        return m_zoom_shrinks_ipd->value();
+    }
+
+    void set_zoom_shrinks_ipd(bool state) {
+        m_zoom_shrinks_ipd->value() = state;
+    }
+
+    // fov: vertical field of view in degrees, 0 = off. Wins over zoom when set, so a
+    // script can hand over the game's own scope FOV directly.
+    float get_projection_fov() const {
+        return m_projection_fov;
+    }
+
+    void set_projection_fov(float fov) {
+        if (fov < 0.0f) { fov = 0.0f; }
+        if (fov > 179.0f) { fov = 179.0f; }
+        m_projection_fov = fov;
+    }
+
+    // --- Image shift ---------------------------------------------------------
+    // Moves the finished image inside the panel, applied at submit time via the
+    // compositor's texture bounds.
+    //
+    // This is deliberately the LAST step in the chain: once the projection and the view
+    // matrix are handed back to the game (scope aiming), nothing we compute upstream is
+    // used any more, so a shift built into the projection has no effect at all. The
+    // bounds, however, are ours in every configuration.
+    //
+    // Units are fractions of the image: 0.01 = one percent of its width/height.
+    float get_image_shift_x() const {
+        return m_image_shift_x;
+    }
+
+    void set_image_shift_x(float shift) {
+        if (shift < -0.5f) { shift = -0.5f; }
+        if (shift > 0.5f) { shift = 0.5f; }
+        m_image_shift_x = shift;
+    }
+
+    float get_image_shift_y() const {
+        return m_image_shift_y;
+    }
+
+    void set_image_shift_y(float shift) {
+        if (shift < -0.5f) { shift = -0.5f; }
+        if (shift > 0.5f) { shift = 0.5f; }
+        m_image_shift_y = shift;
+    }
+
+    // The bounds to submit with, shift included. Sampling outside 0..1 is clamped by the
+    // runtime, so the edge smears rather than wrapping - fine for the small nudges this
+    // is meant for.
+    vr::VRTextureBounds_t get_shifted_bounds(bool right_eye) const {
+        auto bounds = right_eye ? m_right_bounds : m_left_bounds;
+
+        bounds.uMin -= m_image_shift_x;
+        bounds.uMax -= m_image_shift_x;
+        bounds.vMin -= m_image_shift_y;
+        bounds.vMax -= m_image_shift_y;
+
+        return bounds;
+    }
+
+    // Blanks one eye entirely (that display gets black instead of the frame).
+    // -1 = off, 0 = blank the left eye, 1 = blank the right eye.
+    //
+    // For a scope this is what you actually want: with both eyes fed the same image the
+    // brain still tries to fuse two slightly different views of the reticle. Blacking the
+    // non-aiming eye removes the conflict outright, the way closing an eye does in reality.
+    // [POSE_FREEZE 2026-08-11] Blick einfrieren, ohne aus Lua hinterherzuschreiben.
+    //
+    // Warum im Fork und nicht im Script: das Scope-Lua neutralisiert die Kopfdrehung, indem
+    // es pro Frame rotation_offset = conjugate(HMD) setzt -- aber nur an zwei Punkten
+    // (Frame-Mitte und BeginRendering). Danach holt der Renderer die HMD-Pose erneut, im
+    // Multipass sogar je Pass, und der Compositor bekommt zusaetzlich die frische Pose zum
+    // Reprojizieren. Jede dieser Stellen sieht eine andere Kopfhaltung, und weil das
+    // Scope-Bild bewusst kopfunabhaengig ist, bleibt die Differenz als Wackeln stehen --
+    // sichtbar sogar am Scope-RAND, der ja bildschirmfest sein muesste.
+    //
+    // Mit diesem Schalter liefert die HMD-Rotation ab dem Einfrieren ueberall denselben
+    // Wert: fuer jeden Renderpass, fuer die Kamera-Overrides und fuer die Pose, die an den
+    // Compositor geht. Die POSITION bleibt echt -- der seitliche Augen-Versatz im Scope
+    // laeuft weiter ueber standing_origin.
+    bool is_pose_freeze() const {
+        return m_pose_freeze;
+    }
+
+    void set_pose_freeze(bool on);
+
+    // [POSE_FREEZE/SUBMIT 2026-08-11] Welche Pose der Compositor als "dafuer wurde
+    // gerendert" bekommt, waehrend der Blick eingefroren ist. Live umschaltbar, damit die
+    // Richtung im Spiel entschieden werden kann statt per Neubau:
+    //   0 = wie bisher: gar keine Angabe (Runtime nimmt ihre eigene Pose an)
+    //   1 = die EINGEFRORENE Pose -> Compositor dreht die Differenz nach, das Bild bleibt
+    //       weltfest und wandert bei Kopfbewegung
+    //   2 = die FRISCHE Pose -> Differenz ~0, der Compositor dreht nichts nach, das Bild
+    //       klebt am Display; das ist es, was ein eingefrorener Blick braucht
+    int32_t get_pose_freeze_submit() const {
+        return m_pose_freeze_submit;
+    }
+
+    void set_pose_freeze_submit(int32_t mode) {
+        m_pose_freeze_submit = (mode >= 0 && mode <= 2) ? mode : 0;
+
+        if (m_openxr != nullptr) {
+            m_openxr->pose_freeze_submit = m_pose_freeze_submit;
+        }
+    }
+
+    vr::HmdMatrix34_t get_submit_pose() const;
+
+    int32_t get_blank_eye() const {
+        return m_blank_eye;
+    }
+
+    void set_blank_eye(int32_t eye) {
+        m_blank_eye = (eye == 0 || eye == 1) ? eye : -1;
+    }
+
+    // Lens shift in projection units, for lining the zoomed image up with the optic.
+    float get_projection_shift_x() const {
+        return m_projection_shift_x;
+    }
+
+    void set_projection_shift_x(float shift) {
+        m_projection_shift_x = shift;
+    }
+
+    float get_projection_shift_y() const {
+        return m_projection_shift_y;
+    }
+
+    void set_projection_shift_y(float shift) {
+        m_projection_shift_y = shift;
     }
 
     const Matrix4x4f& get_last_render_matrix() {
@@ -585,7 +987,24 @@ private:
 
     const ModKey::Ptr m_set_standing_key{ ModKey::create(generate_name("SetStandingOriginKey")) };
     const ModKey::Ptr m_recenter_view_key{ ModKey::create(generate_name("RecenterViewKey")) };
-    const ModToggle::Ptr m_decoupled_pitch{ ModToggle::create(generate_name("DecoupledPitch"), false) };
+    const ModToggle::Ptr m_decoupled_pitch{ ModToggle::create(generate_name("DecoupledPitch_V2"), true) };
+    // [ZOOM_STEREO 2026-08-14] Ob der Scope-Zoom die Off-Center-Terme der Projektion
+    // mitskaliert. Die sind PRO AUGE verschieden (asymmetrisches HMD-Frustum), beim
+    // Skalieren waechst der Versatz zwischen beiden Bildern also mit dem Zoomfaktor --
+    // gemessen im Spiel: "je mehr Zoom, desto schlimmer", bis hin zum Schielen.
+    // false (Default) = jedes Auge zoomt um SEINE Blickachse, die Bilder bleiben
+    // fusionierbar. true = altes Verhalten, nur fuer den direkten Vergleich.
+    const ModToggle::Ptr m_zoom_scales_eye_offset{ ModToggle::create(generate_name("ZoomScalesEyeOffset"), false) };
+    // [ZOOM_DEPTH 2026-08-14] Beim Zoom den AUGENABSTAND mitverkleinern (IPD / Zoom).
+    // Der Zoom vergroessert auch die Parallaxe zwischen den Augen, und daraus liest das
+    // Gehirn die Entfernung: im Spiel gemessen "ausgezoomt wirkt der Scope-Mittelpunkt
+    // weit weg, eingezoomt nah dran", und jede Zoomstufe braucht neues Einstellen der
+    // Augen. Ein echtes Fernglas hat dafuer eine kleinere Basis. Mit dieser Kopplung
+    // bleibt die wahrgenommene Tiefe ueber alle Zoomstufen gleich.
+    const ModToggle::Ptr m_zoom_shrinks_ipd{ ModToggle::create(generate_name("ZoomShrinksIPD"), true) };
+    // Zuletzt in apply_projection_tweaks errechneter Zoomfaktor -- auch der aus einem
+    // gesetzten FOV, den man ohne die Projektion nicht kennt.
+    mutable float m_last_zoom_factor{1.0f};
     const ModToggle::Ptr m_clear_before_framewarp{ModToggle::create(generate_name("ClearBeforeFramewarp"), false)};
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
@@ -610,7 +1029,12 @@ private:
 #if TDB_VER < 69
         1 // Previous rendering technique
 #else
-        3 // New rendering technique
+        // [KEIN_AFW_START 2026-08-15] War 3 (Alternate Frame Warping). AFW ist hier buggy und
+        // laesst sich im Spiel nicht gefahrlos wechseln (Umschalten zur Laufzeit crasht),
+        // also darf es gar nicht erst der Startwert sein. 2 = Single Frame Multipass, der
+        // Upstream-Weg vor AFW. Wer AFW testen will, setzt VR_RenderingTechnique_V2=3 in
+        // re2_fw_config.txt -- die Config sticht diesen Default ohnehin.
+        2 // Single Frame Multipass
 #endif
         ) 
     };
@@ -623,6 +1047,16 @@ private:
     const ModSlider::Ptr m_ui_distance_option{ ModSlider::create(generate_name("2DUIDistance"), 0.01f, 100.0f, 1.0f) };
     const ModSlider::Ptr m_world_ui_scale_option{ ModSlider::create(generate_name("WorldSpaceUIScale"), 1.0f, 100.0f, 15.0f) };
     const ModSlider::Ptr m_resolution_scale{ ModSlider::create(generate_name("OpenXRResolutionScale"), 0.1f, 5.0f, 1.0f) };
+    // [POINTER_PITCH 2026-08-15] Neigung des Menue-Zeigestrahls, in GRAD um die eigene X-Achse
+    // des rechten Controllers. Grund: gezeigt wird mit der GRIFF-Pose ("/user/hand/*/input/grip/pose"
+    // bzw. der rohen OpenVR-Controller-Pose) -- deren -Z ist die Achse des Griffs, nicht die
+    // Zeigerichtung des Zeigefingers. Der Strahl tritt dadurch zu hoch aus (gefuehlt am Daumen),
+    // man muss den Controller nach unten kippen. Eine Aim-Pose ist hier nicht gebunden, in OpenVR
+    // gibt es sie gar nicht -- deshalb ein fester Winkelausgleich statt einer zweiten Pose.
+    // Negativ = Strahl nach UNTEN (das ist die Korrekturrichtung), 0 = altes Verhalten.
+    // BEWUSST OHNE UI (wie DLSSPreset): eingestellt wird ueber VR_OverlayPointerPitch in
+    // re2_fw_config.txt bei beendetem Spiel, im fertigen Menue soll kein Regler stehen.
+    const ModSlider::Ptr m_overlay_pointer_pitch{ ModSlider::create(generate_name("OverlayPointerPitch"), -60.0f, 60.0f, -35.0f) };
 
     const ModToggle::Ptr m_force_fps_settings{ ModToggle::create(generate_name("ForceFPS"), true) };
 
@@ -657,15 +1091,52 @@ private:
 
     bool m_disable_projection_matrix_override{ false };
     bool m_disable_gui_camera_projection_matrix_override{ false };
+    bool m_disable_gui_element_override{ false };
     bool m_disable_view_matrix_override{false};
     bool m_disable_backbuffer_size_override{false};
     bool m_disable_temporal_fix{false};
     bool m_disable_post_effect_fix{false};
 
+    bool m_mono_rendering{false};
+    uint32_t m_mono_rendering_eye{0}; // 0 = left, 1 = right
+    bool m_mono_projection{false};    // also force the chosen eye's projection (breaks fusion)
+
+    bool m_flatscreen_overlay{false};          // show the frame as a flat quad instead of stereo
+    float m_flatscreen_overlay_width{2.5f};    // meters
+    float m_flatscreen_overlay_distance{2.0f}; // meters in front of the head
+
+    bool m_vr_suspended{false};                // park every engine override, see is_vr_suspended()
+    bool m_map_face_glue{false};               // RE4 map layers head-locked, see is_map_face_glue()
+    float m_map_glue_distance{1.5f};           // meters in front of the head while glued
+    float m_map_glue_layer_gap{0.002f};        // per-layer stagger, see get_map_glue_layer_gap()
+    // Liste der gepinnten GUIs, siehe is_glue_gui(). Wird beim ersten Zugriff mit den
+    // Karten-GUIs vorbelegt; ein bewusstes clear_glue_guis() bleibt leer.
+    std::unordered_map<uint32_t, int> m_glue_guis{};
+    bool m_glue_guis_initialized{false};
+    std::mutex m_glue_guis_mutex{};
+
+    int32_t m_blank_eye{-1};          // -1 = off, 0 = left, 1 = right
+    bool m_pose_freeze{false};        // [POSE_FREEZE] HMD-Rotation eingefroren (Scope)
+    int32_t m_pose_freeze_submit{2};  // 0 = keine Angabe, 1 = eingefrorene, 2 = frische Pose
+    glm::quat m_frozen_hmd_rotation{glm::identity<glm::quat>()};
+    Vector4f m_frozen_hmd_position{};
+    float m_image_shift_x{0.0f};      // fractions of the image, applied at submit
+    float m_image_shift_y{0.0f};
+    float m_projection_zoom{1.0f};    // 1 = off
+    float m_projection_fov{0.0f};     // 0 = off, else vertical FOV in degrees (wins over zoom)
+    float m_projection_shift_x{0.0f};
+    float m_projection_shift_y{0.0f};
+
+    Matrix4x4f apply_projection_tweaks(Matrix4x4f proj) const;
+    // [ZOOM_DEPTH] Augenversatz durch den Zoomfaktor teilen, siehe m_zoom_shrinks_ipd.
+    Matrix4x4f apply_zoom_eye_offset(Matrix4x4f eye) const;
+
     ValueList m_options{
         *m_set_standing_key,
         *m_recenter_view_key,
         *m_decoupled_pitch,
+        *m_zoom_scales_eye_offset,
+        *m_zoom_shrinks_ipd,
         *m_rendering_technique,
         *m_use_custom_view_distance,
         *m_hmd_oriented_audio,
@@ -685,6 +1156,7 @@ private:
         *m_world_ui_scale_option,
         *m_allow_engine_overlays,
         *m_resolution_scale,
+        *m_overlay_pointer_pitch,
         *m_desktop_fix,
         *m_desktop_fix_skip_present,
         *m_enable_asynchronous_rendering

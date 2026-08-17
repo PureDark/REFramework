@@ -126,114 +126,80 @@ void TemporalUpscaler::on_config_save(utility::Config& cfg) {
 }
 
 void TemporalUpscaler::on_draw_ui() {
-    if (!ImGui::CollapsingHeader(this->get_name().data())) {
+    if (!ImGui::CollapsingHeader("Upscaler")) {
         return;
     }
 
 #if TDB_VER < 67
     ImGui::TextWrapped("TemporalUpscaler is not yet supported on this version of the engine.");
     ImGui::TextWrapped("Supported: RE2/RE3/RE7 (RT latest, not beta builds), RE4, RE8, SF6, DMC5 (partial)");
-    return;
 #else
     if (!m_backend_loaded) {
         ImGui::TextWrapped("Backend is not loaded, TemporalUpscaler will not work.");
         ImGui::TextWrapped("Make sure you've downloaded UpscalerBasePlugin (PDPerfPlugin.dll)");
         ImGui::TextWrapped("And the corresponding DLLs for your preferred upscaler(s) (DLSS/FSR2/XeSS)");
-        return;
-    }
+    } else {
+        //ImGui::Checkbox("Enabled", &m_enabled);
+        m_enabled->draw("Enabled");
 
-    //ImGui::Checkbox("Enabled", &m_enabled);
-    m_enabled->draw("Enabled");
-
-    if (!ready()) {
-        return;
-    }
-    
-    //if (ImGui::Checkbox("Use Native Res (DLAA)", &m_use_native_resolution)) {
-    if (m_use_native_resolution->draw("Use Native Res (DLAA)")) {
-        update_motion_scale();
-    }
-
-    if (m_is_d3d12) {
-        m_enable_ui_fix->draw("Enable UI Fix");
-    }
-
-    //if (ImGui::Checkbox("Sharpness", &m_sharpness)) {
-    if (m_sharpness->draw("Sharpness")) {
-        release_upscale_features();
-        init_upscale_features();
-    }
-
-    //ImGui::DragFloat("Sharpness Amount", &m_sharpness_amount, 0.01f, 0.0f, 5.0f);
-    m_sharpness_amount->draw("Sharpness Amount");
-
-    const auto w = (float)get_render_width();
-    const auto h = (float)get_render_height();
-
-    std::vector<const char*> imgui_combo_names{};
-
-    for (auto& m : m_available_upscale_method_names) {
-        imgui_combo_names.push_back(m.c_str());
-    }
-    
-    if (ImGui::Combo("Upscale Type", (int*)&m_available_upscale_type, imgui_combo_names.data(), imgui_combo_names.size())) {
-        if (m_available_upscale_type < 0 || m_available_upscale_type > m_available_upscale_method_names.size()) {
-            m_available_upscale_type = 0;
-            m_upscale_type = (PDUpscaleType)m_available_upscale_methods[m_available_upscale_method_names[0]];
-        } else {
-            m_upscale_type = (PDUpscaleType)m_available_upscale_methods[m_available_upscale_method_names[m_available_upscale_type]];
-        }
-
-        //std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        release_upscale_features();
-        init_upscale_features();
-    }
-
-    /*if (ImGui::Combo("Quality Level", (int*)&m_upscale_quality, "Performance\0Balanced\0Quality\0UltraPerformance\0")) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        release_upscale_features();
-        init_upscale_features();
-    }*/
-
-    if (m_upscale_quality->draw("Quality Level")) {
-        //std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        release_upscale_features();
-        init_upscale_features();
-    }
-    if (m_upscale_type == DLSS && m_dlss_preset->draw("DLSS Preset")) {
-        //std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        release_upscale_features();
-        init_upscale_features();
-    }
-
-    ImGui::SetNextItemOpen(true, ImGuiCond_Once);
-
-    if (ImGui::TreeNode("Debug Options")) {
-        ImGui::Checkbox("Upscale", &m_upscale);
-        ImGui::Checkbox("Jitter", &m_jitter);
-        ImGui::Checkbox("Allow Engine TAA", &m_allow_taa);
-
-        ImGui::SliderInt("Displayed Scene", &m_displayed_scene, 0, 1);
-        ImGui::DragFloat("Jitter Scale X", &m_jitter_scale[0], 0.01f, -5.0f, 5.0f);
-        ImGui::DragFloat("Jitter Scale Y", &m_jitter_scale[1], 0.01f, -5.0f, 5.0f);
-
-        if (ImGui::DragFloat("MotionScale X", &m_motion_scale[0], 0.01f, -w, w) ||
-            ImGui::DragFloat("MotionScale Y", &m_motion_scale[1], 0.01f, -h, h)) 
-        {
-            SetMotionScaleX(get_evaluate_id(0), (float)m_motion_scale[0]);
-            SetMotionScaleY(get_evaluate_id(0), (float)m_motion_scale[1]);
-
-            if (VR::get()->is_hmd_active()) {
-                SetMotionScaleX(get_evaluate_id(1), (float)m_motion_scale[0]);
-                SetMotionScaleY(get_evaluate_id(1), (float)m_motion_scale[1]);
+        if (ready()) {
+            //if (ImGui::Checkbox("Sharpness", &m_sharpness)) {
+            if (m_sharpness->draw("Sharpness")) {
+                release_upscale_features();
+                init_upscale_features();
             }
+
+            //ImGui::DragFloat("Sharpness Amount", &m_sharpness_amount, 0.01f, 0.0f, 5.0f);
+            m_sharpness_amount->draw("Sharpness Amount");
+
+            std::vector<const char*> imgui_combo_names{};
+
+            for (auto& m : m_available_upscale_method_names) {
+                imgui_combo_names.push_back(m.c_str());
+            }
+
+            if (ImGui::Combo("Upscale Type", (int*)&m_available_upscale_type, imgui_combo_names.data(), imgui_combo_names.size())) {
+                if (m_available_upscale_type < 0 || m_available_upscale_type > m_available_upscale_method_names.size()) {
+                    m_available_upscale_type = 0;
+                    m_upscale_type = (PDUpscaleType)m_available_upscale_methods[m_available_upscale_method_names[0]];
+                } else {
+                    m_upscale_type = (PDUpscaleType)m_available_upscale_methods[m_available_upscale_method_names[m_available_upscale_type]];
+                }
+
+                //std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                release_upscale_features();
+                init_upscale_features();
+            }
+
+            /*if (ImGui::Combo("Quality Level", (int*)&m_upscale_quality, "Performance\0Balanced\0Quality\0UltraPerformance\0")) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                release_upscale_features();
+                init_upscale_features();
+            }*/
+
+            if (m_upscale_quality->draw("Quality Level")) {
+                //std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                release_upscale_features();
+                init_upscale_features();
+            }
+
+            // Nur bei DLSS sichtbar -- FSR/XeSS kennen keine Presets.
+            if (m_upscale_type == DLSS && m_dlss_preset->draw("DLSS Preset")) {
+                //std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                release_upscale_features();
+                init_upscale_features();
+            }
+
+            // "Use Native Res (DLAA)" ist bewusst weg -- DLAA ist bei uns der letzte Eintrag
+            // der Quality-Liste. "Enable UI Fix" und der "Debug Options"-Tree bleiben
+            // ausgeblendet, ihre Werte gelten weiter (der AFW-Framewarp fragt den UI-Fix ab).
         }
-
-        ImGui::Text("OptimalBias: %f", GetOptimalMipmapBias(get_evaluate_id(0)));
-
-        ImGui::TreePop();
     }
 #endif
+
+    // Moved here from the VR tree, drawn unconditionally so it stays reachable with the upscaler off
+    ImGui::Separator();
+    VR::get()->draw_rendering_technique_ui();
 }
 
 void TemporalUpscaler::on_early_present() {
@@ -643,7 +609,7 @@ bool TemporalUpscaler::init_upscale_features() {
     InitParams params{};
     params.id = get_evaluate_id(0);
     params.upscaleMethod = m_upscale_type;
-    params.qualityLevel = m_upscale_quality->value();
+    params.qualityLevel = get_pd_quality_level();
     params.displaySizeX = out_w;
     params.displaySizeY = out_h;
     params.format = out_format;
@@ -913,7 +879,18 @@ void TemporalUpscaler::on_scene_layer_update(sdk::renderer::layer::Scene* layer,
     float x = 0.0f;
     float y = 0.0f;
 
-    if (m_jitter) {
+    // [POSE_FREEZE 2026-08-11] Waehrend des Scope-Freeze KEIN Jitter.
+    // Der Jitter wird in die Off-Center-Terme der Projektion gerechnet
+    // (projection_matrix[2][0] += x, weiter unten), und genau die skaliert der Scope-Zoom
+    // in VR::apply_projection_tweaks anschliessend noch einmal mit dem Zoomfaktor.
+    // Dem Upscaler wird der Jitter aber in Pixeln der UNSKALIERTEN Projektion gemeldet,
+    // er rechnet also einen anderen Betrag wieder heraus, als tatsaechlich drinsteckt --
+    // der Rest bleibt als hochfrequentes Wackeln stehen. Es faellt nur im Scope auf, weil
+    // dort das Bild sonst voellig still steht, und der master kennt es gar nicht, weil er
+    // keinen Upscaler hat. Ausserhalb des Zielens bleibt alles wie bisher.
+    const auto scope_freeze = VR::get()->is_pose_freeze();
+
+    if (m_jitter && !scope_freeze) {
         m_jitter_indices[evaluate_index]++;
         GetJitterOffset(&x, &y, m_jitter_indices[evaluate_index], phase);
 
@@ -1489,7 +1466,7 @@ void TemporalUpscaler::update_extra_scene_layer() {
 }
 
 uint32_t TemporalUpscaler::get_render_width() const {
-    if (m_use_native_resolution->value()) {
+    if (is_using_native_resolution()) {
         // we subtract 1 from the native res because
         // the game will create a separate color buffer we can use
         // otherwise it will be null.
@@ -1500,7 +1477,7 @@ uint32_t TemporalUpscaler::get_render_width() const {
 }
 
 uint32_t TemporalUpscaler::get_render_height() const {
-    if (m_use_native_resolution->value()) {
+    if (is_using_native_resolution()) {
         return m_backbuffer_size[1] - 1;
     }
     

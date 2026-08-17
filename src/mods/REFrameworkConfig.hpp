@@ -30,6 +30,15 @@ public:
         return m_always_show_cursor->value();
     }
 
+    // Used by the +/- font size buttons at the top of the menu
+    int32_t get_font_size() const {
+        return m_font_size->value();
+    }
+
+    void set_font_size(int32_t size) {
+        m_font_size->value() = std::clamp<int32_t>(size, 8, 48);
+    }
+
 private:
     ModKey::Ptr m_menu_key{ ModKey::create(generate_name("MenuKey_V2"), VK_INSERT) };
     ModToggle::Ptr m_menu_open{ ModToggle::create(generate_name("MenuOpen"), true) };

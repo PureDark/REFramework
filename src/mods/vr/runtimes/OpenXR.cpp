@@ -1312,6 +1312,15 @@ XrResult OpenXR::end_frame() {
 
             projection_layer_views[i].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
             projection_layer_views[i].pose = this->stage_views[i].pose;
+
+            // [POSE_FREEZE] Nur in Modus 1: dem Compositor die EINGEFRORENE Blickrichtung
+            // angeben. Er dreht dann die Differenz zur Anzeigepose nach, das Bild bleibt
+            // weltfest. In Modus 0/2 bleibt die Pose der Runtime stehen (frisch), dann
+            // dreht er nichts nach und das Bild klebt am Display -- was ein eingefrorener
+            // Blick braucht. Live umschaltbar, damit die Richtung im Spiel entschieden wird.
+            if (this->pose_freeze && this->pose_freeze_submit == 1) {
+                projection_layer_views[i].pose.orientation = this->frozen_orientation;
+            }
             projection_layer_views[i].fov = this->stage_views[i].fov;
             projection_layer_views[i].subImage.swapchain = swapchain.handle;
             projection_layer_views[i].subImage.imageRect.offset = {0, 0};
@@ -1323,6 +1332,57 @@ XrResult OpenXR::end_frame() {
         layer.viewCount = (uint32_t)projection_layer_views.size();
         layer.views = projection_layer_views.data();
         layers.push_back((XrCompositionLayerBaseHeader*)&layer);
+    }
+
+    // ---------------------------------------------------------------------
+    // Flatscreen-Leinwand: zweiter Layer, kopffest vor dem Gesicht
+    // ---------------------------------------------------------------------
+    // Bewusst HIER deklariert und nicht im if darunter: der Zeiger muss bis zum
+    // xrEndFrame gueltig bleiben. Die Swapchain dahinter ist die letzte (nach den
+    // Augen) und wird von D3D12Component mit dem fertigen Monitor-Bild gefuellt.
+    XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
+
+    if (this->flatscreen_layer && this->frame_state.shouldRender == XR_TRUE
+        && this->swapchains.size() > this->views.size()) {
+        const auto& sc = this->swapchains[this->views.size()];
+        const float aspect = (sc.height > 0) ? ((float)sc.width / (float)sc.height) : (16.0f / 9.0f);
+
+        quad.space = this->view_space;   // kopffest: die Leinwand haengt vor dem Gesicht
+        quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        quad.subImage.swapchain = sc.handle;
+        quad.subImage.imageRect.offset = {0, 0};
+        quad.subImage.imageRect.extent = {sc.width, sc.height};
+        quad.pose.orientation = {0.0f, 0.0f, 0.0f, 1.0f};
+        quad.pose.position = {0.0f, 0.0f, -this->flatscreen_distance};
+        quad.size = {this->flatscreen_width, this->flatscreen_width / aspect};
+
+        layers.push_back((XrCompositionLayerBaseHeader*)&quad);
+    }
+
+    // ---------------------------------------------------------------------
+    // ImGui-Slate: das Menue an der linken Hand
+    // ---------------------------------------------------------------------
+    // [XR_UI_OVERLAY 2026-08-14] Gegenstueck zum SteamVR-Overlay. Der Anker ist der
+    // stage_space, weil OverlayComponent die Handpose bereits in Weltkoordinaten
+    // liefert. Alpha-Blending, damit ausserhalb des Menuefensters nichts schwarz
+    // stehen bleibt -- das ImGui-Rendertarget wird mit Alpha 0 geleert.
+    // Auch hier ausserhalb des if deklariert: der Zeiger muss bis xrEndFrame leben.
+    XrCompositionLayerQuad ui_quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
+
+    if (this->ui_layer && this->frame_state.shouldRender == XR_TRUE
+        && this->swapchains.size() > this->views.size() + 1
+        && this->ui_rect.extent.width > 0 && this->ui_rect.extent.height > 0) {
+        const auto& sc = this->swapchains[this->views.size() + 1];
+
+        ui_quad.space = this->stage_space;
+        ui_quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        ui_quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        ui_quad.subImage.swapchain = sc.handle;
+        ui_quad.subImage.imageRect = this->ui_rect;
+        ui_quad.pose = this->ui_pose;
+        ui_quad.size = {this->ui_width, this->ui_height};
+
+        layers.push_back((XrCompositionLayerBaseHeader*)&ui_quad);
     }
 
     XrFrameEndInfo frame_end_info{XR_TYPE_FRAME_END_INFO};

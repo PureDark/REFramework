@@ -67,7 +67,92 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
 
     auto eye_texture = m_backbuffer_is_8bit ? backbuffer : m_converted_eye_tex.texture;
 
+    // --- Ein Auge schwarz unter OpenXR -----------------------------------
+    // Das gab es bisher nur im OpenVR-Zweig (clear_left/clear_right). Unter OpenXR
+    // wurde `get_blank_eye()` gar nicht ausgewertet, das Auge blieb hell -- damit war
+    // das Scope-Bild dort unbrauchbar, obwohl Mono und Zoom laengst runtime-unabhaengig
+    // arbeiten. `copy()` nimmt ohnehin eine CopyFn (der Multipass-Zweig nutzt sie
+    // bereits), also wird hier statt des Bildes einfach der Rendertarget geleert.
+    // Rueckgabe nullptr = ganz normal kopieren, es aendert sich also nichts, solange
+    // weder ein Auge geschwaerzt noch die Leinwand aktiv ist.
+    auto xr_black = [](d3d12::CommandContext& cmds, d3d12::TextureContext& dst,
+                       D3D12_RESOURCE_STATES src_state, D3D12_RESOURCE_STATES dst_state) {
+        const float black[4]{0.0f, 0.0f, 0.0f, 1.0f};
+        cmds.clear_rtv(dst, black, dst_state);
+    };
+
+    auto xr_fn = [&](uint32_t eye) -> OpenXR::CopyFn {
+        if (vr->should_blank_all_eyes() || vr->get_blank_eye() == (int32_t)eye) {
+            return xr_black;
+        }
+
+        return nullptr;
+    };
+
+    // [BLANK_EYE DIAG 2026-08-14] Nur bei ZUSTANDSWECHSEL schreiben, sonst Logflut.
+    // Zeigt, ob der Schwaerz-Wunsch ueberhaupt in der DLL ankommt und welcher Kopierzweig
+    // unter OpenXR gerade laeuft -- genau daran haengt, ob die CopyFn zieht.
+    // Wieder RAUS, sobald das linke Auge im Scope schwarz wird.
+    // (vr->get_runtime() statt des lokalen `runtime` -- das wird erst weiter unten angelegt)
+    if (vr->get_runtime()->is_openxr()) {
+        static int32_t s_last_blank = -99;
+        static int32_t s_last_branch = -99;
+
+        const auto is_mp = vr->is_using_multipass();
+        const auto has_mp_tex = vr->m_multipass.eye_textures[0].Get() != nullptr &&
+                                vr->m_multipass.eye_textures[1].Get() != nullptr;
+        const auto upscaler_ready = TemporalUpscaler::get()->ready();
+        // 0 = AFR/AFW-Zweig, 1 = Multipass mit Eye-Texturen, 2 = Multipass ohne (ctx0/ctx1)
+        const int32_t branch = !is_mp ? 0 : (has_mp_tex ? 1 : 2);
+
+        if (vr->get_blank_eye() != s_last_blank || branch != s_last_branch) {
+            s_last_blank = vr->get_blank_eye();
+            s_last_branch = branch;
+
+            spdlog::info("[VR][BLANK_EYE] blank_eye={} blank_all={} branch={} multipass={} mp_tex={} upscaler={}",
+                vr->get_blank_eye(), vr->should_blank_all_eyes(), branch, is_mp, has_mp_tex, upscaler_ready);
+        }
+    }
+
+
     auto runtime = vr->get_runtime();
+
+    // Flatscreen canvas. Purely additive: it only reads the finished frame and drives its
+    // own overlay, so with the feature off (the default) nothing below changes at all.
+    if (runtime->is_openvr()) {
+        update_flatscreen_overlay(vr, eye_texture.Get(), command_queue);
+    } else if (runtime->is_openxr() && vr->m_openxr->ready()) {
+        // Zustand und Masse an die Runtime durchreichen -- OpenXR.cpp haengt das Quad
+        // daran auf und darf VR.hpp nicht einbinden (Zyklus).
+        vr->m_openxr->flatscreen_layer = vr->is_flatscreen_overlay();
+        vr->m_openxr->flatscreen_width = vr->get_flatscreen_overlay_width();
+        vr->m_openxr->flatscreen_distance = vr->get_flatscreen_overlay_distance();
+    }
+
+    if (runtime->is_openxr() && vr->is_flatscreen_overlay() && vr->m_openxr->ready()) {
+        // OpenXR kennt keine Overlays -- dort ist die Leinwand ein zweiter Compositor-
+        // Layer (Quad). Hier wird nur der fertige Frame in dessen eigene Swapchain
+        // kopiert; aufgehaengt wird das Quad in OpenXR::end_frame.
+        const auto canvas_idx = (uint32_t)vr->m_openxr->views.size();
+
+        if (this->m_openxr.contexts.size() > canvas_idx) {
+            m_openxr.copy(canvas_idx, eye_texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT);
+        }
+    }
+
+    // [XR_UI_OVERLAY 2026-08-14] Das Menue-Rendertarget in die Slate-Swapchain kopieren.
+    // ui_layer setzt OverlayComponent, sobald das Menue offen ist -- ist es zu, wird hier
+    // gar nichts getan, der Layer wird dann auch nicht angehaengt.
+    if (runtime->is_openxr() && vr->m_openxr->ready() && vr->m_openxr->ui_layer) {
+        const auto ui_idx = (uint32_t)vr->m_openxr->views.size() + 1;
+        auto& ui_rt = g_framework->get_rendertarget_d3d12();
+
+        if (this->m_openxr.contexts.size() > ui_idx && ui_rt.Get() != nullptr) {
+            // Das Rendertarget ruht als PIXEL_SHADER_RESOURCE -- REFramework schaltet es
+            // nur zum Zeichnen kurz auf RENDER_TARGET und danach wieder zurueck.
+            m_openxr.copy(ui_idx, ui_rt.Get(), nullptr, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        }
+    }
 
     // Sometimes this can happen if pipeline execution does not go exactly as planned
     // so we need to resynchronized or begin the frame again.
@@ -182,16 +267,24 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     if (frame_count % 2 == vr->m_left_eye_interval && !is_multipass) {
         // OpenXR texture
         if (runtime->is_openxr() && vr->m_openxr->ready()) {
-            m_openxr.copy(0, m_openvr.get_left().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
+            // Quelle und Resource-State bleiben die des AFW-Forks; ergaenzt ist nur die
+            // CopyFn, mit der ein Auge unter OpenXR schwarz bleibt (VR::get_blank_eye).
+            m_openxr.copy(0, m_openvr.get_left().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, xr_fn(0));
             if (vr->is_using_afw()) {
-                m_openxr.copy(1, m_openvr.get_right().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
+                m_openxr.copy(1, m_openvr.get_right().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, xr_fn(1));
             }
         }
 
         // OpenVR texture
         // Copy the back buffer to the left eye texture (m_left_eye_tex0 holds the intermediate frame).
         if (runtime->is_openvr()) {
-            m_openvr.copy_left(eye_texture.Get());
+            // get_blank_eye(): that eye gets black instead of the frame (scope aiming).
+            // should_blank_all_eyes(): canvas mode - nothing but the quad may be visible.
+            if (vr->get_blank_eye() == 0 || vr->should_blank_all_eyes()) {
+                m_openvr.clear_left();
+            } else {
+                m_openvr.copy_left(eye_texture.Get());
+            }
 
             vr::D3D12TextureData_t left {
                 m_openvr.get_left().texture.Get(),
@@ -199,9 +292,22 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 0
             };
             
-            vr::Texture_t left_eye{(void*)&left, vr::TextureType_DirectX12, vr::ColorSpace_Auto};
+            // [POSE_FREEZE 2026-08-11] Im Scope ist das Bild bewusst kopfunabhaengig.
+            // Ohne Angabe nimmt SteamVR seine eigene Pose an und reprojiziert dagegen.
+            // Modus 1 gibt die eingefrorene Pose an (Compositor dreht die Differenz nach),
+            // Modus 2 die frische (er dreht nichts nach), Modus 0 laesst alles wie frueher.
+            vr::VRTextureWithPose_t left_eye{};
+            left_eye.handle = (void*)&left;
+            left_eye.eType = vr::TextureType_DirectX12;
+            left_eye.eColorSpace = vr::ColorSpace_Auto;
+            left_eye.mDeviceToAbsoluteTracking = vr->get_submit_pose();
 
-            auto e = vr::VRCompositor()->Submit(vr::Eye_Left, &left_eye, &vr->m_left_bounds);
+            const auto submit_flags = (vr->is_pose_freeze() && vr->get_pose_freeze_submit() != 0)
+                ? (vr::EVRSubmitFlags)(vr::Submit_Default | vr::Submit_TextureWithPose)
+                : vr::Submit_Default;
+
+            const auto left_bounds = vr->get_shifted_bounds(false);
+            auto e = vr::VRCompositor()->Submit(vr::Eye_Left, (vr::Texture_t*)&left_eye, &left_bounds, submit_flags);
 
             if (e != vr::VRCompositorError_None) {
                 spdlog::error("[VR] VRCompositor failed to submit left eye: {}", (int)e);
@@ -263,11 +369,11 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
 
                     if (m_backbuffer_is_8bit) {
                         if (!TemporalUpscaler::get()->ready()) {
-                            m_openxr.copy(0, vr->m_multipass.eye_textures[0].Get(), nullptr, D3D12_RESOURCE_STATE_COPY_DEST);
-                            m_openxr.copy(1, vr->m_multipass.eye_textures[1].Get(), nullptr, D3D12_RESOURCE_STATE_COPY_DEST);
+                            m_openxr.copy(0, vr->m_multipass.eye_textures[0].Get(), nullptr, D3D12_RESOURCE_STATE_COPY_DEST, xr_fn(0));
+                            m_openxr.copy(1, vr->m_multipass.eye_textures[1].Get(), nullptr, D3D12_RESOURCE_STATE_COPY_DEST, xr_fn(1));
                         } else {
-                            m_openxr.copy(0, vr->m_multipass.eye_textures[0].Get(), nullptr, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-                            m_openxr.copy(1, vr->m_multipass.eye_textures[1].Get(), nullptr, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                            m_openxr.copy(0, vr->m_multipass.eye_textures[0].Get(), nullptr, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, xr_fn(0));
+                            m_openxr.copy(1, vr->m_multipass.eye_textures[1].Get(), nullptr, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, xr_fn(1));
                         }
                     } else {
                         auto copy0fn = [&](d3d12::CommandContext& ctx, d3d12::TextureContext& dst, D3D12_RESOURCE_STATES src_state, D3D12_RESOURCE_STATES dst_state) {
@@ -283,25 +389,26 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                         };
 
                         if (!TemporalUpscaler::get()->ready()) {
-                            m_openxr.copy(0, ctx0.texture.Get(), nullptr, D3D12_RESOURCE_STATE_COPY_DEST, copy0fn);
-                            m_openxr.copy(1, ctx1.texture.Get(), nullptr, D3D12_RESOURCE_STATE_COPY_DEST, copy1fn);
+                            m_openxr.copy(0, ctx0.texture.Get(), nullptr, D3D12_RESOURCE_STATE_COPY_DEST, xr_fn(0) ? xr_fn(0) : OpenXR::CopyFn{copy0fn});
+                            m_openxr.copy(1, ctx1.texture.Get(), nullptr, D3D12_RESOURCE_STATE_COPY_DEST, xr_fn(1) ? xr_fn(1) : OpenXR::CopyFn{copy1fn});
                         } else {
-                            m_openxr.copy(0, ctx0.texture.Get(), nullptr, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, copy0fn);
-                            m_openxr.copy(1, ctx1.texture.Get(), nullptr, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, copy1fn);
+                            m_openxr.copy(0, ctx0.texture.Get(), nullptr, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, xr_fn(0) ? xr_fn(0) : OpenXR::CopyFn{copy0fn});
+                            m_openxr.copy(1, ctx1.texture.Get(), nullptr, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, xr_fn(1) ? xr_fn(1) : OpenXR::CopyFn{copy1fn});
                         }
                     }
                 } else {
                     // just copy the backbuffer to both eyes as a fallback
-                    m_openxr.copy(0, eye_texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT);
-                    m_openxr.copy(1, eye_texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT);
+                    m_openxr.copy(0, eye_texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT, xr_fn(0));
+                    m_openxr.copy(1, eye_texture.Get(), nullptr, D3D12_RESOURCE_STATE_PRESENT, xr_fn(1));
                 }
 
                 vr->m_multipass.eye_textures[0].Reset();
                 vr->m_multipass.eye_textures[1].Reset();
             } else {
-                m_openxr.copy(1, m_openvr.get_right().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
+                // wie oben: AFW-Quelle/State, plus die CopyFn fuer das geschwaerzte Auge
+                m_openxr.copy(1, m_openvr.get_right().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, xr_fn(1));
                 if (vr->is_using_afw()) {
-                    m_openxr.copy(0, m_openvr.get_left().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
+                    m_openxr.copy(0, m_openvr.get_left().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, xr_fn(0));
                 }
             }
         }
@@ -323,8 +430,23 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                     m_openvr.copy_left(eye_texture.Get());
                     m_openvr.copy_right(eye_texture.Get());
                 }
+
+                // get_blank_eye(): overwrite that eye with black again (scope aiming).
+                // should_blank_all_eyes(): canvas mode - both eyes black.
+                if (vr->should_blank_all_eyes()) {
+                    m_openvr.clear_left();
+                    m_openvr.clear_right();
+                } else if (vr->get_blank_eye() == 0) {
+                    m_openvr.clear_left();
+                } else if (vr->get_blank_eye() == 1) {
+                    m_openvr.clear_right();
+                }
             } else {
-                m_openvr.copy_right(eye_texture.Get());
+                if (vr->get_blank_eye() == 1 || vr->should_blank_all_eyes()) {
+                    m_openvr.clear_right();
+                } else {
+                    m_openvr.copy_right(eye_texture.Get());
+                }
             }
 
             vr::D3D12TextureData_t right {
@@ -333,7 +455,17 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 0
             };
 
-            vr::Texture_t right_eye{(void*)&right, vr::TextureType_DirectX12, vr::ColorSpace_Auto};
+            // [POSE_FREEZE] siehe oben -- gilt fuer beide Augen und beide Renderwege.
+            const auto submit_flags = (vr->is_pose_freeze() && vr->get_pose_freeze_submit() != 0)
+                ? (vr::EVRSubmitFlags)(vr::Submit_Default | vr::Submit_TextureWithPose)
+                : vr::Submit_Default;
+            const auto submit_pose = vr->get_submit_pose();
+
+            vr::VRTextureWithPose_t right_eye{};
+            right_eye.handle = (void*)&right;
+            right_eye.eType = vr::TextureType_DirectX12;
+            right_eye.eColorSpace = vr::ColorSpace_Auto;
+            right_eye.mDeviceToAbsoluteTracking = submit_pose;
 
             if (is_multipass) {
                 vr::D3D12TextureData_t left {
@@ -342,11 +474,14 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                     0
                 };
 
-                vr::Texture_t left_eye{
-                    (void*)&left, vr::TextureType_DirectX12, vr::ColorSpace_Auto
-                };
+                vr::VRTextureWithPose_t left_eye{};
+                left_eye.handle = (void*)&left;
+                left_eye.eType = vr::TextureType_DirectX12;
+                left_eye.eColorSpace = vr::ColorSpace_Auto;
+                left_eye.mDeviceToAbsoluteTracking = submit_pose;
 
-                auto e = vr::VRCompositor()->Submit(vr::Eye_Left, &left_eye, &vr->m_left_bounds);
+                const auto left_bounds = vr->get_shifted_bounds(false);
+            auto e = vr::VRCompositor()->Submit(vr::Eye_Left, (vr::Texture_t*)&left_eye, &left_bounds, submit_flags);
                 runtime->frame_synced = false;
 
                 if (e != vr::VRCompositorError_None) {
@@ -355,7 +490,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 }
             }
 
-            auto e = vr::VRCompositor()->Submit(vr::Eye_Right, &right_eye, &vr->m_right_bounds);
+            const auto right_bounds = vr->get_shifted_bounds(true);
+            auto e = vr::VRCompositor()->Submit(vr::Eye_Right, (vr::Texture_t*)&right_eye, &right_bounds, submit_flags);
 
             if (e != vr::VRCompositorError_None) {
                 spdlog::error("[VR] VRCompositor failed to submit right eye: {}", (int)e);
@@ -477,6 +613,9 @@ void D3D12Component::on_reset(VR* vr) {
     m_backbuffer_copy.reset();
     m_converted_eye_tex.reset();
 
+    // The canvas holds a device resource too, so it has to go with the rest.
+    reset_flatscreen_overlay();
+
     if (runtime->is_openxr() && runtime->loaded) {
         if (m_openxr.last_resolution[0] != vr->get_hmd_width() || m_openxr.last_resolution[1] != vr->get_hmd_height()) {
             m_openxr.create_swapchains();
@@ -489,6 +628,130 @@ void D3D12Component::on_reset(VR* vr) {
     }
 
     m_openvr.texture_counter = 0;
+}
+
+void D3D12Component::reset_flatscreen_overlay() {
+    auto& ov = m_flatscreen_overlay;
+
+    if (ov.handle != vr::k_ulOverlayHandleInvalid && vr::VROverlay() != nullptr) {
+        vr::VROverlay()->DestroyOverlay(ov.handle);
+    }
+
+    ov.handle = vr::k_ulOverlayHandleInvalid;
+    ov.tex.reset();
+    ov.size[0] = 0;
+    ov.size[1] = 0;
+    ov.format = DXGI_FORMAT_UNKNOWN;
+    ov.shown = false;
+    ov.failed = false;
+}
+
+void D3D12Component::update_flatscreen_overlay(VR* vr, ID3D12Resource* frame, ID3D12CommandQueue* queue) {
+    auto& ov = m_flatscreen_overlay;
+
+    // Switched off: hide once, then stay out of the way entirely.
+    if (!vr->is_flatscreen_overlay()) {
+        if (ov.shown && ov.handle != vr::k_ulOverlayHandleInvalid && vr::VROverlay() != nullptr) {
+            vr::VROverlay()->HideOverlay(ov.handle);
+            ov.shown = false;
+        }
+
+        return;
+    }
+
+    // ov.failed: something went wrong once - never retry every frame, that would flood the log.
+    if (ov.failed || frame == nullptr || queue == nullptr || vr::VROverlay() == nullptr) {
+        return;
+    }
+
+    auto& hook = g_framework->get_d3d12_hook();
+    auto device = hook->get_device();
+
+    if (device == nullptr) {
+        return;
+    }
+
+    const auto desc = frame->GetDesc();
+
+    // Our own copy of the frame, recreated whenever resolution or format changes.
+    if (ov.tex.texture == nullptr || ov.size[0] != (uint32_t)desc.Width || ov.size[1] != (uint32_t)desc.Height ||
+        ov.format != desc.Format) {
+        ov.tex.reset();
+
+        auto tex_desc = desc;
+        tex_desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+        tex_desc.Flags &= ~D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;
+
+        D3D12_HEAP_PROPERTIES heap_props{};
+        heap_props.Type = D3D12_HEAP_TYPE_DEFAULT;
+        heap_props.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+        heap_props.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+
+        ComPtr<ID3D12Resource> tex{};
+
+        if (FAILED(device->CreateCommittedResource(&heap_props, D3D12_HEAP_FLAG_NONE, &tex_desc,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(tex.GetAddressOf())))) {
+            spdlog::error("[VR] Flatscreen canvas: failed to create texture.");
+            ov.failed = true;
+            return;
+        }
+
+        tex->SetName(L"Flatscreen Canvas Texture");
+
+        if (!ov.tex.setup(device, tex.Get(), std::nullopt, std::nullopt)) {
+            spdlog::error("[VR] Flatscreen canvas: failed to set up texture context.");
+            ov.failed = true;
+            return;
+        }
+
+        ov.size[0] = (uint32_t)desc.Width;
+        ov.size[1] = (uint32_t)desc.Height;
+        ov.format = desc.Format;
+
+        spdlog::info("[VR] Flatscreen canvas: texture {}x{} format {}", ov.size[0], ov.size[1], (int)ov.format);
+    }
+
+    if (ov.handle == vr::k_ulOverlayHandleInvalid) {
+        const auto err = vr::VROverlay()->CreateOverlay("REFrameworkFlatscreen", "REFramework Flatscreen", &ov.handle);
+
+        if (err != vr::VROverlayError_None) {
+            spdlog::error("[VR] Flatscreen canvas: failed to create overlay: {}", (int)err);
+            ov.handle = vr::k_ulOverlayHandleInvalid;
+            ov.failed = true;
+            return;
+        }
+
+        // It is a picture, not a panel - no input, no interaction.
+        vr::VROverlay()->SetOverlayInputMethod(ov.handle, vr::VROverlayInputMethod_None);
+        vr::VROverlay()->SetOverlayFlag(ov.handle, vr::VROverlayFlags::VROverlayFlags_MakeOverlaysInteractiveIfVisible, false);
+
+        spdlog::info("[VR] Flatscreen canvas: created overlay with handle {}", ov.handle);
+    }
+
+    // Sits in front of the head. Recomputed every frame so the sliders act live.
+    vr::HmdMatrix34_t transform{};
+    transform.m[0][0] = 1.0f;
+    transform.m[1][1] = 1.0f;
+    transform.m[2][2] = 1.0f;
+    transform.m[2][3] = -vr->get_flatscreen_overlay_distance();
+
+    vr::VROverlay()->SetOverlayWidthInMeters(ov.handle, vr->get_flatscreen_overlay_width());
+    vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(ov.handle, vr::k_unTrackedDeviceIndex_Hmd, &transform);
+
+    // Same copy pattern the eye textures use.
+    ov.tex.commands.wait(INFINITE);
+    ov.tex.commands.copy(frame, ov.tex.texture.Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    ov.tex.commands.execute();
+
+    vr::D3D12TextureData_t texture_data{ov.tex.texture.Get(), queue, 0};
+    vr::Texture_t overlay_tex{(void*)&texture_data, vr::TextureType_DirectX12, vr::ColorSpace_Auto};
+
+    vr::VROverlay()->SetOverlayTexture(ov.handle, &overlay_tex);
+
+    if (!ov.shown) {
+        vr::VROverlay()->ShowOverlay(ov.handle);
+        ov.shown = true;
+    }
 }
 
 void D3D12Component::setup() {
@@ -784,7 +1047,11 @@ std::optional<std::string> D3D12Component::OpenXR::create_swapchains() {
     auto& openxr = vr->m_openxr;
 
     this->contexts.clear();
-    this->contexts.resize(openxr->views.size());
+    // +2: die vorletzte Swapchain ist die Flatscreen-Leinwand, die letzte das ImGui-Slate
+    // (beides Quad-Layer). Sie werden nur befuellt, wenn das jeweilige Feature laeuft --
+    // angelegt werden sie aber immer, damit beim Einschalten nicht mitten im Frame
+    // Ressourcen entstehen muessen.
+    this->contexts.resize(openxr->views.size() + 2);
 
     this->last_format = backbuffer_desc.Format;
 
@@ -867,9 +1134,6 @@ std::optional<std::string> D3D12Component::OpenXR::create_swapchains() {
 
         for (uint32_t j = 0; j < image_count; ++j) {
             ctx.textures[j] = {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR};
-            ctx.texture_contexts[j] = std::make_unique<d3d12::TextureContext>();
-            ctx.texture_contexts[j]->commands.setup(
-                (std::wstring{L"OpenXR Commands "} + std::to_wstring(i) + L" " + std::to_wstring(j)).c_str());
         }
 
         result = xrEnumerateSwapchainImages(swapchain.handle, image_count, &image_count, (XrSwapchainImageBaseHeader*)&ctx.textures[0]);
@@ -877,6 +1141,201 @@ std::optional<std::string> D3D12Component::OpenXR::create_swapchains() {
         if (result != XR_SUCCESS) {
             spdlog::error("[VR] Failed to enumerate swapchain images after texture creation.");
             return "Failed to enumerate swapchain images after texture creation.";
+        }
+
+        // [XR_EYE_RTV 2026-08-15] Hier stand vorher nur `commands.setup(...)` -- die
+        // Augen-Kontexte hatten damit KEIN RTV/SRV. Ohne RTV steigt CommandContext::clear_rtv
+        // STILL aus (kein Log, kein Fehler): das Auge wurde nicht schwarz geraeumt und zeigte
+        // den vorigen Frame weiter -- das ist das zitternde/nachziehende linke Auge unter
+        // OpenXR und das "eingefrorene statt schwarze" Auge vom 11.08. Der Upscaler-Fork hat
+        // genau diesen Block seither korrekt; hier war er beim AFW-Port verlorengegangen.
+        // Warum acquire/wait vor dem setup: eine Swapchain-Textur darf erst benutzt werden,
+        // wenn die Runtime sie uns gegeben hat, und `real_index` ist der Index, den SIE
+        // vergibt -- nicht zwingend `j`. Das anschliessende Release gibt sie sofort zurueck,
+        // die Deskriptoren bleiben gueltig. TextureContext::setup ruft commands.setup selbst,
+        // die alte Zeile ist damit ersetzt und nicht verloren.
+        for (uint32_t j = 0; j < image_count; ++j) {
+            uint32_t real_index{};
+            XrSwapchainImageAcquireInfo acquire_info{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+
+            result = xrAcquireSwapchainImage(swapchain.handle, &acquire_info, &real_index);
+            if (result != XR_SUCCESS) {
+                spdlog::error("[VR] Failed to acquire swapchain image.");
+                return "Failed to acquire swapchain image.";
+            }
+
+            XrSwapchainImageWaitInfo wait_info{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+            result = xrWaitSwapchainImage(swapchain.handle, &wait_info);
+
+            if (result != XR_SUCCESS) {
+                spdlog::error("[VR] Failed to wait for swapchain image.");
+                return "Failed to wait for swapchain image.";
+            }
+
+            ctx.texture_contexts[real_index] = std::make_unique<d3d12::TextureContext>();
+            ctx.texture_contexts[real_index]->setup(device, ctx.textures[real_index].texture, swapchain_format, swapchain_format,
+                (std::wstring{L"OpenXR Swapchain "} + std::to_wstring(i) + L" " + std::to_wstring(real_index)).c_str());
+
+            XrSwapchainImageReleaseInfo release_info{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+            result = xrReleaseSwapchainImage(swapchain.handle, &release_info);
+
+            if (result != XR_SUCCESS) {
+                spdlog::error("[VR] Failed to release swapchain image.");
+                return "Failed to release swapchain image.";
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Flatscreen-Leinwand: eigene Swapchain in BACKBUFFER-Aufloesung
+    // ---------------------------------------------------------------------
+    // Unter OpenVR haengt die Leinwand an einem Overlay (vr::VROverlay). Ein Gegenstueck
+    // dazu gibt es in OpenXR nicht -- dort ist es ein zweiter Compositor-Layer, und der
+    // braucht zwingend eine eigene Swapchain. Aufloesung ist die des fertigen Bildes,
+    // NICHT die des HMD: wir zeigen ja den Monitor-Frame.
+    {
+        ComPtr<ID3D12Resource> bb{};
+
+        if (SUCCEEDED(swapchain->GetBuffer(0, IID_PPV_ARGS(&bb)))) {
+            const auto bb_desc = bb->GetDesc();
+
+            XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+            ci.arraySize = 1;
+            ci.format = swapchain_format;
+            ci.width = (uint32_t)bb_desc.Width;
+            ci.height = (uint32_t)bb_desc.Height;
+            ci.mipCount = 1;
+            ci.faceCount = 1;
+            ci.sampleCount = 1;
+            ci.usageFlags = XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT |
+                            XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+
+            runtimes::OpenXR::Swapchain sc{};
+            sc.width = ci.width;
+            sc.height = ci.height;
+
+            if (xrCreateSwapchain(openxr->session, &ci, &sc.handle) == XR_SUCCESS) {
+                const auto canvas_idx = (uint32_t)openxr->views.size();
+                openxr->swapchains.push_back(sc);
+
+                uint32_t image_count{};
+
+                if (xrEnumerateSwapchainImages(sc.handle, 0, &image_count, nullptr) == XR_SUCCESS && image_count > 0) {
+                    auto& cctx = this->contexts[canvas_idx];
+                    cctx.textures.clear();
+                    cctx.textures.resize(image_count);
+                    cctx.texture_contexts.clear();
+                    cctx.texture_contexts.resize(image_count);
+
+                    for (uint32_t j = 0; j < image_count; ++j) {
+                        cctx.textures[j] = {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR};
+                    }
+
+                    if (xrEnumerateSwapchainImages(sc.handle, image_count, &image_count,
+                            (XrSwapchainImageBaseHeader*)&cctx.textures[0]) == XR_SUCCESS) {
+                        for (uint32_t j = 0; j < image_count; ++j) {
+                            uint32_t real_index{};
+                            XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+
+                            if (xrAcquireSwapchainImage(sc.handle, &ai, &real_index) != XR_SUCCESS) {
+                                break;
+                            }
+
+                            XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+                            xrWaitSwapchainImage(sc.handle, &wi);
+
+                            cctx.texture_contexts[real_index] = std::make_unique<d3d12::TextureContext>();
+                            cctx.texture_contexts[real_index]->setup(device, cctx.textures[real_index].texture,
+                                swapchain_format, swapchain_format,
+                                (std::wstring{L"OpenXR Flatscreen "} + std::to_wstring(real_index)).c_str());
+
+                            XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+                            xrReleaseSwapchainImage(sc.handle, &ri);
+                        }
+
+                        spdlog::info("[VR] OpenXR flatscreen swapchain: {}x{} ({} images)", sc.width, sc.height, image_count);
+                    }
+                }
+            } else {
+                spdlog::error("[VR] Failed to create OpenXR flatscreen swapchain.");
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // ImGui-Slate: eigene Swapchain in der Groesse des Menue-Rendertargets
+    // ---------------------------------------------------------------------
+    // [XR_UI_OVERLAY 2026-08-14] Aufbau bewusst wie der Leinwand-Block darueber und
+    // NICHT zusammengefasst: der Leinwand-Weg laeuft und soll dafuer nicht angefasst
+    // werden. Das Rendertarget ist so gross wie der Backbuffer, deshalb reicht dessen
+    // Beschreibung; der sichtbare Ausschnitt wird spaeter ueber subImage.imageRect
+    // auf das Menuefenster begrenzt.
+    {
+        ComPtr<ID3D12Resource> bb{};
+
+        if (SUCCEEDED(swapchain->GetBuffer(0, IID_PPV_ARGS(&bb)))) {
+            const auto bb_desc = bb->GetDesc();
+
+            XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+            ci.arraySize = 1;
+            ci.format = swapchain_format;
+            ci.width = (uint32_t)bb_desc.Width;
+            ci.height = (uint32_t)bb_desc.Height;
+            ci.mipCount = 1;
+            ci.faceCount = 1;
+            ci.sampleCount = 1;
+            ci.usageFlags = XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT |
+                            XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+
+            runtimes::OpenXR::Swapchain sc{};
+            sc.width = ci.width;
+            sc.height = ci.height;
+
+            if (xrCreateSwapchain(openxr->session, &ci, &sc.handle) == XR_SUCCESS) {
+                const auto ui_idx = (uint32_t)openxr->views.size() + 1;
+                openxr->swapchains.push_back(sc);
+
+                uint32_t image_count{};
+
+                if (xrEnumerateSwapchainImages(sc.handle, 0, &image_count, nullptr) == XR_SUCCESS && image_count > 0) {
+                    auto& uctx = this->contexts[ui_idx];
+                    uctx.textures.clear();
+                    uctx.textures.resize(image_count);
+                    uctx.texture_contexts.clear();
+                    uctx.texture_contexts.resize(image_count);
+
+                    for (uint32_t j = 0; j < image_count; ++j) {
+                        uctx.textures[j] = {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR};
+                    }
+
+                    if (xrEnumerateSwapchainImages(sc.handle, image_count, &image_count,
+                            (XrSwapchainImageBaseHeader*)&uctx.textures[0]) == XR_SUCCESS) {
+                        for (uint32_t j = 0; j < image_count; ++j) {
+                            uint32_t real_index{};
+                            XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+
+                            if (xrAcquireSwapchainImage(sc.handle, &ai, &real_index) != XR_SUCCESS) {
+                                break;
+                            }
+
+                            XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+                            xrWaitSwapchainImage(sc.handle, &wi);
+
+                            uctx.texture_contexts[real_index] = std::make_unique<d3d12::TextureContext>();
+                            uctx.texture_contexts[real_index]->setup(device, uctx.textures[real_index].texture,
+                                swapchain_format, swapchain_format,
+                                (std::wstring{L"OpenXR UI Slate "} + std::to_wstring(real_index)).c_str());
+
+                            XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+                            xrReleaseSwapchainImage(sc.handle, &ri);
+                        }
+
+                        spdlog::info("[VR] OpenXR UI slate swapchain: {}x{} ({} images)", sc.width, sc.height, image_count);
+                    }
+                }
+            } else {
+                spdlog::error("[VR] Failed to create OpenXR UI slate swapchain.");
+            }
         }
     }
 
@@ -899,6 +1358,14 @@ void D3D12Component::OpenXR::destroy_swapchains() {
     for (auto i = 0; i < this->contexts.size(); ++i) {
         auto& ctx = this->contexts[i];
         ctx.texture_contexts.clear();
+
+        // Es gibt zwei Zusatz-Swapchains (Leinwand, UI-Slate). Schlaegt eine davon beim
+        // Anlegen fehl, sind es weniger Swapchains als Kontexte -- dann hier nicht ins
+        // Leere greifen.
+        if (i >= VR::get()->m_openxr->swapchains.size()) {
+            ctx.textures.clear();
+            continue;
+        }
 
         auto result = xrDestroySwapchain(VR::get()->m_openxr->swapchains[i].handle);
 
@@ -980,18 +1447,70 @@ void D3D12Component::OpenXR::copy(
             auto& texture_ctx = ctx.texture_contexts[texture_index];
             texture_ctx->commands.wait(INFINITE);
 
+            // [IMAGE_SHIFT 2026-08-11] Bild-Versatz unter OpenXR am GLEICHEN Angriffspunkt
+            // wie unter OpenVR: dort verschiebt VR::get_shifted_bounds den AUSSCHNITT des
+            // fertigen Bildes beim Submit, das Fadenkreuz wandert also mit. Vorher wurde
+            // der Versatz in XR ersatzweise in die Projektion gerechnet (VR.cpp) -- das
+            // verschiebt aber die gerenderte WELT, waehrend das GUI-Fadenkreuz stehen
+            // bleibt, und es skaliert zusaetzlich mit dem Zoom. Genau daher stimmten die
+            // in OpenVR eingestellten Scope-Offsets in XR nicht mehr.
+            // Greift nur beim einfachen Weg (kein eigener src_box, keine CopyFn): der
+            // geschwaerzte Zweig braucht ihn nicht, und im Upscaler-Multipass-Zweig
+            // schreibt render_srv_to_rtv das Bild selbst.
+            const auto shift_x = vr->get_image_shift_x();
+            const auto shift_y = vr->get_image_shift_y();
+
+            const auto dst_desc = ctx.textures[texture_index].texture->GetDesc();
+            const auto src_desc = resource->GetDesc();
+
+            const bool same_size = src_desc.Width == dst_desc.Width && src_desc.Height == dst_desc.Height;
+            const bool has_shift = same_size && src_box == nullptr && (shift_x != 0.0f || shift_y != 0.0f);
+
             if (copy_fn == nullptr) {
-                if (src_box != nullptr) {
+                if (has_shift) {
+                    const auto w = (int32_t)dst_desc.Width;
+                    const auto h = (int32_t)dst_desc.Height;
+
+                    // Vorzeichen wie in get_shifted_bounds: dort wandert der gelesene
+                    // Bereich um -shift, das Bild im Auge also um +shift.
+                    int32_t dx = (int32_t)(shift_x * (float)w);
+                    int32_t dy = (int32_t)(shift_y * (float)h);
+
+                    if (dx > w - 1) dx = w - 1;
+                    if (dx < -(w - 1)) dx = -(w - 1);
+                    if (dy > h - 1) dy = h - 1;
+                    if (dy < -(h - 1)) dy = -(h - 1);
+
+                    D3D12_BOX box{};
+                    box.left   = dx < 0 ? (UINT)(-dx) : 0u;
+                    box.right  = dx < 0 ? (UINT)w : (UINT)(w - dx);
+                    box.top    = dy < 0 ? (UINT)(-dy) : 0u;
+                    box.bottom = dy < 0 ? (UINT)h : (UINT)(h - dy);
+                    box.front  = 0;
+                    box.back   = 1;
+
+                    // Erst schwarz, sonst steht im freiwerdenden Rand der alte Frame.
+                    const float black[4]{0.0f, 0.0f, 0.0f, 1.0f};
+                    texture_ctx->commands.clear_rtv(*texture_ctx, black, D3D12_RESOURCE_STATE_RENDER_TARGET);
+
                     texture_ctx->commands.copy_region(
-                        resource, 
-                        ctx.textures[texture_index].texture, 
-                        src_box, src_state, 
+                        resource,
+                        ctx.textures[texture_index].texture,
+                        &box, src_state,
+                        D3D12_RESOURCE_STATE_RENDER_TARGET,
+                        dx > 0 ? (UINT)dx : 0u,
+                        dy > 0 ? (UINT)dy : 0u);
+                } else if (src_box != nullptr) {
+                    texture_ctx->commands.copy_region(
+                        resource,
+                        ctx.textures[texture_index].texture,
+                        src_box, src_state,
                         D3D12_RESOURCE_STATE_RENDER_TARGET);
                 } else {
                     texture_ctx->commands.copy(
-                        resource, 
-                        ctx.textures[texture_index].texture, 
-                        src_state, 
+                        resource,
+                        ctx.textures[texture_index].texture,
+                        src_state,
                         D3D12_RESOURCE_STATE_RENDER_TARGET);
                 }
             } else {

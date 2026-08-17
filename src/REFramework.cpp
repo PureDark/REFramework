@@ -1590,23 +1590,40 @@ void REFramework::draw_ui() {
     ImGui::SetNextWindowPos(ImVec2(50, 50), ImGuiCond_::ImGuiCond_Once);
     ImGui::SetNextWindowSize(ImVec2(300, 500), ImGuiCond_::ImGuiCond_Once);
     
-    static const auto REF_NAME = std::format("REFramework [{}+{}-{:.8}]", REF_TAG, REF_COMMITS_PAST_TAG, REF_COMMIT_HASH);
+    static const auto REF_NAME = std::string{"REFramework (UPSCALER) RE4VR"};
     bool is_open = true;
-    ImGui::Begin(REF_NAME.c_str(), &is_open);
-    ImGui::Text("Default Menu Key: Insert");
-    ImGui::Checkbox("Transparency", &m_ui_option_transparent);
-    ImGui::SameLine();
-    ImGui::Text("(?)");
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Makes the UI transparent when not focused.");
-    ImGui::Checkbox("Input Passthrough", &m_ui_passthrough);
-    ImGui::SameLine();
-    ImGui::Text("(?)");
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Allows mouse and keyboard inputs to register to the game while the UI is focused.");
+
+    ImGui::Begin(REF_NAME.c_str(), &is_open, ImGuiWindowFlags_None);
+
+    // Font size, no tree around it. Menu key hint, "Transparency" and "Input Passthrough" stay hidden.
+    {
+        auto& config = REFrameworkConfig::get();
+        const auto font_size = config->get_font_size();
+
+        auto wanted_font_size = font_size;
+
+        ImGui::Text("Font Size: %i", font_size);
+        ImGui::SameLine();
+
+        if (ImGui::SmallButton("-")) {
+            --wanted_font_size;
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::SmallButton("+")) {
+            ++wanted_font_size;
+        }
+
+        if (wanted_font_size != font_size) {
+            config->set_font_size(wanted_font_size);
+            set_font_size(config->get_font_size());
+            request_save_config();
+        }
+    }
 
     // Mods:
-    draw_about();
+    //draw_about(); // "About" tree stays hidden
 
     if (m_error.empty() && m_game_data_initialized) {
         m_mods->on_draw_ui();

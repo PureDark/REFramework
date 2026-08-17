@@ -337,6 +337,10 @@ ScriptState::ScriptState(const ScriptState::GarbageCollectionData& gc_data,bool 
     m_lua.new_usertype<REFramework>("REFramework",
         "save_config", &REFramework::request_save_config,
         "is_drawing_ui", &REFramework::is_drawing_ui,
+        // [XR_UI_OVERLAY 2026-08-14] Menue aus Lua auf/zu, fuer eine eigene Tastenkombi
+        // bzw. Controller-Kombination. Kein Config-Schreiben dabei (zweites Argument),
+        // das Menue soll sich nicht bei jedem Umschalten in die Config eintragen.
+        "set_draw_ui", [](REFramework* fw, bool state) { fw->set_draw_ui(state, false); },
         "get_game_name", &REFramework::get_game_name,
         "get_version_string", []() -> std::string { 
             return (std::stringstream{} 
@@ -1055,12 +1059,17 @@ void ScriptRunner::on_frame() {
 void ScriptRunner::on_draw_ui() {
     ImGui::SetNextItemOpen(false, ImGuiCond_::ImGuiCond_Once);
 
-    if (ImGui::CollapsingHeader(get_name().data())) {
+    if (ImGui::CollapsingHeader("Scripts")) {
         if (m_last_online_match_state) {
             ImGui::TextWrapped("Online match detected. Scripts will not be loaded. Existing scripts have been unloaded.");
             return;
         }
 
+        // [RE4VR-UI] Im "Scripts"-Header bleiben nur der "Reset scripts"-Button und die
+        // Script-Liste mit den Haken sichtbar. Alles andere ist NUR AUSGEBLENDET, nicht
+        // entfernt: die Werte dahinter (GC-Optionen, Log-to-Disk) werden weiterhin aus
+        // der Config geladen und wirken wie bisher.
+#if 0
         if (ImGui::Button("Run script")) {
             OPENFILENAME ofn{};
             char file[260]{};
@@ -1080,11 +1089,13 @@ void ScriptRunner::on_draw_ui() {
         }
 
         ImGui::SameLine();
+#endif
 
         if (ImGui::Button("Reset scripts")) {
             reset_scripts();
         }
 
+#if 0
         ImGui::SameLine();
 
         if (ImGui::Button("Spawn Debug Console")) {
@@ -1162,6 +1173,7 @@ void ScriptRunner::on_draw_ui() {
         } else {
             ImGui::TextWrapped("No Script Errors... yet!");
         }
+#endif
 
         if (!m_known_scripts.empty()) {
             ImGui::Text("Known scripts:");
@@ -1181,7 +1193,14 @@ void ScriptRunner::on_draw_ui() {
         std::scoped_lock _{ m_access_mutex };
 
 
-        if (ImGui::CollapsingHeader("Script Generated UI")) {
+        // [RE4VR-UI] "Mod Options" ist der Tree, in dem die Mod-Scripte ihre Regler
+        // ablegen - er soll IMMER offen aufgehen. SetNextItemOpen statt des Flags
+        // ImGuiTreeNodeFlags_DefaultOpen: das Flag greift nur, solange ImGui fuer den
+        // Header noch nichts in seiner ini stehen hat; einmal von Hand zugeklappt,
+        // bliebe er fuer immer zu. "Scripts" bleibt bewusst wie gehabt.
+        ImGui::SetNextItemOpen(true);
+
+        if (ImGui::CollapsingHeader("Mod Options")) {
             if (m_states.empty()) {
                 return;
             }

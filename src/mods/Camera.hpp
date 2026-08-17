@@ -77,7 +77,7 @@ public:
     }
 
 private:
-    const ModToggle::Ptr m_enabled{ ModToggle::create(generate_name("Enabled"), false) };
+    const ModToggle::Ptr m_enabled{ ModToggle::create(generate_name("Enabled_V2"), true) };
     const ModToggle::Ptr m_disable_vignette{ ModToggle::create(generate_name("DisableVignette"), true) };
     const ModSlider::Ptr m_vignette_brightness{ ModSlider::create(generate_name("VignetteBrightness"), -1.0, 1.0, 0.0f ) };
 

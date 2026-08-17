@@ -127,6 +127,35 @@ public:
 
     XrInstance instance{XR_NULL_HANDLE};
     XrSession session{XR_NULL_HANDLE};
+    // --- Flatscreen-Leinwand (Quad-Layer) --------------------------------
+    // OpenXR kennt keine Overlays wie OpenVR; die Leinwand ist hier ein zweiter
+    // Compositor-Layer. Die Werte setzt D3D12Component von aussen -- diese Datei darf
+    // VR.hpp nicht einbinden, denn VR.hpp bindet UNS bereits ein (Zyklus).
+    // [POSE_FREEZE 2026-08-11] Von VR::set_pose_freeze durchgereicht (OpenXR.cpp darf
+    // VR.hpp nicht einbinden -- Zyklus). Ist es an, bekommt der Compositor die
+    // eingefrorene Blickrichtung statt der frischen: sonst reprojiziert er das
+    // bewusst kopfunabhaengige Scope-Bild gegen die echte Kopfbewegung, und selbst
+    // das Tracking-Rauschen wird als Wabbeln sichtbar (auch am Scope-Rand).
+    bool pose_freeze{false};
+    int32_t pose_freeze_submit{2};   // 0/2 = Pose der Runtime lassen, 1 = eingefrorene angeben
+    XrQuaternionf frozen_orientation{0.0f, 0.0f, 0.0f, 1.0f};
+
+    bool flatscreen_layer{false};
+    float flatscreen_width{2.5f};
+    float flatscreen_distance{2.0f};
+
+    // --- ImGui-Slate als Quad-Layer -------------------------------------
+    // [XR_UI_OVERLAY 2026-08-14] OpenXR hat kein Gegenstueck zu vr::VROverlay, deshalb
+    // gab es das Menue an der linken Hand bisher NUR unter OpenVR. Hier ist es derselbe
+    // Weg wie bei der Leinwand: ein eigener Compositor-Layer mit eigener Swapchain.
+    // Gefuellt wird sie von D3D12Component mit dem ImGui-Rendertarget, Pose und
+    // Ausschnitt kommen von OverlayComponent (das darf VR.hpp einbinden, wir nicht).
+    bool ui_layer{false};
+    float ui_width{0.25f};    // Meter, wie SetOverlayWidthInMeters unter OpenVR
+    float ui_height{0.15f};   // Meter, folgt dem Seitenverhaeltnis des Menuefensters
+    XrPosef ui_pose{{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f}};
+    XrRect2Di ui_rect{};      // Ausschnitt der Swapchain = das Menuefenster selbst
+
     XrSpace stage_space{XR_NULL_HANDLE};
     XrSpace view_space{XR_NULL_HANDLE}; // for generating view matrices
     XrSystemId system{XR_NULL_SYSTEM_ID};

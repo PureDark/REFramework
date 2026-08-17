@@ -116,6 +116,15 @@ public:
 		Native
     };
 
+    // The order the quality levels are presented in, DLAA being native resolution
+    enum UpscaleQuality : int32_t {
+        ULTRA_PERFORMANCE,
+        PERFORMANCE,
+        BALANCED,
+        QUALITY,
+        DLAA
+    };
+
 
 private:
     template <typename T> using ComPtr = Microsoft::WRL::ComPtr<T>;
@@ -127,6 +136,26 @@ private:
     void update_extra_scene_layer();
     uint32_t get_render_width() const;
     uint32_t get_render_height() const;
+
+    // DLAA is the "native resolution" entry of the quality dropdown
+    bool is_using_native_resolution() const {
+        return m_upscale_quality->value() == UpscaleQuality::DLAA;
+    }
+
+    PDPerfQualityLevel get_pd_quality_level() const {
+        switch (m_upscale_quality->value()) {
+        case UpscaleQuality::ULTRA_PERFORMANCE:
+            return PDPerfQualityLevel::UltraPerformance;
+        case UpscaleQuality::PERFORMANCE:
+            return PDPerfQualityLevel::Performance;
+        case UpscaleQuality::QUALITY:
+            return PDPerfQualityLevel::Quality;
+        case UpscaleQuality::DLAA: // renders at native res, the level itself doesn't matter
+            return PDPerfQualityLevel::Quality;
+        default:
+            return PDPerfQualityLevel::Balanced;
+        }
+    }
     void update_motion_scale();
 
     void on_render_resource_release(sdk::renderer::RenderResource* resource);
@@ -246,44 +275,40 @@ private:
     };
 
     const ModSlider::Ptr m_sharpness_amount{
-        ModSlider::create(generate_name("SharpnessAmount"), 0.0f, 5.0f, 0.0f)
+        ModSlider::create(generate_name("SharpnessAmount_V2"), 0.0f, 5.0f, 1.0f)
     };
 
-    const ModToggle::Ptr m_use_native_resolution{
-        ModToggle::create(generate_name("UseNativeResolution"), false)
-    };
-
+    // Bleibt (kein UI mehr dafuer): der AFW-Framewarp fragt is_enabled_ui_fix() ab.
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
 
-    const ModCombo::Ptr m_upscale_quality{ 
-        ModCombo::create(generate_name("UpscaleQuality"),
+    const ModCombo::Ptr m_upscale_quality{
+        ModCombo::create(generate_name("UpscaleQuality_V2"),
         {
+            "Ultra Performance",
             "Performance",
             "Balanced",
             "Quality",
-            "Ultra Performance",
-            "Ultra Quality",
-            "Native"
-        }, (int32_t)PDPerfQualityLevel::Quality) 
+            "DLAA"
+        }, (int32_t)UpscaleQuality::DLAA)
     };
 
-    const ModCombo::Ptr m_dlss_preset{ 
+    // Bleibt (kein UI mehr dafuer): get_dlss_preset() reicht den Wert an den Upscaler durch.
+    const ModCombo::Ptr m_dlss_preset{
         ModCombo::create(generate_name("DLSSPreset"),
-        {   
+        {
             "Default",
             "Preset F",
             "Preset J",
             "Preset K",
             "Preset L",
             "Preset M"
-        }, (int32_t)0) 
+        }, (int32_t)0)
     };
 
      ValueList m_options{
         *m_enabled,
         *m_sharpness,
         *m_sharpness_amount,
-        *m_use_native_resolution,
         *m_upscale_quality,
         *m_dlss_preset
      };
