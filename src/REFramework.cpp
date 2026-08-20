@@ -1599,6 +1599,11 @@ void REFramework::draw_ui() {
     // Bare "Recenter View" button, first thing in the window -- the VR tree is hidden by Mods.cpp.
     VR::get()->draw_recenter_button();
 
+    // Same for the OpenXR "Resolution Scale" slider; draws nothing under OpenVR.
+    if (VR::get()->draw_resolution_scale_slider()) {
+        request_save_config();
+    }
+
     // Font size, no tree around it. Menu key hint, "Transparency" and "Input Passthrough" stay hidden.
     {
         auto& config = REFrameworkConfig::get();

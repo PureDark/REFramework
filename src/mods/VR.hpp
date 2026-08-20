@@ -87,6 +87,9 @@ public:
     // Bare "Recenter View" button, drawn at the very top of the REFramework window
     // (REFramework.cpp) because the whole VR tree is hidden by the mod filter in Mods.cpp.
     void draw_recenter_button();
+    // Bare "Resolution Scale" slider, same reason as draw_recenter_button. OpenXR only.
+    // Returns true when the config should be saved.
+    bool draw_resolution_scale_slider();
     // Arms the one-shot auto recenter; called at the end of both initialize_openvr/openxr.
     void arm_auto_recenter();
     // Neigung des Zeigestrahls in Grad (negativ = nach unten).

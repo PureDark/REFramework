@@ -4681,6 +4681,33 @@ void VR::draw_recenter_button() {
     }
 }
 
+// [RESOLUTION_TOP 2026-08-20] Same reason as draw_recenter_button: the "Resolution Scale" slider
+// lives in the hidden VR tree (on_draw_ui, below), so it is drawn bare in the main window instead.
+// OpenVR is deliberately not offered here -- there the resolution belongs to SteamVR.
+// Live slider + "Set" button: writing the value alone does nothing, the OpenXR swapchains have to
+// be rebuilt with it, which is what on_config_load does at startup. "Set" does exactly that now,
+// and the value is saved either way, so it also survives into the next start.
+bool VR::draw_resolution_scale_slider() {
+    if (get_runtime() == nullptr || !get_runtime()->loaded || !get_runtime()->is_openxr()) {
+        return false;
+    }
+
+    const auto changed = m_resolution_scale->draw("Resolution Scale");
+
+    ImGui::Text("Render Resolution: %d x %d", get_runtime()->get_width(), get_runtime()->get_height());
+    ImGui::SameLine();
+
+    const auto pending = m_resolution_scale->value() != m_openxr->resolution_scale;
+
+    if (ImGui::SmallButton(pending ? "Set##resscale" : "Set (no change)##resscale") && pending) {
+        m_openxr->resolution_scale = m_resolution_scale->value();
+        initialize_openxr_swapchains();
+        return true;
+    }
+
+    return changed;
+}
+
 void VR::on_draw_ui() {
     // create VR tree entry in menu (imgui)
     if (get_runtime()->loaded) {
