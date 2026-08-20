@@ -74,7 +74,10 @@ std::optional<std::string> TemporalUpscaler::on_initialize() {
             spdlog::info("[TemporalUpscaler] No upscale methods are available, TemporalUpscaler will not work");
             m_backend_loaded = false;
         } else {
-            m_upscale_type = (PDUpscaleType)m_available_upscale_methods[m_available_upscale_method_names[m_available_upscale_type]];
+            // [UPSCALE_TYPE_PERSISTENT 2026-08-19] Hier gilt noch der Code-Default (FSR3), die
+            // Config ist zu diesem Zeitpunkt noch nicht geladen. on_config_load ruft den Helper
+            // gleich nochmal auf, dann mit dem gespeicherten Wert.
+            apply_upscale_type_from_config();
         }
     }
 
@@ -105,10 +108,66 @@ std::optional<std::string> TemporalUpscaler::on_initialize_d3d_thread() try {
     return Mod::on_initialize();
 }
 
+// [UPSCALE_TYPE_PERSISTENT 2026-08-19] Der gespeicherte Wert ist ein PDUpscaleType, kein
+// Combo-Index -- welche Methoden verfuegbar sind, entscheidet sich erst auf dem Rechner des
+// Users. Ist die gewuenschte Methode nicht da, wird der Reihe nach FSR3 -> FSR2 -> FSR4 -> der
+// erste verfuegbare Eintrag genommen.
+void TemporalUpscaler::apply_upscale_type_from_config() {
+    if (m_available_upscale_method_names.empty()) {
+        return;
+    }
+
+    const auto index_of = [this](int32_t type) -> int32_t {
+        for (size_t i = 0; i < m_available_upscale_method_names.size(); ++i) {
+            if ((int32_t)m_available_upscale_methods[m_available_upscale_method_names[i]] == type) {
+                return (int32_t)i;
+            }
+        }
+
+        return -1;
+    };
+
+    int32_t index = index_of(m_upscale_type_setting->value());
+
+    if (index < 0) {
+        for (const auto fallback : {PDUpscaleType::FSR3, PDUpscaleType::FSR2, PDUpscaleType::FSR4}) {
+            index = index_of((int32_t)fallback);
+
+            if (index >= 0) {
+                break;
+            }
+        }
+    }
+
+    if (index < 0) {
+        index = 0;
+    }
+
+    const auto new_type = (PDUpscaleType)m_available_upscale_methods[m_available_upscale_method_names[index]];
+    const auto changed = new_type != m_upscale_type;
+
+    m_available_upscale_type = (uint32_t)index;
+    m_upscale_type = new_type;
+
+    // Der gespeicherte Wert wandert auf das, was wirklich benutzt wird -- sonst wuerde eine
+    // Config mit einer hier nicht verfuegbaren Methode den Fallback jedes Mal neu erzwingen.
+    m_upscale_type_setting->value() = (int32_t)new_type;
+
+    spdlog::info("[TemporalUpscaler] Upscale method: {} (type {}, index {})",
+        m_available_upscale_method_names[index], (int32_t)new_type, index);
+
+    if (changed && ready()) {
+        release_upscale_features();
+        init_upscale_features();
+    }
+}
+
 void TemporalUpscaler::on_config_load(const utility::Config& cfg) {
     for (IModValue& option : m_options) {
         option.config_load(cfg);
     }
+
+    apply_upscale_type_from_config();
 
     if (!ready()) {
         return;
@@ -159,12 +218,16 @@ void TemporalUpscaler::on_draw_ui() {
             }
 
             if (ImGui::Combo("Upscale Type", (int*)&m_available_upscale_type, imgui_combo_names.data(), imgui_combo_names.size())) {
-                if (m_available_upscale_type < 0 || m_available_upscale_type > m_available_upscale_method_names.size()) {
+                if (m_available_upscale_type >= m_available_upscale_method_names.size()) {
                     m_available_upscale_type = 0;
-                    m_upscale_type = (PDUpscaleType)m_available_upscale_methods[m_available_upscale_method_names[0]];
-                } else {
-                    m_upscale_type = (PDUpscaleType)m_available_upscale_methods[m_available_upscale_method_names[m_available_upscale_type]];
                 }
+
+                m_upscale_type = (PDUpscaleType)m_available_upscale_methods[m_available_upscale_method_names[m_available_upscale_type]];
+
+                // [UPSCALE_TYPE_PERSISTENT 2026-08-19] Auswahl in die Config schreiben, sonst
+                // steht sie nach dem naechsten Start wieder auf dem Default.
+                m_upscale_type_setting->value() = (int32_t)m_upscale_type;
+                g_framework->request_save_config();
 
                 //std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 release_upscale_features();

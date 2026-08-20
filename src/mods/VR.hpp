@@ -84,6 +84,11 @@ public:
     void on_draw_ui() override;
     // Drawn by the Upscaler UI, the rendering technique lives at the end of that tree
     void draw_rendering_technique_ui();
+    // Bare "Recenter View" button, drawn at the very top of the REFramework window
+    // (REFramework.cpp) because the whole VR tree is hidden by the mod filter in Mods.cpp.
+    void draw_recenter_button();
+    // Arms the one-shot auto recenter; called at the end of both initialize_openvr/openxr.
+    void arm_auto_recenter();
     // Neigung des Zeigestrahls in Grad (negativ = nach unten).
     float get_overlay_pointer_pitch() const {
         return m_overlay_pointer_pitch->value();
@@ -610,6 +615,34 @@ public:
     
     bool is_hand_behind_head(VRRuntime::Hand hand, float sensitivity = 0.2f) const;
     bool is_action_active(vr::VRActionHandle_t action, vr::VRInputValueHandle_t source = vr::k_ulInvalidInputValueHandle) const;
+
+    // [GRIP_FORCE] Everything about the grip threshold is configured from Lua
+    // (autorun/re4_vr_capacitive.lua) -- deliberately NO UI in the framework.
+    // hand: 0 = left, 1 = right.
+    float get_grip_analog(int hand) const {
+        if (hand < 0 || hand > 1) {
+            return 0.0f;
+        }
+
+        return m_grip_last_value[hand];
+    }
+
+    // 0 = runtime boolean (no analog input bound), 1 = squeeze/value (capacitive), 2 = squeeze/force.
+    int get_grip_source(int hand) const {
+        if (hand < 0 || hand > 1) {
+            return 0;
+        }
+
+        return m_grip_last_source[hand];
+    }
+
+    void set_grip_settings(bool use_analog, bool prefer_force, float press, float release) {
+        m_grip_use_analog->value() = use_analog;
+        m_grip_prefer_force->value() = prefer_force;
+        m_grip_activate_threshold->value() = press;
+        // A release point above the press point would latch the grip on forever.
+        m_grip_deactivate_threshold->value() = (release > press) ? press : release;
+    }
     Vector2f get_joystick_axis(vr::VRInputValueHandle_t handle) const;
 
     Vector2f get_left_stick_axis() const;
@@ -843,6 +876,16 @@ private:
     // Action handles
     vr::VRActionHandle_t m_action_trigger{ };
     vr::VRActionHandle_t m_action_grip{ };
+    // [GRIP_THRESHOLD] Analog counterpart of m_action_grip, OpenXR only (see VR::is_action_active).
+    vr::VRActionHandle_t m_action_grip_value{ };
+    // [GRIP_FORCE] Index force sensor -- the input the OpenVR profile actually thresholds.
+    vr::VRActionHandle_t m_action_grip_force{ };
+    // Hysteresis state per hand: index 0 = left, 1 = right. mutable because is_action_active is const.
+    mutable bool m_grip_value_state[2]{ false, false };
+    // [GRIP_FORCE] Purely informational, for the readout in the main menu: last analog value seen
+    // per hand and where it came from (0 = boolean fallback, 1 = squeeze/value, 2 = squeeze/force).
+    mutable float m_grip_last_value[2]{ 0.0f, 0.0f };
+    mutable int m_grip_last_source[2]{ 0, 0 };
     vr::VRActionHandle_t m_action_joystick{};
     vr::VRActionHandle_t m_action_joystick_click{};
     vr::VRActionHandle_t m_action_a_button{};
@@ -871,6 +914,8 @@ private:
     std::unordered_map<std::string, std::reference_wrapper<vr::VRActionHandle_t>> m_action_handles {
         { "/actions/default/in/Trigger", m_action_trigger },
         { "/actions/default/in/Grip", m_action_grip },
+        { "/actions/default/in/GripValue", m_action_grip_value },
+        { "/actions/default/in/GripForce", m_action_grip_force },
         { "/actions/default/in/Joystick", m_action_joystick },
         { "/actions/default/in/JoystickClick", m_action_joystick_click },
         { "/actions/default/in/AButton", m_action_a_button },
@@ -904,6 +949,12 @@ private:
     std::bitset<64> m_button_states_on{};
     std::bitset<64> m_button_states_up{};
     std::chrono::steady_clock::time_point m_last_controller_update{};
+    // [AUTO_RECENTER 2026-08-18] Einmaliges Recenter kurz nach JEDER Runtime-Initialisierung.
+    // OpenXR braucht es zwingend (der Blick steht sonst schief), unter OpenVR schadet es nicht.
+    // Ein Reinit (wants_reinitialize) laeuft durch dieselben initialize_*-Funktionen und macht
+    // es damit automatisch wieder scharf.
+    bool m_wants_auto_recenter{false};
+    std::chrono::steady_clock::time_point m_auto_recenter_armed_at{};
     std::chrono::steady_clock::time_point m_last_interaction_display{};
     std::chrono::steady_clock::time_point m_last_crosshair_hide{};
     uint32_t m_backbuffer_inconsistency_start{};
@@ -1024,7 +1075,7 @@ private:
             "Alternating/AFR", 
             "Two Frame Sequential", 
             "Single Frame Multipass",
-            "Alternate Frame Warping"
+            "AFW (experimental)"
         }, 
 #if TDB_VER < 69
         1 // Previous rendering technique
@@ -1043,6 +1094,13 @@ private:
     const ModSlider::Ptr m_view_distance{ ModSlider::create(generate_name("CustomViewDistance"), 10.0f, 3000.0f, 500.0f) };
     const ModSlider::Ptr m_motion_controls_inactivity_timer{ ModSlider::create(generate_name("MotionControlsInactivityTimer"), 30.0f, 100.0f, 30.0f) };
     const ModSlider::Ptr m_joystick_deadzone{ ModSlider::create(generate_name("JoystickDeadzone"), 0.01f, 0.9f, 0.15f) };
+    // [GRIP_THRESHOLD] OpenXR only. Defaults match the OpenVR Index profile (Bindings.cpp): press at
+    // 0.3, release at 0.25. Toggle off to go back to the runtime's own thresholding.
+    const ModToggle::Ptr m_grip_use_analog{ ModToggle::create(generate_name("GripUseAnalogThreshold"), true) };
+    // [GRIP_FORCE] Off = ignore the force sensor and threshold squeeze/value again (old behaviour).
+    const ModToggle::Ptr m_grip_prefer_force{ ModToggle::create(generate_name("GripPreferForceSensor"), true) };
+    const ModSlider::Ptr m_grip_activate_threshold{ ModSlider::create(generate_name("GripActivateThreshold"), 0.05f, 0.95f, 0.30f) };
+    const ModSlider::Ptr m_grip_deactivate_threshold{ ModSlider::create(generate_name("GripDeactivateThreshold"), 0.05f, 0.95f, 0.25f) };
     const ModSlider::Ptr m_ui_scale_option{ ModSlider::create(generate_name("2DUIScale"), 1.0f, 100.0f, 12.0f) };
     const ModSlider::Ptr m_ui_distance_option{ ModSlider::create(generate_name("2DUIDistance"), 0.01f, 100.0f, 1.0f) };
     const ModSlider::Ptr m_world_ui_scale_option{ ModSlider::create(generate_name("WorldSpaceUIScale"), 1.0f, 100.0f, 15.0f) };
@@ -1143,6 +1201,10 @@ private:
         *m_view_distance,
         *m_motion_controls_inactivity_timer,
         *m_joystick_deadzone,
+        *m_grip_use_analog,
+        *m_grip_prefer_force,
+        *m_grip_activate_threshold,
+        *m_grip_deactivate_threshold,
         *m_force_fps_settings,
         *m_force_aa_settings,
         *m_force_motionblur_settings,

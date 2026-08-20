@@ -803,6 +803,34 @@ bool OpenXR::is_action_active(XrAction action, VRRuntime::Hand hand) const {
     return false;
 }
 
+// [GRIP_THRESHOLD] See the comment on the "gripvalue" binding in OpenXR.hpp.
+bool OpenXR::get_action_float(XrAction action, VRRuntime::Hand hand, float& out) const {
+    if (hand > VRRuntime::Hand::RIGHT || action == XR_NULL_HANDLE) {
+        return false;
+    }
+
+    if (!this->action_set.float_actions.contains(action)) {
+        return false;
+    }
+
+    XrActionStateGetInfo get_info{XR_TYPE_ACTION_STATE_GET_INFO};
+    get_info.action = action;
+    get_info.subactionPath = this->hands[hand].path;
+
+    XrActionStateFloat state{XR_TYPE_ACTION_STATE_FLOAT};
+
+    if (xrGetActionStateFloat(this->session, &get_info, &state) != XR_SUCCESS) {
+        return false;
+    }
+
+    if (state.isActive != XR_TRUE) {
+        return false;
+    }
+
+    out = state.currentState;
+    return true;
+}
+
 bool OpenXR::is_action_active(std::string_view action_name, VRRuntime::Hand hand) const {
     if (!this->action_set.action_map.contains(action_name.data()) || hand > VRRuntime::Hand::RIGHT) {
         return false;

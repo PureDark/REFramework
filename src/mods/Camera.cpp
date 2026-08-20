@@ -29,9 +29,7 @@ void Camera::on_draw_ui() {
         on_disabled();
     }
 
-    if (m_disable_vignette->draw("Disable Vignette") && !m_disable_vignette->value()) {
-        set_vignette_type(via::render::ToneMapping::Vignetting::Enable);
-    }
+    draw_vignette_toggle();
 
     // RE8 and above have vignetting brightness
 #if TDB_VER >= 69
@@ -48,6 +46,16 @@ void Camera::on_draw_ui() {
 
     m_use_custom_global_fov->draw("Use Custom Global FOV");
     m_global_fov->draw("Global FOV");
+}
+
+bool Camera::draw_vignette_toggle() {
+    if (m_enable_vignette->draw("Enable Vignette")) {
+        set_vignette_type(m_enable_vignette->value() ? via::render::ToneMapping::Vignetting::Enable
+                                                     : via::render::ToneMapping::Vignetting::Disable);
+        return true;
+    }
+
+    return false;
 }
 
 void Camera::on_update_transform(RETransform* transform) {
@@ -96,10 +104,7 @@ void Camera::on_pre_application_entry(void* entry, const char* name, size_t hash
 }
 
 void Camera::on_application_entry(void* entry, const char* name, size_t hash) {
-    if (!m_enabled->value()) {
-        return;
-    }
-
+    // Vignetting is driven by its own toggle, independent of the (hidden) "Enabled" option.
     if (hash == "LockScene"_fnv) {
         const auto valid_camera = reset_ptr(m_camera, sdk::get_primary_camera(),
             [&](bool valid) {
@@ -123,7 +128,7 @@ void Camera::update_vignetting() noexcept {
 
     m_tone_map_internal = (m_tone_map != nullptr) ? m_tone_map->toneMappingInternal : nullptr;
     
-    if (m_disable_vignette->value()) {
+    if (!m_enable_vignette->value()) {
         set_vignette_type(via::render::ToneMapping::Vignetting::Disable);
     } 
 #if TDB_VER >= 69

@@ -68,17 +68,20 @@ public:
 
     void on_draw_ui() override;
 
+    // Drawn bare in the main REFramework menu (the "Camera" tree itself stays hidden).
+    bool draw_vignette_toggle();
+
     void on_update_transform(RETransform* transform);
     void on_pre_application_entry(void* entry, const char* name, size_t hash) override;
     void on_application_entry(void* entry, const char* name, size_t hash) override;
 
     bool is_disable_vignette() const {
-        return m_enabled->value() && m_disable_vignette->value();
+        return !m_enable_vignette->value();
     }
 
 private:
     const ModToggle::Ptr m_enabled{ ModToggle::create(generate_name("Enabled_V2"), true) };
-    const ModToggle::Ptr m_disable_vignette{ ModToggle::create(generate_name("DisableVignette"), true) };
+    const ModToggle::Ptr m_enable_vignette{ ModToggle::create(generate_name("EnableVignette"), false) };
     const ModSlider::Ptr m_vignette_brightness{ ModSlider::create(generate_name("VignetteBrightness"), -1.0, 1.0, 0.0f ) };
 
     const ModToggle::Ptr m_use_custom_global_fov{ ModToggle::create(generate_name("GlobalFOVEnabled"), false) };
@@ -91,7 +94,7 @@ private:
 
     ValueList m_options{
         *m_enabled,
-        *m_disable_vignette,
+        *m_enable_vignette,
         *m_vignette_brightness,
         *m_use_custom_global_fov,
         *m_global_fov,

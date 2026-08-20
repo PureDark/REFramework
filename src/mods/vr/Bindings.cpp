@@ -30,6 +30,14 @@ std::string VR::actions_json = R"(
       "type": "boolean"
     },
     {
+      "name": "/actions/default/in/GripValue",
+      "type": "vector1"
+    },
+    {
+      "name": "/actions/default/in/GripForce",
+      "type": "vector1"
+    },
+    {
       "name": "/actions/default/in/Touchpad",
       "type": "vector2"
     },

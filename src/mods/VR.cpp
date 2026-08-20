@@ -983,6 +983,10 @@ void VR::on_lua_state_created(sol::state& lua) {
         "is_openxr_loaded", &VR::is_openxr_loaded,
         "is_hmd_active", &VR::is_hmd_active,
         "is_action_active", &VR::is_action_active,
+        // [GRIP_FORCE] Grip threshold is configured from Lua, not from a framework UI.
+        "get_grip_analog", &VR::get_grip_analog,
+        "get_grip_source", &VR::get_grip_source,
+        "set_grip_settings", &VR::set_grip_settings,
         "is_using_hmd_oriented_audio", &VR::is_using_hmd_oriented_audio,
         "toggle_hmd_oriented_audio", &VR::toggle_hmd_oriented_audio,
         "apply_hmd_transform", [](VR* vr, glm::quat& rotation, Vector4f& position) {
@@ -1132,6 +1136,10 @@ std::optional<std::string> VR::initialize_openvr() {
     m_openvr->error = std::nullopt;
     m_runtime = m_openvr;
 
+    // [AUTO_RECENTER 2026-08-19] Rausgenommen: kein automatisches Recenter mehr nach der
+    // Initialisierung. Die Mechanik (arm_auto_recenter + der Block in update_hmd_state)
+    // bleibt stehen, sie wird nur nirgends mehr scharfgeschaltet.
+
     return Mod::on_initialize();
 }
 
@@ -1167,11 +1175,27 @@ std::optional<std::string> VR::initialize_openvr_input() {
     for (auto& it : m_action_handles) {
         auto error = vr::VRInput()->GetActionHandle(it.first.c_str(), &it.second.get());
 
+        // [GRIP_THRESHOLD] GripValue is an OpenXR-only convenience action and has no binding in the
+        // shipped OpenVR profiles. A missing handle must never abort VR init here: under OpenVR the
+        // boolean Grip already carries the 0.3/0.25 hysteresis from the profile itself.
+        const bool optional_action = (it.first == "/actions/default/in/GripValue")
+                                  || (it.first == "/actions/default/in/GripForce");
+
         if (error != vr::VRInputError_None) {
+            if (optional_action) {
+                spdlog::info("[VR] Optional action not available: {} ({})", it.first, (uint32_t)error);
+                continue;
+            }
+
             return "VRInput failed to get action handle: (" + it.first + "): " + std::to_string((uint32_t)error);
         }
 
         if (it.second == vr::k_ulInvalidActionHandle) {
+            if (optional_action) {
+                spdlog::info("[VR] Optional action has no handle: {}", it.first);
+                continue;
+            }
+
             return "VRInput failed to get action handle: (" + it.first + ")";
         }
     }
@@ -1373,6 +1397,8 @@ std::optional<std::string> VR::initialize_openxr() {
     }
 
     detect_controllers();
+
+    // [AUTO_RECENTER 2026-08-19] Siehe initialize_openvr(): nicht mehr scharfschalten.
 
     if (m_init_finished) {
         // This is usually done in on_config_load
@@ -1697,6 +1723,21 @@ void VR::update_hmd_state() {
         m_standing_origin = get_position_unsafe(vr::k_unTrackedDeviceIndex_Hmd);
 
         runtime->wants_reset_origin = false;
+    }
+
+    // [AUTO_RECENTER 2026-08-18] Einmaliges Recenter nach der Initialisierung. Muss hier stehen
+    // und nicht in den initialize_*-Funktionen: erst nach update_poses() liefert get_rotation(0)
+    // eine echte HMD-Pose. Der pose_mtx des Blocks darueber ist mit dessen Scope wieder frei,
+    // recenter_view() darf also selbst locken.
+    if (m_wants_auto_recenter && runtime->ready() && runtime->got_first_valid_poses) {
+        static constexpr auto AUTO_RECENTER_DELAY = std::chrono::milliseconds{2000};
+
+        if (std::chrono::steady_clock::now() - m_auto_recenter_armed_at >= AUTO_RECENTER_DELAY) {
+            m_wants_auto_recenter = false;
+            recenter_view();
+
+            spdlog::info("[VR] Auto recenter fired");
+        }
     }
 
     runtime->update_matrices(m_nearz, m_farz);
@@ -2521,6 +2562,17 @@ void VR::set_rotation_offset(const glm::quat& offset) {
     m_rotation_offset = offset;
 }
 
+// [AUTO_RECENTER 2026-08-18] Scharfschalten. Das eigentliche Feuern passiert in
+// update_hmd_state(), sobald die Runtime bereit ist UND die erste gueltige Pose da ist,
+// fruehestens AUTO_RECENTER_DELAY nach diesem Aufruf. Direkt hier zu recentern waere
+// wertlos: zu diesem Zeitpunkt liefert get_rotation(0) noch keine getrackte Pose.
+void VR::arm_auto_recenter() {
+    m_wants_auto_recenter = true;
+    m_auto_recenter_armed_at = std::chrono::steady_clock::now();
+
+    spdlog::info("[VR] Auto recenter armed");
+}
+
 void VR::recenter_view() {
     const auto new_rotation_offset = glm::normalize(glm::inverse(utility::math::flatten(glm::quat{get_rotation(0)})));
 
@@ -2899,7 +2951,7 @@ void VR::on_present() {
         technique = (technique + 1) % 4;
 
         static const char* const s_technique_names[] = {
-            "Alternating/AFR", "Two Frame Sequential", "Single Frame Multipass", "Alternate Frame Warping"
+            "Alternating/AFR", "Two Frame Sequential", "Single Frame Multipass", "AFW (experimental)"
         };
         spdlog::info("[VR] Rendering technique -> {} ({})", technique, s_technique_names[technique]);
     }
@@ -4605,11 +4657,27 @@ void VR::draw_rendering_technique_ui() {
     m_rendering_technique->draw("Rendering Technique");
 
     if (m_rendering_technique->value() == ALTERNATE_FRAME_WARPING) {
-        m_clear_before_framewarp->draw("Clear Before Framewarp");
-        m_framewarp_debug->draw("Debug Framewarp");
-        m_enable_ui_fix->draw("Enable Framewarp UI Fix");
-        m_ignore_motion_threshold->draw("Ignore Motion Threshold");
-        m_framewarp_mode->draw("Framewarp Mode");
+        // [UI_AUSBLENDEN 2026-08-18] Unter "Alternate Frame Warping" wird gar nichts
+        // mehr gezeichnet. Die Werte bleiben vollstaendig erhalten und wirken weiter:
+        // ClearBeforeFramewarp=false, FramewarpDebug=false, EnableUIFix=true,
+        // IgnoreMotionThreshold (Default 2.5, aus der Config uebernommen) und
+        // Framewarp Mode = CombinedWarping. ModValues werden unabhaengig vom Zeichnen
+        // aus re2_fw_config.txt geladen und dorthin gespeichert, wer sie aendern will,
+        // schreibt sie dort von Hand. Numpad 9 toggelt EnableUIFix weiterhin (VR.cpp:2932).
+    }
+}
+
+// [RECENTER_TOP 2026-08-18] Bare button, no tree, drawn as the first thing inside the
+// REFramework window. The VR tree it used to live in (on_draw_ui below) never gets drawn
+// because Mods.cpp only lets ScriptRunner and TemporalUpscaler through the filter.
+// The hotkey path (m_recenter_view_key, VR.cpp on_config_load/on_frame) is untouched.
+void VR::draw_recenter_button() {
+    if (get_runtime() == nullptr || !get_runtime()->loaded) {
+        return;
+    }
+
+    if (ImGui::Button("Recenter View")) {
+        recenter_view();
     }
 }
 
@@ -4723,6 +4791,21 @@ void VR::on_draw_ui() {
     m_view_distance->draw("View Distance/FarZ");
     m_motion_controls_inactivity_timer->draw("Inactivity Timer");
     m_joystick_deadzone->draw("Joystick Deadzone");
+
+    // [GRIP_THRESHOLD] OpenXR only -- under OpenVR the Index profile already does this (Bindings.cpp).
+    if (get_runtime() != nullptr && get_runtime()->is_openxr()) {
+        m_grip_use_analog->draw("Analog Grip Threshold (OpenXR)");
+
+        if (m_grip_use_analog->value()) {
+            // [GRIP_FORCE] On Index the force sensor is the input the OpenVR profile thresholds --
+            // squeeze/value there is the capacitive grip and reads high from just holding the thing.
+            m_grip_prefer_force->draw("  Prefer Grip Force Sensor (Index)");
+            m_grip_activate_threshold->draw("  Grip Press Threshold");
+            m_grip_deactivate_threshold->draw("  Grip Release Threshold");
+            ImGui::TextWrapped("Only affects controllers with an analog squeeze (Index, Touch). "
+                               "Release should stay below press; higher press values require a firmer squeeze.");
+        }
+    }
 
     m_ui_scale_option->draw("2D UI Scale");
     m_ui_distance_option->draw("2D UI Distance");
@@ -5195,6 +5278,60 @@ bool VR::is_action_active(vr::VRActionHandle_t action, vr::VRInputValueHandle_t 
 
         active = data.bActive && data.bState;
     } else if (get_runtime()->is_openxr()) {
+        // [GRIP_THRESHOLD] The grip action is declared boolean, so under OpenXR the runtime decides
+        // when a squeeze counts as pressed -- and SteamVR's default fires far too early: a single
+        // grab registers twice, menu entries advance two steps. OpenVR never showed this because the
+        // shipped Index profile reads the FORCE sensor and thresholds it at 0.3 / 0.25 (Bindings.cpp).
+        // So: read the analog value ourselves and apply that same hysteresis, per hand -- from the
+        // force sensor where it exists, otherwise from squeeze/value. Controllers with neither
+        // (Vive wands, WMR) bind no float action at all, get_action_float returns false, and the
+        // boolean path below runs exactly as before.
+        if (action == m_action_grip && m_grip_use_analog->value()) {
+            const auto hand = (VRRuntime::Hand)source;
+
+            if (hand <= VRRuntime::Hand::RIGHT) {
+                float value = 0.0f;
+                int source_kind = 0; // 0 = none yet -> boolean fallback below
+
+                // [GRIP_FORCE] Order matters. On Index, squeeze/value is the CAPACITIVE grip: it sits
+                // well above 0.3 just from holding the controller, so thresholding it still felt like
+                // a hair trigger. squeeze/force is the force sensor -- the very input the shipped
+                // OpenVR knuckles profile thresholds at 0.3/0.25. Controllers without a force sensor
+                // never bind it, so they keep squeeze/value exactly as before.
+                if (m_grip_prefer_force->value() && m_action_grip_force != 0
+                    && m_openxr->get_action_float((XrAction)m_action_grip_force, hand, value)) {
+                    source_kind = 2;
+                } else if (m_action_grip_value != 0
+                    && m_openxr->get_action_float((XrAction)m_action_grip_value, hand, value)) {
+                    source_kind = 1;
+                }
+
+                m_grip_last_source[(size_t)hand] = source_kind;
+
+                if (source_kind != 0) {
+                    m_grip_last_value[(size_t)hand] = value;
+
+                    auto& state = m_grip_value_state[(size_t)hand];
+                    const auto on_threshold = m_grip_activate_threshold->value();
+                    // Never let the release threshold sit above the press threshold -- that would
+                    // latch the grip on forever.
+                    auto off_threshold = m_grip_deactivate_threshold->value();
+
+                    if (off_threshold > on_threshold) {
+                        off_threshold = on_threshold;
+                    }
+
+                    if (state) {
+                        state = value > off_threshold;
+                    } else {
+                        state = value >= on_threshold;
+                    }
+
+                    return state;
+                }
+            }
+        }
+
         active = m_openxr->is_action_active((XrAction)action, (VRRuntime::Hand)source);
     }
 

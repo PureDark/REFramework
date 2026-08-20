@@ -103,6 +103,10 @@ public:
 
     bool is_action_active(XrAction action, VRRuntime::Hand hand) const;
     bool is_action_active(std::string_view action_name, VRRuntime::Hand hand) const;
+    // [GRIP_THRESHOLD] Raw analog value of a float action. Returns false when the action is not a
+    // float action, is not bound on this controller, or the runtime reports it inactive -- the
+    // caller then falls back to the boolean action.
+    bool get_action_float(XrAction action, VRRuntime::Hand hand, float& out) const;
     bool is_action_active_once(std::string_view action_name, VRRuntime::Hand hand) const;
     Vector2f get_action_axis(XrAction action, VRRuntime::Hand hand) const;
     std::string translate_openvr_action_name(std::string action_name) const;
@@ -254,6 +258,22 @@ public:
         {"/user/hand/*/input/grip/pose", "pose"},
         {"/user/hand/*/input/trigger", "trigger"}, // oculus?
         {"/user/hand/*/input/squeeze", "grip"}, // oculus/vive/index
+        // [GRIP_THRESHOLD] Analog grip value, bound in parallel to the boolean above.
+        // On Index the grip is a force sensor with no click point; a boolean action bound to it
+        // is thresholded by the runtime itself, and SteamVR's default fires far too early
+        // (double grabs, menu entries triggering twice). OpenVR never had this problem because
+        // the shipped Index profile sets click_activate/deactivate to 0.3/0.25 (see Bindings.cpp).
+        // Reading the raw value lets VR::is_action_active apply the same hysteresis under OpenXR.
+        // Controllers without an analog squeeze simply fail to bind this one and keep the boolean.
+        {"/user/hand/*/input/squeeze/value", "gripvalue"}, // index/oculus (analog)
+        // [GRIP_FORCE] The one that actually matches OpenVR on Index. There, squeeze/value is the
+        // CAPACITIVE grip (how closed the hand is) -- it already reads well above 0.3 from merely
+        // holding the controller, which is why the analog threshold added for squeeze/value still
+        // felt hair-trigger. The shipped OpenVR knuckles profile does NOT use it either: it binds
+        // the grip as "mode": "force_sensor" with "force_input": "force" at 0.3/0.25 (Bindings.cpp).
+        // squeeze/force is that same force sensor under OpenXR. It only exists on the Index profile;
+        // every other controller fails to bind it and keeps squeeze/value (or the boolean).
+        {"/user/hand/*/input/squeeze/force", "gripforce"}, // index only (force sensor)
         {"/user/hand/*/input/x/click", "abutton"}, // oculus?
         {"/user/hand/*/input/y/click", "bbutton"}, // oculus?
         {"/user/hand/*/input/a/click", "abutton"}, // oculus?

@@ -46,6 +46,11 @@ public:
     void on_config_load(const utility::Config& cfg) override;
     void on_config_save(utility::Config& cfg) override;
 
+    // [UPSCALE_TYPE_PERSISTENT 2026-08-19] Setzt m_upscale_type/m_available_upscale_type aus
+    // dem gespeicherten Wert (mit Fallback-Kette). Muss nach on_config_load laufen, weil der
+    // Wert erst dort aus der Config kommt.
+    void apply_upscale_type_from_config();
+
     void on_draw_ui() override;
     void on_early_present() override; // early because it needs to run before VR.
     void on_post_present() override;
@@ -203,7 +208,7 @@ private:
     std::array<uint32_t, 2> m_jitter_indices{0, 0};
 
     uint32_t m_available_upscale_type{0};
-    PDUpscaleType m_upscale_type{PDUpscaleType::FSR2};
+    PDUpscaleType m_upscale_type{PDUpscaleType::FSR3};
 
     uint32_t m_backbuffer_inconsistency_start{};
     std::array<uint32_t, 2> m_backbuffer_size{};
@@ -266,8 +271,11 @@ private:
     std::array<std::array<Matrix4x4f, 6>, 2> m_old_view_matrix{};
     std::array<std::array<Matrix4x4f, 6>, 2> m_old_view_projection_matrix{};
 
+    // [UPSCALER_DEFAULT_AUS 2026-08-19] War true. Der Upscaler soll bei einer frischen
+    // Installation ausgeschaltet starten; eine bereits gespeicherte re2_fw_config.txt
+    // sticht diesen Default weiterhin.
     const ModToggle::Ptr m_enabled{
-        ModToggle::create(generate_name("Enabled"), true)
+        ModToggle::create(generate_name("Enabled"), false)
     };
 
     const ModToggle::Ptr m_sharpness{
@@ -280,6 +288,14 @@ private:
 
     // Bleibt (kein UI mehr dafuer): der AFW-Framewarp fragt is_enabled_ui_fix() ab.
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
+
+    // [UPSCALE_TYPE_PERSISTENT 2026-08-19] Gespeichert wird der PDUpscaleType (0=DLSS, 1=FSR2,
+    // 2=XESS, 3=FSR3, 4=FSR4), NICHT der Index in der Combo-Liste: welche Methoden verfuegbar
+    // sind, haengt an GPU und installierten DLLs, der Index waere auf einem anderen Rechner
+    // etwas anderes. Default FSR3.
+    const ModInt32::Ptr m_upscale_type_setting{
+        ModInt32::create(generate_name("UpscaleType_V2"), (uint32_t)PDUpscaleType::FSR3)
+    };
 
     const ModCombo::Ptr m_upscale_quality{
         ModCombo::create(generate_name("UpscaleQuality_V2"),
@@ -310,6 +326,9 @@ private:
         *m_sharpness,
         *m_sharpness_amount,
         *m_upscale_quality,
-        *m_dlss_preset
+        *m_dlss_preset,
+        // [PERSISTENT 2026-08-19] Beide fehlten hier und wurden deshalb nie gespeichert.
+        *m_enable_ui_fix,
+        *m_upscale_type_setting
      };
 };

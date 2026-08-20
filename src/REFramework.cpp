@@ -30,6 +30,7 @@ extern "C" {
 #include "utility/Thread.hpp"
 
 #include "Mods.hpp"
+#include "mods/Camera.hpp"
 #include "mods/LooseFileLoader.hpp"
 #include "mods/PluginLoader.hpp"
 #include "mods/VR.hpp"
@@ -1595,6 +1596,9 @@ void REFramework::draw_ui() {
 
     ImGui::Begin(REF_NAME.c_str(), &is_open, ImGuiWindowFlags_None);
 
+    // Bare "Recenter View" button, first thing in the window -- the VR tree is hidden by Mods.cpp.
+    VR::get()->draw_recenter_button();
+
     // Font size, no tree around it. Menu key hint, "Transparency" and "Input Passthrough" stay hidden.
     {
         auto& config = REFrameworkConfig::get();
@@ -1618,6 +1622,11 @@ void REFramework::draw_ui() {
         if (wanted_font_size != font_size) {
             config->set_font_size(wanted_font_size);
             set_font_size(config->get_font_size());
+            request_save_config();
+        }
+
+        // Bare "Enable Vignette" toggle, the "Camera" tree it belongs to stays hidden.
+        if (Camera::get()->draw_vignette_toggle()) {
             request_save_config();
         }
     }
