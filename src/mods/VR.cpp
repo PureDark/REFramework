@@ -4676,6 +4676,12 @@ void VR::draw_recenter_button() {
         return;
     }
 
+    if (ImGui::Button("Set Standing Origin")) {
+        m_standing_origin = get_position(0);
+    }
+
+    ImGui::SameLine();
+
     if (ImGui::Button("Recenter View")) {
         recenter_view();
     }
