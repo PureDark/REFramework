@@ -3065,6 +3065,25 @@ void VR::on_post_present() {
         runtime->consume_events(nullptr);
     }
 
+    const auto is_left_eye_frame = (is_using_multipass() || is_using_afw()) ? true : ((m_render_frame_count) % 2 == m_left_eye_interval);
+
+    if ((is_left_eye_frame)) {
+        if (runtime->get_synchronize_stage() == VRRuntime::SynchronizeStage::VERY_LATE || !runtime->got_first_sync) {
+            const auto had_sync = runtime->got_first_sync;
+            runtime->synchronize_frame();
+
+            if (!runtime->got_first_poses || !had_sync) {
+                update_hmd_state();
+            }
+        }
+
+        if (runtime->is_openxr() && runtime->ready() && runtime->get_synchronize_stage() == VRRuntime::SynchronizeStage::VERY_LATE) {
+            if (!m_openxr->frame_began) {
+                m_openxr->begin_frame();
+            }
+        }
+    }
+
     if (!inside_on_end && runtime->wants_reinitialize) {
         std::scoped_lock _{m_openvr_mtx};
 

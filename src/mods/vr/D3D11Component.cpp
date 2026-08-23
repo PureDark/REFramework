@@ -345,7 +345,7 @@ vr::EVRCompositorError D3D11Component::on_frame(VR* vr) {
         }
 
         if (runtime->is_openxr() && vr->m_openxr->ready()) {
-            if (runtime->get_synchronize_stage() == VRRuntime::SynchronizeStage::VERY_LATE || !vr->m_openxr->frame_began) {
+            if (!vr->m_openxr->frame_began) {
                 LOG_VERBOSE("Beginning frame.");
                 vr->m_openxr->begin_frame();
             }
