@@ -294,6 +294,8 @@ void TemporalUpscaler::on_early_present() {
         return;
     }
 
+    auto eye_index = VR::get()->get_render_frame_count() % 2;
+
     if (m_is_d3d12) {
         auto& hook = g_framework->get_d3d12_hook();
         auto swapchain = hook->get_swap_chain();
@@ -348,11 +350,12 @@ void TemporalUpscaler::on_early_present() {
                 }
 
                 auto desc = finalColorDesc.pTexture->GetDesc();
-                if (extractedUIBufferDesc.pTexture == NULL || extractedUIBufferDesc.pTexture->GetDesc().Width != desc.Width ||
-                    extractedUIBufferDesc.pTexture->GetDesc().Height != desc.Height) {
-                    d3d12Renderer->CreateTexture(desc.Width, desc.Height, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, extractedUIBufferDesc, true);
+                if (extractedUIBufferDesc[eye_index].pTexture == NULL ||
+                    extractedUIBufferDesc[eye_index].pTexture->GetDesc().Width != desc.Width ||
+                    extractedUIBufferDesc[eye_index].pTexture->GetDesc().Height != desc.Height) {
+                    d3d12Renderer->CreateTexture(desc.Width, desc.Height, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, extractedUIBufferDesc[eye_index], true);
                 }
-                d3d12Renderer->ExtractUI(cmdList, extractedUIBufferDesc, hudlessDesc, finalColorDesc);
+                d3d12Renderer->ExtractUI(cmdList, extractedUIBufferDesc[eye_index], hudlessDesc, finalColorDesc);
                 // TonemapParams params;
                 // params.fGamma = 1.10f;
                 // params.fLowerLimit = 0.024f;
@@ -554,10 +557,10 @@ void TemporalUpscaler::on_early_present() {
             once = false;
         }
         if (m_afw_backend_loaded && d3d12Renderer && cmdList) {
-            if (m_enable_ui_fix->value() && !is_vr_multipass  && extractedUIBufferDesc.pTexture && finalColorDesc.pTexture) {
+            if (m_enable_ui_fix->value() && !is_vr_multipass && extractedUIBufferDesc[eye_index].pTexture && finalColorDesc.pTexture) {
                 CD3DX12_VIEWPORT vp(backbufferDesc[backbuffer_index].pTexture);
                 auto blend = debug2 ? OneMinusSrcAlpha : NoBlend;
-                d3d12Renderer->Blit(cmdList, backbufferDesc[backbuffer_index], extractedUIBufferDesc, vp, blend);
+                d3d12Renderer->Blit(cmdList, backbufferDesc[backbuffer_index], extractedUIBufferDesc[eye_index], vp, blend);
             }
             d3d12Renderer->EndCommandList(backbuffer_index);
         }
@@ -1106,7 +1109,7 @@ bool TemporalUpscaler::on_pre_prepare_output_layer_draw(sdk::renderer::layer::Pr
     if (state.scene_layer != scene_layer)
         return true;
 
-    // [PureDark] Copying the hudless back to the final buffer does work well with the extracted UI
+    // [PureDark] Copying the hudless back to the final buffer doesn't work well with the extracted UI
     if (m_enable_ui_fix->value() && !VR::get()->is_using_multipass() && uiTargetEngineTex && hudlessEngineTex && finalColorEngineTex) {
         finalColorTex->SetName(L"finalColorTex");
         context->copy_texture(finalColorEngineTex, uiTargetEngineTex);

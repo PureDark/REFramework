@@ -37,10 +37,19 @@ class REManagedObject;
 class VR : public Mod {
 public:
     CameraData cameraData[2];
-    ID3D12Resource* depthTex = NULL;
-    ID3D12Resource* motionVectorsTex = NULL;
-    ID3D12Resource* uiBufferTex = NULL;
     D3D12RendererAPI* d3d12Renderer = nullptr;
+    
+    template <typename T> using ComPtr = Microsoft::WRL::ComPtr<T>;
+    struct EyeState {
+        ComPtr<ID3D12Resource> motion_vectors{};
+        ComPtr<ID3D12Resource> depth{};
+        ComPtr<ID3D12Resource> uiBufferTex{};
+
+        sdk::intrusive_ptr<sdk::renderer::Texture> motion_vectors_copy{};
+        sdk::intrusive_ptr<sdk::renderer::Texture> depth_copy{};
+    };
+
+    std::array<EyeState, 2> m_eye_states{};
     
     int m_camera_data_update_frame_count{};
     void update_camera_data();
@@ -720,6 +729,7 @@ private:
 
     bool on_pre_overlay_layer_update(sdk::renderer::layer::Overlay* layer, void* render_context) override;
     bool on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_context) override;
+    void on_overlay_layer_draw(sdk::renderer::layer::Overlay* overlay_layer, void* render_context) override;
 
     bool on_pre_post_effect_layer_update(sdk::renderer::layer::PostEffect* layer, void* render_context) override;
     bool on_pre_post_effect_layer_draw(sdk::renderer::layer::PostEffect* layer, void* render_context) override;
@@ -1059,6 +1069,9 @@ private:
     // Zuletzt in apply_projection_tweaks errechneter Zoomfaktor -- auch der aus einem
     // gesetzten FOV, den man ohne die Projektion nicht kennt.
     mutable float m_last_zoom_factor{1.0f};
+
+    const ModToggle::Ptr m_show_advanced_options{ModToggle::create(generate_name("ShowAdvancedOptions"), false)};
+
     const ModToggle::Ptr m_clear_before_framewarp{ModToggle::create(generate_name("ClearBeforeFramewarp"), false)};
     const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
     const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
@@ -1224,7 +1237,8 @@ private:
         *m_overlay_pointer_pitch,
         *m_desktop_fix,
         *m_desktop_fix_skip_present,
-        *m_enable_asynchronous_rendering
+        *m_enable_asynchronous_rendering,
+        *m_show_advanced_options
     };
 
     bool m_use_rotation{true};

@@ -136,5 +136,5 @@ struct VRRuntime {
 
     Vector4f raw_projections[2]{};
 
-    SynchronizeStage custom_stage{SynchronizeStage::EARLY};
+    SynchronizeStage custom_stage{SynchronizeStage::VERY_LATE};
 };

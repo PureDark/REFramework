@@ -46,7 +46,7 @@ private:
 #ifdef RE8
     ModToggle::Ptr m_always_show_cursor{ ModToggle::create(generate_name("DrawCursorWithMenuOpen"), true) };
 #else
-    ModToggle::Ptr m_always_show_cursor{ ModToggle::create(generate_name("DrawCursorWithMenuOpen"), false) };
+    ModToggle::Ptr m_always_show_cursor{ ModToggle::create(generate_name("DrawCursorWithMenuOpen"), true) };
 #endif
     ModKey::Ptr m_show_cursor_key{ ModKey::create(generate_name("ShowCursorKey")) };
     ModInt32::Ptr m_font_size{ModInt32::create(generate_name("FontSize"), 16)};

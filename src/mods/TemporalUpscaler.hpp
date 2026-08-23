@@ -31,7 +31,7 @@ public:
     std::array<uint32_t, 2> hudlessTargetSize{};
     std::array<uint32_t, 2> finalColorTargetSize{};
     D3D12RendererAPI* d3d12Renderer = nullptr;
-    TextureDesc extractedUIBufferDesc;
+    TextureDesc extractedUIBufferDesc[2];
 
     bool is_enabled_ui_fix() { return m_enable_ui_fix->value(); };
 
@@ -156,9 +156,9 @@ private:
         case UpscaleQuality::QUALITY:
             return PDPerfQualityLevel::Quality;
         case UpscaleQuality::DLAA: // renders at native res, the level itself doesn't matter
-            return PDPerfQualityLevel::Quality;
+            return PDPerfQualityLevel::Native;
         default:
-            return PDPerfQualityLevel::Balanced;
+            return PDPerfQualityLevel::Quality;
         }
     }
     void update_motion_scale();

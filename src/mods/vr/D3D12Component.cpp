@@ -171,8 +171,9 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
     FrameWarpEvaluateParams params;
     if (vr->is_using_afw() && (!m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture || !m_eyeFrameBuffers.eyeFrameBuffers[1].color.pTexture))
         force_reset();
-    if (vr->is_using_afw() && m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture && vr->depthTex && vr->motionVectorsTex && vr->m_framewarp_mode->value() > 0) {
-        static TextureDesc texDesc[4];
+    if (vr->is_using_afw() && m_eyeFrameBuffers.eyeFrameBuffers[0].color.pTexture && 
+        vr->m_eye_states[nEye].depth_copy && vr->m_eye_states[nEye].motion_vectors_copy && vr->m_framewarp_mode->value() > 0) {
+        static TextureDesc texDesc[6];
         int texIndex = m_backbuffer_is_8bit ? backbuffer_index : 3;
         if (texDesc[texIndex].pTexture != eye_texture.Get()) {
             texDesc[texIndex].pTexture = eye_texture.Get();
@@ -180,43 +181,49 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
             texDesc[texIndex].srvPos = vr->d3d12Renderer->CreateSRV(texDesc[texIndex].pTexture, texDesc[texIndex].srvPos);
             texDesc[texIndex].shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(texDesc[texIndex].srvPos);
         }
-        static TextureDesc depthDesc;
-        if (depthDesc.pTexture != vr->depthTex) {
-            depthDesc.pTexture = vr->depthTex;
-            depthDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-            depthDesc.srvPos = vr->d3d12Renderer->CreateSRV(depthDesc.pTexture, depthDesc.srvPos);
-            depthDesc.shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(depthDesc.srvPos);
+
+        const auto& state = vr->m_eye_states[nEye];
+
+        const auto motion_vectors = state.motion_vectors_copy->get_d3d12_resource_container()->get_native_resource();
+        const auto depth = state.depth_copy->get_d3d12_resource_container()->get_native_resource();
+
+        static TextureDesc depthDesc[2];
+        if (depthDesc[nEye].pTexture != depth) {
+            depthDesc[nEye].pTexture = depth;
+            depthDesc[nEye].initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            depthDesc[nEye].srvPos = vr->d3d12Renderer->CreateSRV(depthDesc[nEye].pTexture, depthDesc[nEye].srvPos);
+            depthDesc[nEye].shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(depthDesc[nEye].srvPos);
         }
-        static TextureDesc motionVectorsDesc;
-        if (motionVectorsDesc.pTexture != vr->motionVectorsTex) {
-            motionVectorsDesc.pTexture = vr->motionVectorsTex;
-            motionVectorsDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-            motionVectorsDesc.srvPos = vr->d3d12Renderer->CreateSRV(motionVectorsDesc.pTexture, motionVectorsDesc.srvPos);
-            motionVectorsDesc.shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(motionVectorsDesc.srvPos);
+        static TextureDesc motionVectorsDesc[2];
+        if (motionVectorsDesc[nEye].pTexture != motion_vectors) {
+            motionVectorsDesc[nEye].pTexture = motion_vectors;
+            motionVectorsDesc[nEye].initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            motionVectorsDesc[nEye].srvPos = vr->d3d12Renderer->CreateSRV(motionVectorsDesc[nEye].pTexture, motionVectorsDesc[nEye].srvPos);
+            motionVectorsDesc[nEye].shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(motionVectorsDesc[nEye].srvPos);
         }
-        static TextureDesc uiBufferDesc;
-        if (vr->m_enable_ui_fix->value() && vr->uiBufferTex) {
-            uiBufferDesc.pTexture = vr->uiBufferTex;
-            uiBufferDesc.initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-            uiBufferDesc.srvPos = vr->d3d12Renderer->CreateSRV(uiBufferDesc.pTexture, uiBufferDesc.srvPos);
-            uiBufferDesc.shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(uiBufferDesc.srvPos);
-            uiBufferDesc.renderTargetViewHandle = vr->d3d12Renderer->GetRTV(uiBufferDesc.pTexture);
+        static TextureDesc uiBufferDesc[2];
+        if (vr->m_enable_ui_fix->value() && state.uiBufferTex) {
+            uiBufferDesc[nEye].pTexture = state.uiBufferTex.Get();
+            uiBufferDesc[nEye].initialState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            uiBufferDesc[nEye].srvPos = vr->d3d12Renderer->CreateSRV(uiBufferDesc[nEye].pTexture, uiBufferDesc[nEye].srvPos);
+            uiBufferDesc[nEye].shaderResourceViewHandle = vr->d3d12Renderer->GetGPUDescriptorHandle(uiBufferDesc[nEye].srvPos);
+            uiBufferDesc[nEye].renderTargetViewHandle = vr->d3d12Renderer->GetRTV(uiBufferDesc[nEye].pTexture);
         }
         static FrameBufferDesc s_CurrentEyeFrameBuffer{};
 
         s_CurrentEyeFrameBuffer.color = texDesc[texIndex];
-        s_CurrentEyeFrameBuffer.depth = depthDesc;
-        s_CurrentEyeFrameBuffer.motionVectors = motionVectorsDesc;
+        s_CurrentEyeFrameBuffer.depth = depthDesc[nEye];
+        s_CurrentEyeFrameBuffer.motionVectors = motionVectorsDesc[nEye];
 
         auto cmdList = vr->d3d12Renderer->BeginCommandList(backbuffer_index);
         params.InCmdList = cmdList;
         params.InEyeFrameBuffer = &s_CurrentEyeFrameBuffer;
-        if (vr->m_enable_ui_fix->value() && vr->uiBufferTex) {
-            params.InUIColorAlpha = &uiBufferDesc;
+        if (vr->m_enable_ui_fix->value() && state.uiBufferTex) {
+            params.InUIColorAlpha = &uiBufferDesc[nEye];
             params.IsHudlessColor = false;
         } else if (vr->m_enable_ui_fix->value() && TemporalUpscaler::get()->is_enabled_ui_fix() &&
-                   TemporalUpscaler::get()->extractedUIBufferDesc.pTexture) {
-            params.InUIColorAlpha = &TemporalUpscaler::get()->extractedUIBufferDesc;
+                   TemporalUpscaler::get()->extractedUIBufferDesc[nEye].pTexture) {
+            params.InUIColorAlpha = &TemporalUpscaler::get()->extractedUIBufferDesc[nEye];
             params.IsHudlessColor = false;
         } else {
             params.InUIColorAlpha = NULL;
@@ -1172,9 +1179,9 @@ std::optional<std::string> D3D12Component::OpenXR::create_swapchains() {
                 return "Failed to wait for swapchain image.";
             }
 
-            ctx.texture_contexts[real_index] = std::make_unique<d3d12::TextureContext>();
-            ctx.texture_contexts[real_index]->setup(device, ctx.textures[real_index].texture, swapchain_format, swapchain_format,
-                (std::wstring{L"OpenXR Swapchain "} + std::to_wstring(i) + L" " + std::to_wstring(real_index)).c_str());
+            ctx.texture_contexts[j] = std::make_unique<d3d12::TextureContext>();
+            ctx.texture_contexts[j]->setup(device, ctx.textures[j].texture, swapchain_format, swapchain_format,
+                (std::wstring{L"OpenXR Swapchain "} + std::to_wstring(i) + L" " + std::to_wstring(j)).c_str());
 
             XrSwapchainImageReleaseInfo release_info{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
             result = xrReleaseSwapchainImage(swapchain.handle, &release_info);
@@ -1244,10 +1251,10 @@ std::optional<std::string> D3D12Component::OpenXR::create_swapchains() {
                             XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
                             xrWaitSwapchainImage(sc.handle, &wi);
 
-                            cctx.texture_contexts[real_index] = std::make_unique<d3d12::TextureContext>();
-                            cctx.texture_contexts[real_index]->setup(device, cctx.textures[real_index].texture,
+                            cctx.texture_contexts[j] = std::make_unique<d3d12::TextureContext>();
+                            cctx.texture_contexts[j]->setup(device, cctx.textures[j].texture,
                                 swapchain_format, swapchain_format,
-                                (std::wstring{L"OpenXR Flatscreen "} + std::to_wstring(real_index)).c_str());
+                                (std::wstring{L"OpenXR Flatscreen "} + std::to_wstring(j)).c_str());
 
                             XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
                             xrReleaseSwapchainImage(sc.handle, &ri);
@@ -1321,10 +1328,10 @@ std::optional<std::string> D3D12Component::OpenXR::create_swapchains() {
                             XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
                             xrWaitSwapchainImage(sc.handle, &wi);
 
-                            uctx.texture_contexts[real_index] = std::make_unique<d3d12::TextureContext>();
-                            uctx.texture_contexts[real_index]->setup(device, uctx.textures[real_index].texture,
+                            uctx.texture_contexts[j] = std::make_unique<d3d12::TextureContext>();
+                            uctx.texture_contexts[j]->setup(device, uctx.textures[j].texture,
                                 swapchain_format, swapchain_format,
-                                (std::wstring{L"OpenXR UI Slate "} + std::to_wstring(real_index)).c_str());
+                                (std::wstring{L"OpenXR UI Slate "} + std::to_wstring(j)).c_str());
 
                             XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
                             xrReleaseSwapchainImage(sc.handle, &ri);

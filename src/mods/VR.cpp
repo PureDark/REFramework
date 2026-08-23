@@ -469,7 +469,8 @@ void VR::inputsystem_update_hook(void* ctx, REManagedObject* input_system) {
 
 bool VR::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_ctx) {
 
-    uiBufferTex = layer->get_ui_buffer_tex_d3d12();
+    auto eye_index = m_frame_count % 2;
+    m_eye_states[eye_index].uiBufferTex = layer->get_ui_buffer_tex_d3d12();
 
     // just don't render anything at all.
     // overlays just seem to break stuff in VR.
@@ -488,6 +489,41 @@ bool VR::on_pre_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* r
 #endif
 
     return false;
+}
+
+void VR::on_overlay_layer_draw(sdk::renderer::layer::Overlay* layer, void* render_context) {
+    if (!is_hmd_active() || is_vr_suspended()) {
+        return;
+    }
+
+    auto context = (sdk::renderer::RenderContext*)render_context;
+    auto scene_layer = (sdk::renderer::layer::Scene*)layer->get_parent();
+
+    if (scene_layer == nullptr) {
+        return;
+    }
+
+    auto eye_index = m_frame_count % 2;
+
+    auto& state = m_eye_states[eye_index];
+
+    auto depth = scene_layer->get_depth_stencil();
+
+    if (depth != nullptr && state.depth_copy != nullptr) {
+        context->copy_texture(state.depth_copy, depth);
+    }
+
+    auto motion_vectors_state = scene_layer->get_motion_vectors_state();
+
+    if (motion_vectors_state != nullptr && state.motion_vectors_copy != nullptr) {
+        auto rtv = motion_vectors_state->get_rtv(0);
+
+        if (rtv != nullptr) {
+            if (auto motion_vectors = rtv->get_texture_d3d12(); motion_vectors != nullptr) {
+                context->copy_texture(state.motion_vectors_copy, motion_vectors);
+            }
+        }
+    }
 }
 
 bool VR::on_pre_overlay_layer_update(sdk::renderer::layer::Overlay* layer, void* render_ctx) {
@@ -3899,17 +3935,58 @@ void VR::on_pre_end_rendering(void* entry) {
         }
     }
 
+    const auto is_vr_multipass = is_hmd_active() && is_using_multipass();
     auto root_layer = sdk::renderer::get_root_layer();
-    if (root_layer != nullptr && m_frame_count > 600) {
+
+    auto eye_index = m_frame_count % 2;
+    auto& state = m_eye_states[eye_index];
+    if (root_layer != nullptr && !is_vr_multipass && m_is_d3d12) {
         auto [output_parent, output_layer] = root_layer->find_layer_recursive("via.render.layer.Output");
         auto valid_scene_layers = (*output_layer)->find_fully_rendered_scene_layers();
         if (valid_scene_layers.empty()) {
+            state.depth.Reset();
+            state.motion_vectors.Reset();
+            state.uiBufferTex.Reset();
             return;
         }
-        if (valid_scene_layers.size() > 0) {
-            depthTex = valid_scene_layers[0]->get_depth_stencil_d3d12();
-            motionVectorsTex = valid_scene_layers[0]->get_motion_vectors_d3d12();
-        } 
+
+        auto new_depth = valid_scene_layers[0]->get_depth_stencil_d3d12();
+        auto new_motion_vectors = valid_scene_layers[0]->get_motion_vectors_d3d12();
+
+        if (new_depth != nullptr && (state.depth_copy == nullptr || new_depth != state.depth.Get())) {
+            if(state.depth_copy != nullptr)
+                state.depth_copy.reset();
+            state.depth_copy = valid_scene_layers[0]->get_depth_stencil()->clone();
+            state.depth = new_depth;
+
+            spdlog::info("[VR] Made clone of depth stencil @ {:x}", (uintptr_t)state.depth_copy.get());
+        }
+
+        if (new_motion_vectors != nullptr && (state.motion_vectors_copy == nullptr || new_motion_vectors != state.motion_vectors.Get())) {
+            const auto motion_vectors_state = valid_scene_layers[0]->get_motion_vectors_state();
+
+            if (motion_vectors_state != nullptr) {
+                const auto rtv = motion_vectors_state->get_rtv(0);
+
+                if (rtv != nullptr) {
+                    auto tex = rtv->get_texture_d3d12();
+
+                    if (tex != nullptr) {
+                        if (state.motion_vectors_copy != nullptr)
+                            state.motion_vectors_copy.reset();
+                        state.motion_vectors_copy = tex->clone();
+                        state.motion_vectors = new_motion_vectors;
+
+                        spdlog::info("[VR] Made clone of motion vectors @ {:x}", (uintptr_t)state.motion_vectors_copy.get());
+                    }
+                }
+            }
+        }
+    }
+    else {
+        state.depth.Reset();
+        state.motion_vectors.Reset();
+        state.uiBufferTex.Reset();
     }
 }
 
@@ -4654,16 +4731,24 @@ void VR::openvr_input_to_re_engine() {
 // The framewarp options live here too: the VR tree itself is hidden by the mod filter in Mods.cpp,
 // so this is the only place they can still be reached.
 void VR::draw_rendering_technique_ui() {
-    m_rendering_technique->draw("Rendering Technique");
+    if (m_rendering_technique->draw("Rendering Technique")) {
+        if (is_using_afw()) {
+            get_runtime()->custom_stage = VRRuntime::SynchronizeStage::VERY_LATE;
+        }
+    }
 
     if (m_rendering_technique->value() == ALTERNATE_FRAME_WARPING) {
-        // [UI_AUSBLENDEN 2026-08-18] Unter "Alternate Frame Warping" wird gar nichts
-        // mehr gezeichnet. Die Werte bleiben vollstaendig erhalten und wirken weiter:
-        // ClearBeforeFramewarp=false, FramewarpDebug=false, EnableUIFix=true,
-        // IgnoreMotionThreshold (Default 2.5, aus der Config uebernommen) und
-        // Framewarp Mode = CombinedWarping. ModValues werden unabhaengig vom Zeichnen
-        // aus re2_fw_config.txt geladen und dorthin gespeichert, wer sie aendern will,
-        // schreibt sie dort von Hand. Numpad 9 toggelt EnableUIFix weiterhin (VR.cpp:2932).
+        m_show_advanced_options->draw("Show Advanced Options");
+        if (m_show_advanced_options->value()) {
+            ImGui::Separator();
+            ImGui::Combo("Sync Mode", (int*)&get_runtime()->custom_stage, "Early\0Late\0Very Late\0");
+            ImGui::Spacing();
+            m_clear_before_framewarp->draw("Clear Before Framewarp");
+            m_framewarp_debug->draw("Debug Framewarp");
+            m_enable_ui_fix->draw("Enable Framewarp UI Fix");
+            m_ignore_motion_threshold->draw("Ignore Motion Threshold");
+            m_framewarp_mode->draw("Framewarp Mode");
+        }
     }
 }
 
@@ -5007,6 +5092,10 @@ void VR::on_config_load(const utility::Config& cfg) {
 
         m_openxr->resolution_scale = m_resolution_scale->value();
         initialize_openxr_swapchains();
+    }
+
+    if (is_using_afw()) {
+        get_runtime()->custom_stage = VRRuntime::SynchronizeStage::VERY_LATE;
     }
 
     if (m_motion_controls_inactivity_timer->value() <= 10.0f) {
