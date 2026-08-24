@@ -785,29 +785,29 @@ void ScriptState::on_application_entry(const char* name, size_t hash) {
         // Sometimes this gets re-enabled? Not sure why.
         lua_gc(m_lua, LUA_GCSTOP);
 
-        //switch (m_gc_data.gc_type) {
-        //    case ScriptState::GarbageCollectionType::FULL:
-        //        lua_gc(m_lua, LUA_GCCOLLECT);
-        //        break;
-        //    case ScriptState::GarbageCollectionType::STEP: 
-        //        {
-        //            const auto now = std::chrono::high_resolution_clock::now();
+        switch (m_gc_data.gc_type) {
+            case ScriptState::GarbageCollectionType::FULL:
+                lua_gc(m_lua, LUA_GCCOLLECT);
+                break;
+            case ScriptState::GarbageCollectionType::STEP: 
+                {
+                    const auto now = std::chrono::high_resolution_clock::now();
 
-        //            if (m_gc_data.gc_mode == ScriptState::GarbageCollectionMode::GENERATIONAL) {
-        //                lua_gc(m_lua, LUA_GCSTEP, 1);
-        //            } else {
-        //                while (lua_gc(m_lua, LUA_GCSTEP, 1) == 0) {
-        //                    if (std::chrono::high_resolution_clock::now() - now >= m_gc_data.gc_budget) {
-        //                        break;
-        //                    }
-        //                }
-        //            }
-        //        }
-        //        break;
-        //    default:
-        //        lua_gc(m_lua, LUA_GCCOLLECT);
-        //        break;
-        //};
+                    if (m_gc_data.gc_mode == ScriptState::GarbageCollectionMode::GENERATIONAL) {
+                        lua_gc(m_lua, LUA_GCSTEP, 1);
+                    } else {
+                        while (lua_gc(m_lua, LUA_GCSTEP, 1) == 0) {
+                            if (std::chrono::high_resolution_clock::now() - now >= m_gc_data.gc_budget) {
+                                break;
+                            }
+                        }
+                    }
+                }
+                break;
+            default:
+                lua_gc(m_lua, LUA_GCCOLLECT);
+                break;
+        };
     }
 }
 
