@@ -138,8 +138,8 @@ public:
     void on_frame();
     void on_draw_ui();
     void on_update_transform(RETransform* transform);
-    void on_pre_application_entry(size_t hash);
-    void on_application_entry(size_t hash);
+    void on_pre_application_entry(const char* name, size_t hash);
+    void on_application_entry(const char* name, size_t hash);
     bool on_pre_gui_draw_element(REComponent* gui_element, void* primitive_context);
     void on_gui_draw_element(REComponent* gui_element, void* primitive_context);
     void on_script_reset();
@@ -277,18 +277,23 @@ private:
     bool m_is_main_state;
     std::recursive_mutex m_execution_mutex{};
 
+    struct ScriptCallback {
+        std::string source; // 哪个 lua 文件注册的
+        sol::protected_function fn;
+    };
+
     // FNV-1A
-    std::unordered_multimap<size_t, sol::protected_function> m_pre_application_entry_fns{};
-    std::unordered_multimap<size_t, sol::protected_function> m_application_entry_fns{};
+    std::unordered_multimap<size_t, ScriptCallback> m_pre_application_entry_fns{};
+    std::unordered_multimap<size_t, ScriptCallback> m_application_entry_fns{};
 
     std::unordered_map<RETransform*, sol::protected_function> m_on_update_transform_fns{};
 
-    std::vector<sol::protected_function> m_pre_gui_draw_element_fns{};
-    std::vector<sol::protected_function> m_gui_draw_element_fns{};
-    std::vector<sol::protected_function> m_on_draw_ui_fns{};
-    std::vector<sol::protected_function> m_on_frame_fns{};
-    std::vector<sol::protected_function> m_on_script_reset_fns{};
-    std::vector<sol::protected_function> m_on_config_save_fns{};
+    std::vector<ScriptCallback> m_pre_gui_draw_element_fns{};
+    std::vector<ScriptCallback> m_gui_draw_element_fns{};
+    std::vector<ScriptCallback> m_on_draw_ui_fns{};
+    std::vector<ScriptCallback> m_on_frame_fns{};
+    std::vector<ScriptCallback> m_on_script_reset_fns{};
+    std::vector<ScriptCallback> m_on_config_save_fns{};
 
     struct HookDef {
         ::REManagedObject* obj{nullptr};

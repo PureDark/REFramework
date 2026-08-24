@@ -28,6 +28,191 @@
 
 #include <lstate.h> // weird include order because of sol
 #include <lgc.h>
+#include "VR.hpp"
+
+namespace {
+struct ProfileData {
+    std::deque<double> samples_ms;
+    double window_sum_ms{0.0};
+    double total_time_ms{0.0};
+    uint64_t runs{0};
+    std::chrono::steady_clock::time_point last_log_time{std::chrono::steady_clock::now()};
+};
+// key = "lua_file:调用名"，如 "mod_ai.lua:on_pre_application_entry:UpdateScene"
+std::unordered_map<std::string, ProfileData> s_script_profiles;
+std::mutex s_script_profiles_mutex;
+constexpr size_t PROFILE_MAX_SAMPLES = 100;
+constexpr auto PROFILE_LOG_INTERVAL = std::chrono::seconds(30);
+
+// ---------- 帧级 profiling ----------
+struct FrameSpikeInfo {
+    uint64_t frame;
+    double frame_ms;
+    double avg_ms;
+    size_t sample_count;
+    std::unordered_map<std::string, double> per_file_ms; // 该帧各 lua 文件总耗时
+    std::unordered_map<std::string, double> per_call_ms; // 该帧各 "文件:调用" 耗时
+};
+
+struct FrameProfileState {
+    uint64_t current_frame{0};
+    double current_frame_ms{0.0};
+    bool initialized{false};
+    std::unordered_map<std::string, double> per_file_ms; // 当前帧按 lua 文件累加
+    std::unordered_map<std::string, double> per_call_ms; // 当前帧按 "文件:调用" 累加
+    std::deque<double> samples_ms;
+    double window_sum_ms{0.0};
+    static constexpr size_t MAX_SAMPLES = 300;
+    static constexpr size_t SPIKE_MIN_SAMPLES = 30;
+    static constexpr double SPIKE_ABSOLUTE_MS = 3.0;
+    static constexpr double SPIKE_RELATIVE_FACTOR = 2.0;
+};
+FrameProfileState s_frame_profile;
+
+std::optional<FrameSpikeInfo> check_frame_switch_locked(uint64_t frame_index) {
+    std::optional<FrameSpikeInfo> spike_log;
+    if (!s_frame_profile.initialized) {
+        s_frame_profile.initialized = true;
+        s_frame_profile.current_frame = frame_index;
+        s_frame_profile.current_frame_ms = 0.0;
+        return spike_log;
+    }
+    if (frame_index == s_frame_profile.current_frame) {
+        return spike_log;
+    }
+    // ---- 结算上一帧 ----
+    const double frame_ms = s_frame_profile.current_frame_ms;
+    double avg_ms = 0.0;
+    if (!s_frame_profile.samples_ms.empty()) {
+        avg_ms = s_frame_profile.window_sum_ms / static_cast<double>(s_frame_profile.samples_ms.size());
+    }
+    const bool is_spike = s_frame_profile.samples_ms.size() >= FrameProfileState::SPIKE_MIN_SAMPLES &&
+                          frame_ms > FrameProfileState::SPIKE_ABSOLUTE_MS && frame_ms > avg_ms * FrameProfileState::SPIKE_RELATIVE_FACTOR;
+    if (is_spike) {
+        FrameSpikeInfo info;
+        info.frame = s_frame_profile.current_frame;
+        info.frame_ms = frame_ms;
+        info.avg_ms = avg_ms;
+        info.sample_count = s_frame_profile.samples_ms.size();
+        info.per_file_ms = s_frame_profile.per_file_ms; // 拷贝
+        info.per_call_ms = s_frame_profile.per_call_ms; // 拷贝
+        spike_log = std::move(info);
+    }
+    // 更新滑动窗口
+    s_frame_profile.samples_ms.push_back(frame_ms);
+    s_frame_profile.window_sum_ms += frame_ms;
+    if (s_frame_profile.samples_ms.size() > FrameProfileState::MAX_SAMPLES) {
+        s_frame_profile.window_sum_ms -= s_frame_profile.samples_ms.front();
+        s_frame_profile.samples_ms.pop_front();
+    }
+    // ---- 开始新帧：全部清零 ----
+    s_frame_profile.current_frame = frame_index;
+    s_frame_profile.current_frame_ms = 0.0;
+    s_frame_profile.per_file_ms.clear();
+    s_frame_profile.per_call_ms.clear();
+    return spike_log;
+}
+
+// 锁内调用：同时累加到帧总额、文件级、调用级
+void add_frame_time_locked(const std::string& lua_file, const std::string& call_name, double ms) {
+    s_frame_profile.current_frame_ms += ms;
+    s_frame_profile.per_file_ms[lua_file] += ms;
+    s_frame_profile.per_call_ms[lua_file + ":" + call_name] += ms;
+}
+
+// ---------- ScriptProfileGuard ----------
+struct ScriptProfileGuard {
+    std::string lua_file;  // 来源 lua 文件
+    std::string call_name; // 调用名（如 on_frame / on_pre_application_entry:UpdateScene）
+    std::string full_key;  // lua_file:call_name，ProfileData 的 key
+    std::chrono::steady_clock::time_point start;
+
+    ScriptProfileGuard(const std::string& file, const std::string& call, uint64_t frame_index)
+        : lua_file(file)
+        , call_name(call)
+        , full_key(file + ":" + call)
+        , start() {
+        std::optional<FrameSpikeInfo> spike_log;
+        {
+            std::lock_guard lock(s_script_profiles_mutex);
+            spike_log = check_frame_switch_locked(frame_index);
+        }
+        if (spike_log.has_value()) {
+            auto& info = *spike_log;
+            spdlog::warn("[FrameProfile] SPIKE frame#{}: script total {:.3f} ms "
+                         "(avg{}: {:.3f} ms, ratio: {:.1f}x)",
+                info.frame, info.frame_ms, info.sample_count, info.avg_ms, info.avg_ms > 0.0 ? info.frame_ms / info.avg_ms : 0.0);
+
+            // 按文件总耗时降序
+            std::vector<std::pair<std::string, double>> files(info.per_file_ms.begin(), info.per_file_ms.end());
+            std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+
+            for (auto&& [file, file_ms] : files) {
+                if (file_ms <= 0.01)
+                    continue;
+                spdlog::warn("[FrameProfile]   [{}] {:.3f} ms ({:.1f}%)", file, file_ms,
+                    info.frame_ms > 0.0 ? file_ms / info.frame_ms * 100.0 : 0.0);
+
+                // 展开该文件下的各调用，按耗时降序
+                const std::string prefix = file + ":";
+                std::vector<std::pair<std::string, double>> calls;
+                for (auto&& [key, cms] : info.per_call_ms) {
+                    if (key.size() > prefix.size() && key.compare(0, prefix.size(), prefix) == 0) {
+                        calls.emplace_back(key.substr(prefix.size()), cms);
+                    }
+                }
+                std::sort(calls.begin(), calls.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+                for (auto&& [cname, cms] : calls) {
+                    if (cms <= 0.01)
+                        continue;
+                    spdlog::warn("[FrameProfile]     {}: {:.3f} ms", cname, cms);
+                }
+            }
+        }
+        start = std::chrono::steady_clock::now();
+    }
+
+    ~ScriptProfileGuard() {
+        try {
+            const auto end = std::chrono::steady_clock::now();
+            const double ms = std::chrono::duration<double, std::milli>(end - start).count();
+            std::optional<std::tuple<std::string, double, double, size_t, uint64_t>> log_params;
+            {
+                std::lock_guard lock(s_script_profiles_mutex);
+                auto& pd = s_script_profiles[full_key];
+                pd.samples_ms.push_back(ms);
+                pd.window_sum_ms += ms;
+                if (pd.samples_ms.size() > PROFILE_MAX_SAMPLES) {
+                    pd.window_sum_ms -= pd.samples_ms.front();
+                    pd.samples_ms.pop_front();
+                }
+                pd.total_time_ms += ms;
+                pd.runs += 1;
+                // 帧级：同时写入文件级和调用级
+                add_frame_time_locked(lua_file, call_name, ms);
+
+                double avg_ms = 0.0;
+                if (!pd.samples_ms.empty()) {
+                    avg_ms = pd.window_sum_ms / static_cast<double>(pd.samples_ms.size());
+                }
+                const auto now = std::chrono::steady_clock::now();
+                if (now - pd.last_log_time >= PROFILE_LOG_INTERVAL) {
+                    log_params.emplace(full_key, ms, avg_ms, pd.samples_ms.size(), pd.runs);
+                    pd.last_log_time = now;
+                }
+            }
+            if (log_params.has_value()) {
+                auto&& [log_name, last_ms, avg, sample_cnt, run_cnt] = log_params.value();
+                if (avg > 0.01)
+                    spdlog::info(
+                        "[ScriptProfile] '{}' last: {:.3f} ms, avg({}): {:.3f} ms, runs: {}", log_name, last_ms, sample_cnt, avg, run_cnt);
+            }
+        } catch (...) {
+        }
+    }
+};
+} // namespace
+
 
 namespace api::re {
 void msg(const char* text) {
@@ -116,6 +301,26 @@ std::string get_build_time() {
 }
 }
 
+static std::string extract_filename(const std::string& path) {
+    const size_t pos = path.find_last_of("/\\");
+    return (pos != std::string::npos) ? path.substr(pos + 1) : path;
+}
+// 在被 Lua 调用的 C 函数内部调用，返回调用者的源文件名
+static std::string get_caller_lua_source(lua_State* L) {
+    lua_Debug ar;
+    // 从层级1开始向上找第一个 Lua 函数（跳过可能的 sol2 C 包装层）
+    for (int level = 1; level <= 3; ++level) {
+        if (!lua_getstack(L, level, &ar))
+            continue;
+        lua_getinfo(L, "S", &ar);
+        // '@' 前缀 = 文件加载（main chunk 和文件内 Lua 函数都适用）
+        if (ar.source && ar.source[0] == '@') {
+            return extract_filename(ar.source + 1);
+        }
+    }
+    return "unknown";
+}
+
 ScriptState::ScriptState(const ScriptState::GarbageCollectionData& gc_data,bool is_main_state) {
     std::scoped_lock _{ m_execution_mutex };
     m_is_main_state = is_main_state;
@@ -145,14 +350,33 @@ ScriptState::ScriptState(const ScriptState::GarbageCollectionData& gc_data,bool 
 
     auto re = m_lua.create_table();
     re["msg"] = api::re::msg;
-    re["on_pre_application_entry"] = [this](const char* name, sol::function fn) { m_pre_application_entry_fns.emplace(utility::hash(name), fn); };
-    re["on_application_entry"] = [this](const char* name, sol::function fn) { m_application_entry_fns.emplace(utility::hash(name), fn); };
-    re["on_pre_gui_draw_element"] = [this](sol::function fn) { m_pre_gui_draw_element_fns.emplace_back(fn); };
-    re["on_gui_draw_element"] = [this](sol::function fn) { m_gui_draw_element_fns.emplace_back(fn); };
-    re["on_draw_ui"] = [this](sol::function fn) { m_on_draw_ui_fns.emplace_back(fn); };
-    re["on_frame"] = [this](sol::function fn) { m_on_frame_fns.emplace_back(fn); };
-    re["on_script_reset"] = [this](sol::function fn) { m_on_script_reset_fns.emplace_back(fn); };
-    re["on_config_save"] = [this](sol::function fn) { m_on_config_save_fns.emplace_back(fn); };
+
+    re["on_pre_application_entry"] = [this](const char* name, sol::function fn) {
+        std::string src = get_caller_lua_source(m_lua.lua_state());
+        m_pre_application_entry_fns.emplace(utility::hash(name), ScriptCallback{get_caller_lua_source(m_lua.lua_state()), std::move(fn)});
+    };
+    re["on_application_entry"] = [this](const char* name, sol::function fn) {
+        std::string src = get_caller_lua_source(m_lua.lua_state());
+        m_application_entry_fns.emplace(utility::hash(name), ScriptCallback{get_caller_lua_source(m_lua.lua_state()), std::move(fn)}); 
+    };
+    re["on_pre_gui_draw_element"] = [this](sol::function fn) {
+        m_pre_gui_draw_element_fns.push_back({get_caller_lua_source(m_lua.lua_state()), std::move(fn)});
+    };
+    re["on_gui_draw_element"] = [this](sol::function fn) {
+        m_gui_draw_element_fns.push_back({get_caller_lua_source(m_lua.lua_state()), std::move(fn)});
+    };
+    re["on_draw_ui"] = [this](sol::function fn) { 
+        m_on_draw_ui_fns.push_back({get_caller_lua_source(m_lua.lua_state()), std::move(fn)}); 
+    };
+    re["on_frame"] = [this](sol::function fn) { 
+        m_on_frame_fns.push_back({get_caller_lua_source(m_lua.lua_state()), std::move(fn)});
+    };
+    re["on_script_reset"] = [this](sol::function fn) {
+        m_on_script_reset_fns.push_back({get_caller_lua_source(m_lua.lua_state()), std::move(fn)});
+    };
+    re["on_config_save"] = [this](sol::function fn) {
+        m_on_config_save_fns.push_back({get_caller_lua_source(m_lua.lua_state()), std::move(fn)});
+    };
     m_lua["re"] = re;
 
     auto thread = m_lua.create_table();
@@ -462,9 +686,10 @@ sol::protected_function_result ScriptState::handle_protected_result(sol::protect
 void ScriptState::on_frame() {
     try {
         std::scoped_lock _{ m_execution_mutex };
-
-        for (auto& fn : m_on_frame_fns) {
-            handle_protected_result(fn());
+        auto frame_index = VR::get()->get_frame_count();
+        for (auto& cb : m_on_frame_fns) {
+            ScriptProfileGuard guard(cb.source, "on_frame", frame_index);
+            handle_protected_result(cb.fn());
         }
     } catch (const std::exception& e) {
         ScriptRunner::get()->spew_error(e.what());
@@ -480,8 +705,8 @@ void ScriptState::on_draw_ui() {
     try {
         std::scoped_lock _{ m_execution_mutex };
 
-        for (auto& fn : m_on_draw_ui_fns) {
-            handle_protected_result(fn());
+        for (auto& cb : m_on_draw_ui_fns) {
+            handle_protected_result(cb.fn());
         }
     } catch (const std::exception& e) {
         ScriptRunner::get()->spew_error(e.what());
@@ -509,7 +734,7 @@ void ScriptState::on_update_transform(RETransform* transform) {
     }
 }
 
-void ScriptState::on_pre_application_entry(size_t hash) {
+void ScriptState::on_pre_application_entry(const char* name, size_t hash) {
     try {
         if (m_pre_application_entry_fns.empty()) {
             return;
@@ -520,8 +745,10 @@ void ScriptState::on_pre_application_entry(size_t hash) {
         if (range.first != range.second) {
             std::scoped_lock _{ m_execution_mutex };
 
+            auto frame_index = VR::get()->get_frame_count();
             for (auto it = range.first; it != range.second; ++it) {
-                handle_protected_result(it->second());
+                ScriptProfileGuard guard(it->second.source, std::string("on_pre_application_entry:") + name, frame_index);
+                handle_protected_result(it->second.fn());
             }
         }
     } catch (const std::exception& e) {
@@ -531,7 +758,7 @@ void ScriptState::on_pre_application_entry(size_t hash) {
     }
 }
 
-void ScriptState::on_application_entry(size_t hash) {
+void ScriptState::on_application_entry(const char* name, size_t hash) {
     try {
         if (!m_application_entry_fns.empty()) {
             auto range = m_application_entry_fns.equal_range(hash);
@@ -539,8 +766,10 @@ void ScriptState::on_application_entry(size_t hash) {
             if (range.first != range.second) {
                 std::scoped_lock _{ m_execution_mutex };
 
+                auto frame_index = VR::get()->get_frame_count();
                 for (auto it = range.first; it != range.second; ++it) {
-                    handle_protected_result(it->second());
+                    ScriptProfileGuard guard(it->second.source, std::string("on_application_entry:") + name, frame_index);
+                    handle_protected_result(it->second.fn());
                 }
             }
         }
@@ -556,29 +785,29 @@ void ScriptState::on_application_entry(size_t hash) {
         // Sometimes this gets re-enabled? Not sure why.
         lua_gc(m_lua, LUA_GCSTOP);
 
-        switch (m_gc_data.gc_type) {
-            case ScriptState::GarbageCollectionType::FULL:
-                lua_gc(m_lua, LUA_GCCOLLECT);
-                break;
-            case ScriptState::GarbageCollectionType::STEP: 
-                {
-                    const auto now = std::chrono::high_resolution_clock::now();
+        //switch (m_gc_data.gc_type) {
+        //    case ScriptState::GarbageCollectionType::FULL:
+        //        lua_gc(m_lua, LUA_GCCOLLECT);
+        //        break;
+        //    case ScriptState::GarbageCollectionType::STEP: 
+        //        {
+        //            const auto now = std::chrono::high_resolution_clock::now();
 
-                    if (m_gc_data.gc_mode == ScriptState::GarbageCollectionMode::GENERATIONAL) {
-                        lua_gc(m_lua, LUA_GCSTEP, 1);
-                    } else {
-                        while (lua_gc(m_lua, LUA_GCSTEP, 1) == 0) {
-                            if (std::chrono::high_resolution_clock::now() - now >= m_gc_data.gc_budget) {
-                                break;
-                            }
-                        }
-                    }
-                }
-                break;
-            default:
-                lua_gc(m_lua, LUA_GCCOLLECT);
-                break;
-        };
+        //            if (m_gc_data.gc_mode == ScriptState::GarbageCollectionMode::GENERATIONAL) {
+        //                lua_gc(m_lua, LUA_GCSTEP, 1);
+        //            } else {
+        //                while (lua_gc(m_lua, LUA_GCSTEP, 1) == 0) {
+        //                    if (std::chrono::high_resolution_clock::now() - now >= m_gc_data.gc_budget) {
+        //                        break;
+        //                    }
+        //                }
+        //            }
+        //        }
+        //        break;
+        //    default:
+        //        lua_gc(m_lua, LUA_GCCOLLECT);
+        //        break;
+        //};
     }
 }
 
@@ -588,8 +817,8 @@ bool ScriptState::on_pre_gui_draw_element(REComponent* gui_element, void* contex
     try {
         std::scoped_lock _{ m_execution_mutex };
 
-        for (auto& fn : m_pre_gui_draw_element_fns) {
-            if (sol::object result = handle_protected_result(fn(gui_element, context)); !result.is<sol::nil_t>() && result.is<bool>() && result.as<bool>() == false) {
+        for (auto& cb : m_pre_gui_draw_element_fns) {
+            if (sol::object result = handle_protected_result(cb.fn(gui_element, context)); !result.is<sol::nil_t>() && result.is<bool>() && result.as<bool>() == false) {
                 any_false = true;
             }
         }
@@ -606,8 +835,8 @@ void ScriptState::on_gui_draw_element(REComponent* gui_element, void* context) {
     try {
         std::scoped_lock _{ m_execution_mutex };
 
-        for (auto& fn : m_gui_draw_element_fns) {
-            handle_protected_result(fn(gui_element, context));
+        for (auto& cb : m_gui_draw_element_fns) {
+            handle_protected_result(cb.fn(gui_element, context));
         }
     } catch (const std::exception& e) {
         ScriptRunner::get()->spew_error(e.what());
@@ -620,12 +849,12 @@ void ScriptState::on_script_reset() try {
     std::scoped_lock _{ m_execution_mutex };
 
     // We first call on_config_save functions so scripts can save prior to reset.
-    for (auto& fn : m_on_config_save_fns) {
-        handle_protected_result(fn());
+    for (auto& cb : m_on_config_save_fns) {
+        handle_protected_result(cb.fn());
     }
 
-    for (auto& fn : m_on_script_reset_fns) {
-        handle_protected_result(fn());
+    for (auto& cb : m_on_script_reset_fns) {
+        handle_protected_result(cb.fn());
     }
 } catch (const std::exception& e) {
     ScriptRunner::get()->spew_error(e.what());
@@ -636,8 +865,8 @@ void ScriptState::on_script_reset() try {
 void ScriptState::on_config_save() try {
     std::scoped_lock _{ m_execution_mutex };
 
-    for (auto& fn : m_on_config_save_fns) {
-        handle_protected_result(fn());
+    for (auto& cb : m_on_config_save_fns) {
+        handle_protected_result(cb.fn());
     }
 }
 catch (const std::exception& e) {
@@ -960,6 +1189,7 @@ void ScriptRunner::hook_battle_rule() {
 }
 
 void ScriptRunner::on_frame() {
+    //ScriptProfileGuard _profile(std::string("on_frame"), VR::get()->get_frame_count());
     if (!m_scene_okay) try {
         if (!m_checked_scene_once) {
             m_checked_scene_once = true;
@@ -1095,7 +1325,7 @@ void ScriptRunner::on_draw_ui() {
             reset_scripts();
         }
 
-#if 0
+#if 1
         ImGui::SameLine();
 
         if (ImGui::Button("Spawn Debug Console")) {
@@ -1233,6 +1463,8 @@ void ScriptRunner::on_update_transform(RETransform* transform) {
 }
 
 void ScriptRunner::on_pre_application_entry(void* entry, const char* name, size_t hash) {
+    //ScriptProfileGuard _profile(std::string("on_pre_application_entry:") + name, VR::get()->get_frame_count());
+
     std::scoped_lock _{ m_access_mutex };
 
     if (m_states.empty()) {
@@ -1244,11 +1476,12 @@ void ScriptRunner::on_pre_application_entry(void* entry, const char* name, size_
     }
 
     for (auto& state : m_states) {
-        state->on_pre_application_entry(hash);
+        state->on_pre_application_entry(name, hash);
     }
 }
 
 void ScriptRunner::on_application_entry(void* entry, const char* name, size_t hash) {
+    //ScriptProfileGuard _profile(std::string("on_application_entry:") + name, VR::get()->get_frame_count());
     std::scoped_lock _{ m_access_mutex };
 
     if (m_states.empty()) {
@@ -1260,7 +1493,7 @@ void ScriptRunner::on_application_entry(void* entry, const char* name, size_t ha
     }
 
     for (auto& state : m_states) {
-        state->on_application_entry(hash);
+        state->on_application_entry(name, hash);
     }
 }
 

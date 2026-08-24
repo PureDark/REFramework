@@ -206,6 +206,7 @@ void TemporalUpscaler::on_draw_ui() {
             if (m_sharpness->draw("Sharpness")) {
                 release_upscale_features();
                 init_upscale_features();
+                g_framework->request_save_config();
             }
 
             //ImGui::DragFloat("Sharpness Amount", &m_sharpness_amount, 0.01f, 0.0f, 5.0f);
@@ -244,6 +245,7 @@ void TemporalUpscaler::on_draw_ui() {
                 //std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 release_upscale_features();
                 init_upscale_features();
+                g_framework->request_save_config();
             }
 
             // Nur bei DLSS sichtbar -- FSR/XeSS kennen keine Presets.
@@ -251,6 +253,7 @@ void TemporalUpscaler::on_draw_ui() {
                 //std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 release_upscale_features();
                 init_upscale_features();
+                g_framework->request_save_config();
             }
 
             // "Use Native Res (DLAA)" ist bewusst weg -- DLAA ist bei uns der letzte Eintrag

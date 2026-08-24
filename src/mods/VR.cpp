@@ -4754,6 +4754,7 @@ void VR::draw_rendering_technique_ui() {
         if (is_using_afw()) {
             get_runtime()->custom_stage = VRRuntime::SynchronizeStage::VERY_LATE;
         }
+        g_framework->request_save_config();
     }
 
     if (m_rendering_technique->value() == ALTERNATE_FRAME_WARPING) {
