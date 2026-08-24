@@ -84,9 +84,7 @@ HRESULT WINAPI D3D12Hook::create_swapchain(IDXGIFactory4* factory, IUnknown* dev
         g_d3d12_hook->unhook(); // Removes all vtable hooks
     }
 
-    auto modified_desc = *desc;
-    modified_desc.Windowed = true;
-    const auto result = create_swap_chain_fn(factory, device, hwnd, &modified_desc, p_fullscreen_desc, p_restrict_to_output, swap_chain);
+    const auto result = create_swap_chain_fn(factory, device, hwnd, desc, p_fullscreen_desc, p_restrict_to_output, swap_chain);
 
     // rather than waiting on the hook monitor to notice the hook isn't working
     if (!hook_was_nullptr) {
@@ -705,6 +703,14 @@ HRESULT WINAPI D3D12Hook::set_fullscreen_state(IDXGISwapChain3* swap_chain, BOOL
     spdlog::info("D3D12 set fullscreen state called");
     spdlog::info(" Parameters: Fullscreen {}", Fullscreen);
 
+    static bool isWindowed = false;
+
+    if (!Fullscreen)
+        isWindowed = true;
+
+    if (isWindowed)
+        Fullscreen = false;
+
     auto d3d12 = g_d3d12_hook;
 
     HWND swapchain_wnd{nullptr};
@@ -712,7 +718,7 @@ HRESULT WINAPI D3D12Hook::set_fullscreen_state(IDXGISwapChain3* swap_chain, BOOL
 
     auto set_fullscreen_state_fn = d3d12->m_swapchain_hook->get_method<decltype(D3D12Hook::set_fullscreen_state)*>(10);
 
-    const auto result = set_fullscreen_state_fn(swap_chain, false, pTarget);
+    const auto result = set_fullscreen_state_fn(swap_chain, Fullscreen, pTarget);
 
     if (result != S_OK) {
         spdlog::error("Set Fullscreen State failed: {:x}", result);
