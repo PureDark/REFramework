@@ -127,7 +127,7 @@ public:
         PERFORMANCE,
         BALANCED,
         QUALITY,
-        DLAA
+        NATIVE
     };
 
 
@@ -144,7 +144,7 @@ private:
 
     // DLAA is the "native resolution" entry of the quality dropdown
     bool is_using_native_resolution() const {
-        return m_upscale_quality->value() == UpscaleQuality::DLAA;
+        return m_upscale_quality->value() == UpscaleQuality::NATIVE;
     }
 
     PDPerfQualityLevel get_pd_quality_level() const {
@@ -155,7 +155,7 @@ private:
             return PDPerfQualityLevel::Performance;
         case UpscaleQuality::QUALITY:
             return PDPerfQualityLevel::Quality;
-        case UpscaleQuality::DLAA: // renders at native res, the level itself doesn't matter
+        case UpscaleQuality::NATIVE: // renders at native res, the level itself doesn't matter
             return PDPerfQualityLevel::Native;
         default:
             return PDPerfQualityLevel::Quality;
@@ -304,8 +304,8 @@ private:
             "Performance",
             "Balanced",
             "Quality",
-            "DLAA"
-        }, (int32_t)UpscaleQuality::DLAA)
+            "Native"
+        }, (int32_t)UpscaleQuality::NATIVE)
     };
 
     // Bleibt (kein UI mehr dafuer): get_dlss_preset() reicht den Wert an den Upscaler durch.

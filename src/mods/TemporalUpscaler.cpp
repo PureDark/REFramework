@@ -309,23 +309,28 @@ void TemporalUpscaler::on_early_present() {
             return;
         }
 
-        static bool debug2 = true;
+        static bool debug = false;
         static bool btn5 = false;
         if (GetAsyncKeyState(VK_NUMPAD5) < 0 && btn5 == false) {
             btn5 = true;
         }
         if (GetAsyncKeyState(VK_NUMPAD5) == 0 && btn5 == true) {
             btn5 = false;
-            m_enable_ui_fix->toggle();
+            if (GetAsyncKeyState(VK_CONTROL) < 0) {
+                m_enable_ui_fix->toggle();
+            }
         }
-        //static bool btn4 = false;
-        //if (GetAsyncKeyState(VK_NUMPAD4) < 0 && btn4 == false) {
-        //    btn4 = true;
-        //}
-        //if (GetAsyncKeyState(VK_NUMPAD4) == 0 && btn4 == true) {
-        //    btn4 = false;
-        //    //debug2 = !debug2;
-        //}
+        static bool btn4 = false;
+        if (GetAsyncKeyState(VK_NUMPAD4) < 0 && btn4 == false) {
+            btn4 = true;
+        }
+        if (GetAsyncKeyState(VK_NUMPAD4) == 0 && btn4 == true) {
+            btn4 = false;
+            if (GetAsyncKeyState(VK_CONTROL) < 0) {
+                debug = !debug;
+                SetDebug(debug);
+            }
+        }
         static TextureDesc hudlessDesc{};
         static TextureDesc finalColorDesc{};
         static TextureDesc backbufferDesc[3]{};
@@ -559,8 +564,7 @@ void TemporalUpscaler::on_early_present() {
         if (m_afw_backend_loaded && d3d12Renderer && cmdList) {
             if (m_enable_ui_fix->value() && !is_vr_multipass && extractedUIBufferDesc[eye_index].pTexture && finalColorDesc.pTexture) {
                 CD3DX12_VIEWPORT vp(backbufferDesc[backbuffer_index].pTexture);
-                auto blend = debug2 ? OneMinusSrcAlpha : NoBlend;
-                d3d12Renderer->Blit(cmdList, backbufferDesc[backbuffer_index], extractedUIBufferDesc[eye_index], vp, blend);
+                d3d12Renderer->Blit(cmdList, backbufferDesc[backbuffer_index], extractedUIBufferDesc[eye_index], vp, OneMinusSrcAlpha);
             }
             d3d12Renderer->EndCommandList(backbuffer_index);
         }

@@ -215,7 +215,11 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         s_CurrentEyeFrameBuffer.depth = depthDesc[nEye];
         s_CurrentEyeFrameBuffer.motionVectors = motionVectorsDesc[nEye];
 
-        auto cmdList = vr->d3d12Renderer->BeginCommandList(backbuffer_index);
+        //auto cmdList = vr->d3d12Renderer->BeginCommandList(backbuffer_index);
+        auto& commands = m_backbuffer_copy_commands[(backbuffer_index + 1 ) % m_backbuffer_copy_commands.size()];
+        auto cmdList = commands.cmd_list.Get();
+        commands.wait(INFINITE);
+        //vr->d3d12Renderer->Copy(cmdList, m_eyeFrameBuffers.eyeFrameBuffers[nEye].color, texDesc[texIndex]);
         params.InCmdList = cmdList;
         params.InEyeFrameBuffer = &s_CurrentEyeFrameBuffer;
         if (vr->m_enable_ui_fix->value() && state.uiBufferTex) {
@@ -242,7 +246,9 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         params.IgnoreMotionThreshold = vr->m_ignore_motion_threshold->value();
         params.Debug = vr->m_framewarp_debug->value();
         EvaluateFrameWarp(params);
-        vr->d3d12Renderer->EndCommandList(backbuffer_index);
+        commands.has_commands = true;
+        commands.execute();
+        //vr->d3d12Renderer->EndCommandList(backbuffer_index);
     }
     //#############################
     //#Frame Warp Module End
@@ -276,7 +282,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
         if (runtime->is_openxr() && vr->m_openxr->ready()) {
             // Quelle und Resource-State bleiben die des AFW-Forks; ergaenzt ist nur die
             // CopyFn, mit der ein Auge unter OpenXR schwarz bleibt (VR::get_blank_eye).
-            m_openxr.copy(0, m_openvr.get_left().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, xr_fn(0));
+            //m_openxr.copy(0, m_openvr.get_left().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, xr_fn(0));
+            m_openxr.copy(0, eye_texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, xr_fn(0));
             if (vr->is_using_afw()) {
                 m_openxr.copy(1, m_openvr.get_right().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, xr_fn(1));
             }
@@ -413,7 +420,8 @@ vr::EVRCompositorError D3D12Component::on_frame(VR* vr) {
                 vr->m_multipass.eye_textures[1].Reset();
             } else {
                 // wie oben: AFW-Quelle/State, plus die CopyFn fuer das geschwaerzte Auge
-                m_openxr.copy(1, m_openvr.get_right().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, xr_fn(1));
+                //m_openxr.copy(1, m_openvr.get_right().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, xr_fn(1));
+                m_openxr.copy(1, eye_texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, xr_fn(0));
                 if (vr->is_using_afw()) {
                     m_openxr.copy(0, m_openvr.get_left().texture.Get(), nullptr, D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE, xr_fn(0));
                 }
