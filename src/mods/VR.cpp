@@ -4752,7 +4752,7 @@ void VR::openvr_input_to_re_engine() {
 void VR::draw_rendering_technique_ui() {
     if (m_rendering_technique->draw("Rendering Technique")) {
         if (is_using_afw()) {
-            get_runtime()->custom_stage = VRRuntime::SynchronizeStage::VERY_LATE;
+            get_runtime()->custom_stage = VRRuntime::SynchronizeStage::LATE;
         }
         g_framework->request_save_config();
     }
@@ -5115,7 +5115,9 @@ void VR::on_config_load(const utility::Config& cfg) {
     }
 
     if (is_using_afw()) {
-        get_runtime()->custom_stage = VRRuntime::SynchronizeStage::VERY_LATE;
+        get_runtime()->custom_stage = VRRuntime::SynchronizeStage::LATE;
+    } else {
+        get_runtime()->custom_stage = VRRuntime::SynchronizeStage::EARLY;
     }
 
     if (m_motion_controls_inactivity_timer->value() <= 10.0f) {
