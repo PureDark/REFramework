@@ -9,6 +9,8 @@
 #include <sdk/SystemArray.hpp>
 #include <utility/String.hpp>
 
+#include "RE4VRKillswitch.hpp"
+
 namespace re4vr {
 namespace {
 ::REManagedObject* g_character_manager{nullptr};
@@ -207,6 +209,124 @@ void reset_pointer_cache() {
     g_character_manager = nullptr;
     g_camera_system = nullptr;
     g_pose_map = {};
+}
+
+bool call_killswitch_bool(const char* fn, bool default_v) {
+    auto ks = RE4VRKillswitch::get();
+    if (!ks || fn == nullptr) {
+        return default_v;
+    }
+    const std::string_view n{fn};
+    if (n == "is_active") {
+        return ks->is_active();
+    }
+    if (n == "is_pin_release") {
+        return ks->is_pin_release();
+    }
+    if (n == "is_ks2") {
+        return ks->is_ks2();
+    }
+    if (n == "is_ks3") {
+        return ks->is_ks3();
+    }
+    if (n == "is_ks4") {
+        return ks->is_ks4();
+    }
+    if (n == "is_ks5") {
+        return ks->is_ks5();
+    }
+    if (n == "is_fp_only") {
+        return ks->is_fp_only();
+    }
+    if (n == "just_activated") {
+        return ks->just_activated();
+    }
+    if (n == "just_deactivated") {
+        return ks->just_deactivated();
+    }
+    if (n == "is_cutscene_active") {
+        return ks->is_cutscene_active();
+    }
+    if (n == "is_real_cutscene") {
+        return ks->is_real_cutscene();
+    }
+    if (n == "is_crouch_active") {
+        return ks->is_crouch_active();
+    }
+    if (n == "is_player_camera_active") {
+        return ks->is_player_camera_active();
+    }
+    if (n == "is_pure_gameplay") {
+        return ks->is_pure_gameplay();
+    }
+    return default_v;
+}
+
+bool is_ks_active() {
+    if (lua_is_true("__re4_throwsight_active")) {
+        return true;
+    }
+    if (lua_is_true("__re4_ks_keep_movement")) {
+        return false;
+    }
+    return RE4VRKillswitch::get()->is_active();
+}
+
+std::optional<double> call_killswitch_number(const char* fn) {
+    auto ks = RE4VRKillswitch::get();
+    if (!ks || fn == nullptr) {
+        return std::nullopt;
+    }
+    const std::string_view n{fn};
+    if (n == "get_stage_name") {
+        if (auto v = ks->get_stage_name()) {
+            return (double)*v;
+        }
+        return std::nullopt;
+    }
+    if (n == "get_space_id") {
+        if (auto v = ks->get_space_id()) {
+            return (double)*v;
+        }
+        return std::nullopt;
+    }
+    if (n == "get_cam_state") {
+        if (auto v = ks->get_cam_state()) {
+            return (double)*v;
+        }
+        return std::nullopt;
+    }
+    if (n == "get_anim_blend_back") {
+        return (double)ks->get_anim_blend_back();
+    }
+    if (n == "get_zone_count") {
+        return (double)ks->get_zone_count();
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> call_killswitch_string(const char* fn) {
+    auto ks = RE4VRKillswitch::get();
+    if (!ks || fn == nullptr) {
+        return std::nullopt;
+    }
+    const std::string_view n{fn};
+    if (n == "get_stage_name") {
+        if (auto v = ks->get_stage_name()) {
+            return std::to_string(*v);
+        }
+        return std::nullopt;
+    }
+    if (n == "get_activating_controller") {
+        return ks->get_activating_controller();
+    }
+    if (n == "get_controller") {
+        return ks->get_controller();
+    }
+    if (n == "get_previous_controller") {
+        return ks->get_previous_controller();
+    }
+    return std::nullopt;
 }
 }
 

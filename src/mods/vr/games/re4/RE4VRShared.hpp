@@ -180,36 +180,10 @@ inline void lua_set_nil(std::string_view name) {
     }
 }
 
-inline bool call_killswitch_bool(const char* fn, bool default_v = false) {
-    LuaGuard g;
-    auto* L = g.lua();
-    if (!L) {
-        return default_v;
-    }
-    sol::object loaded = (*L)["package"]["loaded"]["re4vr/re4_vr_killswitch"];
-    if (!loaded.is<sol::table>()) {
-        return default_v;
-    }
-    sol::protected_function f = loaded.as<sol::table>()[fn];
-    if (!f.valid()) {
-        return default_v;
-    }
-    auto r = f();
-    if (!r.valid() || r.get_type() != sol::type::boolean) {
-        return default_v;
-    }
-    return r.get<bool>();
-}
-
-inline bool is_ks_active() {
-    if (lua_is_true("__re4_throwsight_active")) {
-        return true;
-    }
-    if (lua_is_true("__re4_ks_keep_movement")) {
-        return false;
-    }
-    return call_killswitch_bool("is_active", lua_is_true("__re4_ks_active"));
-}
+bool call_killswitch_bool(const char* fn, bool default_v = false);
+bool is_ks_active();
+std::optional<double> call_killswitch_number(const char* fn);
+std::optional<std::string> call_killswitch_string(const char* fn);
 
 inline uint64_t profile_frame() {
     return (uint64_t)VR::get()->get_frame_count();
@@ -448,54 +422,6 @@ inline float j_num(const nlohmann::json& d, const char* k, float def) {
         return def;
     }
     return d[k].get<float>();
-}
-
-inline std::optional<double> call_killswitch_number(const char* fn) {
-    LuaGuard g;
-    auto* L = g.lua();
-    if (!L) {
-        return std::nullopt;
-    }
-    sol::object loaded = (*L)["package"]["loaded"]["re4vr/re4_vr_killswitch"];
-    if (!loaded.is<sol::table>()) {
-        return std::nullopt;
-    }
-    sol::protected_function f = loaded.as<sol::table>()[fn];
-    if (!f.valid()) {
-        return std::nullopt;
-    }
-    auto r = f();
-    if (!r.valid() || r.get_type() != sol::type::number) {
-        return std::nullopt;
-    }
-    return r.get<double>();
-}
-
-inline std::optional<std::string> call_killswitch_string(const char* fn) {
-    LuaGuard g;
-    auto* L = g.lua();
-    if (!L) {
-        return std::nullopt;
-    }
-    sol::object loaded = (*L)["package"]["loaded"]["re4vr/re4_vr_killswitch"];
-    if (!loaded.is<sol::table>()) {
-        return std::nullopt;
-    }
-    sol::protected_function f = loaded.as<sol::table>()[fn];
-    if (!f.valid()) {
-        return std::nullopt;
-    }
-    auto r = f();
-    if (!r.valid()) {
-        return std::nullopt;
-    }
-    if (r.get_type() == sol::type::string) {
-        return r.get<std::string>();
-    }
-    if (r.get_type() == sol::type::number) {
-        return std::to_string(r.get<double>());
-    }
-    return std::nullopt;
 }
 
 ::REManagedObject* character_manager();

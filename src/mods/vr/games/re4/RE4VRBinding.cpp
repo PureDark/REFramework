@@ -20,7 +20,9 @@
 #include <utility/String.hpp>
 
 #include "RE4VRFrameCache.hpp"
+#include "RE4VRKillswitch.hpp"
 #include "RE4VRMenu.hpp"
+#include "RE4VRMovement.hpp"
 #include "RE4VRShared.hpp"
 #include "../../../ScriptRunner.hpp"
 #include "../../runtimes/VRRuntime.hpp"
@@ -167,19 +169,9 @@ void RE4VRBinding::register_ui() {
             save_json();
         }
         draw_snapturn_ui("pub");
-        re4vr::LuaGuard g;
-        auto* L = g.lua();
-        if (!L) {
-            return;
-        }
-        sol::object getter = (*L)["__re4_roomscale_get"];
-        sol::object setter = (*L)["__re4_roomscale_set"];
-        if (getter.is<sol::protected_function>() && setter.is<sol::protected_function>()) {
-            auto r = getter.as<sol::protected_function>()();
-            bool rs = r.valid() && r.get_type() == sol::type::boolean && r.get<bool>();
-            if (ImGui::Checkbox("Enable Roomscale", &rs)) {
-                setter.as<sol::protected_function>()(rs);
-            }
+        bool rs = RE4VRMovement::get()->roomscale_enabled();
+        if (ImGui::Checkbox("Enable Roomscale", &rs)) {
+            RE4VRMovement::get()->set_roomscale_enabled(rs);
         }
     });
 }
@@ -208,36 +200,22 @@ void RE4VRBinding::reset_runtime() {
 }
 
 bool RE4VRBinding::ks_active() {
-    return re4vr::call_killswitch_bool("is_active", re4vr::lua_is_true("__re4_ks_active"));
+    return RE4VRKillswitch::get()->is_active();
 }
 
 bool RE4VRBinding::ks2() {
-    return re4vr::call_killswitch_bool("is_ks2");
+    return RE4VRKillswitch::get()->is_ks2();
 }
 
 bool RE4VRBinding::ks4() {
-    return re4vr::call_killswitch_bool("is_ks4");
+    return RE4VRKillswitch::get()->is_ks4();
 }
 
 ::REManagedObject* RE4VRBinding::busy_controller() {
-    re4vr::LuaGuard g;
-    auto* L = g.lua();
-    if (L) {
-        sol::object loaded = (*L)["package"]["loaded"]["re4vr/re4_vr_killswitch"];
-        if (loaded.is<sol::table>()) {
-            sol::protected_function f = loaded.as<sol::table>()["get_busy_controller"];
-            if (f.valid()) {
-                auto r = f();
-                if (r.valid() && r.is<::REManagedObject*>()) {
-                    auto* p = r.get<::REManagedObject*>();
-                    if (re4vr::obj_ok(p)) {
-                        return p;
-                    }
-                }
-            }
-        }
+    if (auto* busy = RE4VRKillswitch::get()->get_busy_controller()) {
+        return busy;
     }
-    auto* cs = sdk::get_managed_singleton<::REManagedObject>("chainsaw.CameraSystem");
+    auto* cs = re4vr::camera_system();
     auto* main = cs ? re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(cs, "get_MainCameraController"); }).value_or(nullptr) : nullptr;
     return main ? re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(main, "get_BusyCameraController"); }).value_or(nullptr) : nullptr;
 }

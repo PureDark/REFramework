@@ -22,7 +22,7 @@
 #include "mods/LooseFileLoader.hpp"
 #include "mods/vr/games/RE8VR.hpp"
 #if defined(RE4)
-#include "mods/vr/games/RE4VR.hpp"
+#include "mods/vr/games/re4/RE4VRMovement.hpp"
 #include "mods/vr/games/re4/RE4VRMenu.hpp"
 #include "mods/vr/games/re4/RE4VRStatics.hpp"
 #include "mods/vr/games/re4/RE4VRLib.hpp"
@@ -143,7 +143,7 @@ Mods::Mods() {
     m_mods.emplace_back(RE4VRReload3::get());
     m_mods.emplace_back(RE4VRReload4::get());
     m_mods.emplace_back(RE4VRReload5::get());
-    m_mods.emplace_back(RE4VR::get());
+    m_mods.emplace_back(RE4VRMovement::get());
 #endif
 }
 

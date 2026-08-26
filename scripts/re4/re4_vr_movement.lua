@@ -1,6 +1,6 @@
 -- ============================================================
 -- RE4 VR Movement — PORTED TO C++
--- Builtin implementation: src/mods/vr/games/RE4VR.cpp (class RE4VR).
+-- Builtin implementation: src/mods/vr/games/re4/RE4VRMovement.cpp
 -- This Lua file is a no-op so leftover autorun copies cannot double-write
 -- the player transform / joints.
 -- ============================================================
