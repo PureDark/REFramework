@@ -1244,7 +1244,8 @@ void RE4VRFirstPerson::on_config_load(const utility::Config&) {
 }
 
 void RE4VRFirstPerson::on_lua_state_created(sol::state& lua) {
-    if (!lua["vr_camera_fix"].is<sol::table>()) {
+    sol::object camfix = lua["vr_camera_fix"];
+    if (!camfix.is<sol::table>()) {
         auto t = lua.create_table();
         t["active"] = false;
         lua["vr_camera_fix"] = t;

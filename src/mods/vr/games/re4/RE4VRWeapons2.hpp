@@ -30,6 +30,7 @@ public:
     void apply_wildwest(Vector3f& wpos, glm::quat& wrot);
     bool knife_lh_off(int32_t wid, Vector3f& pos, Vector3f& euler) const;
     bool knife_lh_flip_pos(int32_t wid, Vector3f& pos) const;
+    void native_hit(::REManagedObject* victim_hc, const Vector3f& pos);
 
 private:
     struct Off3 {
@@ -66,7 +67,6 @@ private:
     ::REManagedObject* find_knife_mesh();
     std::optional<int32_t> get_selected_knife_wid();
     void exec_native_melee();
-    void native_hit(::REManagedObject* victim_hc, const Vector3f& pos);
 
     static HookManager::PreHookResult pre_request_action(std::vector<uintptr_t>& args, std::vector<sdk::RETypeDefinition*>& arg_tys, uintptr_t ret_addr);
     static HookManager::PreHookResult pre_equip_weapon(std::vector<uintptr_t>& args, std::vector<sdk::RETypeDefinition*>& arg_tys, uintptr_t ret_addr);

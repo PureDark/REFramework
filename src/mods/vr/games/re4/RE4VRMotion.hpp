@@ -87,7 +87,7 @@ private:
     void apply_two_hand_aim(const VrData& vr, const CamData& cam);
     void restore_hands_native();
     void write_joint_pose(::REJoint* j, const Vector3f& pos, const glm::quat& rot);
-    Vector3f apply_hand_offset(const Vector3f& pos, const glm::quat& rot, const HandOff& off);
+    Vector3f apply_hand_offset(const Vector3f& pos, const glm::quat& rot, const HandOff& off, glm::quat& out_rot);
     Vector3f clamp_hand_to_arm_reach(const Vector3f& hand_pos, bool left);
     std::optional<CamData> get_camera_data();
     std::optional<VrData> get_vr_data();
@@ -127,6 +127,7 @@ private:
     void apply_fl_hold_pose();
     bool fl_left_hand_busy() const;
     void add_joint_local_euler(::REJoint* j, float rx, float ry, float rz);
+    void post_poses(bool lock_pass);
     void publish_globals();
     glm::quat knife_flip_spin(const glm::quat& wrot);
     std::string rel_key(int32_t wid);

@@ -891,7 +891,7 @@ inline void XbowFamily::on_frame() {
     }
     RE4VRShared::get()->vr_manual_reload_consume_b = true;
     auto hp = lh_world();
-    auto gp = wep.tf ? re4vr::safe([&] { return sdk::get_transform_position(wep.tf); }) : std::nullopt;
+    auto gp = tfpos(wep.tf);
     if (arrow.active && hp && gp && glm::distance(*hp, *gp) <= insert_distance) {
         arrow.active = false;
         arrow.insert = true;
@@ -915,20 +915,16 @@ inline void XbowFamily::apply() {
     if (!owns()) {
         return;
     }
-    re4vr::LuaGuard g;
-    if (auto* L = g.lua()) {
-        sol::object o = (*L)["__re4_xbow_dummy_obj"];
-        if (o.is<::REManagedObject*>() && (arrow.active || arrow.insert)) {
-            auto* dummy = o.as<::REManagedObject*>();
-            auto* tf = re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(dummy, "get_Transform"); }).value_or(nullptr);
-            auto* lh = left_hand();
-            auto hp = lh ? jpos(lh) : std::nullopt;
-            auto hr = lh ? jrot(lh) : std::nullopt;
-            if (tf && hp) {
-                sdk::set_transform_position(tf, re4vr::v4(*hp));
-                if (hr) {
-                    sdk::set_transform_rotation(tf, *hr);
-                }
+    auto* dummy = RE4VRShared::get()->re4_xbow_dummy_obj;
+    if (re4vr::obj_ok(dummy) && (arrow.active || arrow.insert)) {
+        auto* tf = re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(dummy, "get_Transform"); }).value_or(nullptr);
+        auto* lh = left_hand();
+        auto hp = lh ? jpos(lh) : std::nullopt;
+        auto hr = lh ? jrot(lh) : std::nullopt;
+        if (tf && hp) {
+            sdk::set_transform_position(tf, re4vr::v4(*hp));
+            if (hr) {
+                sdk::set_transform_rotation(tf, *hr);
             }
         }
     }
@@ -1096,7 +1092,7 @@ inline void Red9Family::on_frame() {
                 rack.grabbed = false;
             }
             if (rack.grabbed && wep.tf) {
-                auto gpos = re4vr::safe([&] { return sdk::get_transform_position(wep.tf); });
+                auto gpos = tfpos(wep.tf);
                 auto grot = re4vr::safe([&] { return sdk::get_transform_rotation(wep.tf); });
                 if (gpos && grot) {
                     const auto local = glm::inverse(*grot) * (*hp - *gpos);
@@ -1249,7 +1245,7 @@ inline void RLFamily::on_frame() {
     }
     RE4VRShared::get()->vr_manual_reload_consume_b = true;
     auto hp = lh_world();
-    auto gp = wep.tf ? re4vr::safe([&] { return sdk::get_transform_position(wep.tf); }) : std::nullopt;
+    auto gp = tfpos(wep.tf);
     if (hold.active && hp && gp && glm::distance(*hp, *gp) <= insert_distance) {
         hold.active = false;
         hold.insert = true;
@@ -1424,7 +1420,7 @@ inline void FlameFamily::on_frame() {
     }
     if (tank.in_hand) {
         auto hp = lh_world();
-        auto gp = wep.tf ? re4vr::safe([&] { return sdk::get_transform_position(wep.tf); }) : std::nullopt;
+        auto gp = tfpos(wep.tf);
         if (hp && gp && glm::distance(*hp, *gp) <= insert_distance && saf.open) {
             tank.in_hand = false;
             tank.phase = "idle";
@@ -1548,7 +1544,7 @@ struct BlastBow {
         }
         auto hp = lh_world();
         if (bolt_hand && hp && wep.tf) {
-            auto gp = re4vr::safe([&] { return sdk::get_transform_position(wep.tf); });
+            auto gp = tfpos(wep.tf);
             if (gp && glm::distance(*hp, *gp) <= insert_distance) {
                 bolt_hand = false;
                 load_and_book(1);

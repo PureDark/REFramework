@@ -99,8 +99,6 @@ void RE4VRLib::on_lua_state_created(sol::state& lua) {
         return re4vr::get_component(go, tn.c_str());
     };
     t["get_localplayer_ctx"] = []() { return re4vr::player_context(); };
-    t["get_body"] = [this](sol::object) { return m_body; };
-    t["get_head"] = [this](sol::object) { return m_head; };
     t["get_equipment"] = [this](sol::object) { return m_equipment; };
     t["get_weapon_object"] = [this](sol::object) { return m_weapon; };
     t["is_in_inventory_menu"] = [this]() { return is_in_inventory_menu(); };

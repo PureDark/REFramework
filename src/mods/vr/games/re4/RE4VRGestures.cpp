@@ -86,7 +86,7 @@ std::vector<std::string> joint_names() {
 }
 
 template <typename T>
-void set_field(void* obj, const char* name, T v) {
+void set_field(::REManagedObject* obj, const char* name, T v) {
     if (auto* f = sdk::get_object_field<T>(obj, name)) {
         *f = v;
     }

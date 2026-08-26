@@ -362,6 +362,7 @@ bool RE4VRReloadAdv::begin_drop(::REJoint* joint, int32_t wid, std::optional<flo
     m_drop.t0 = re4vr::now();
     m_drop.phase = "slide";
     m_drop.active = true;
+    m_current_mag_joint = joint;
     return true;
 }
 
@@ -369,6 +370,7 @@ void RE4VRReloadAdv::cancel() {
     m_drop.active = false;
     m_drop.joint = nullptr;
     m_drop.phase.clear();
+    m_current_mag_joint = nullptr;
 }
 
 void RE4VRReloadAdv::tick() {
@@ -727,9 +729,6 @@ void RE4VRReloadAdv::sync_lua_fields() {
     t["release_dur"] = m_push.release_dur;
     t["shell_preview"] = m_shell_preview;
     t["eject_preview"] = m_eject_preview;
-    if (t["current_mag_joint"].is<::REJoint*>()) {
-        m_current_mag_joint = t["current_mag_joint"];
-    }
 }
 
 void RE4VRReloadAdv::export_module(sol::state& lua) {

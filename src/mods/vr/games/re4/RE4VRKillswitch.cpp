@@ -285,7 +285,7 @@ bool RE4VRKillswitch::is_ks4() const {
 
 void RE4VRKillswitch::set_fp_enabled(bool v) {
     m_fp_enabled = v;
-    re4vr::lua_set_bool("__re4_ks_fp_enabled", v);
+    RE4VRShared::get()->re4_ks_fp_enabled = v;
     save_ks_cfg();
 }
 
@@ -449,7 +449,7 @@ void RE4VRKillswitch::reset_runtime() {
     m_was_active = false;
     m_prev_full_off = false;
     m_prev_ks4_exit = false;
-    re4vr::lua_set_nil("__re4_ks4_exit_t");
+    RE4VRShared::get()->re4_ks4_exit_t.reset();
     m_anim_blend_back = 0.0f;
     m_force_killswitch = false;
     m_character_manager = nullptr;
@@ -543,7 +543,6 @@ void RE4VRKillswitch::install_lua_api(sol::state& lua) {
         set_fp_enabled(v.is<bool>() ? v.as<bool>() : (v.get_type() != sol::type::nil && v.get_type() != sol::type::none));
     };
     t["get_player_context"] = [this]() { return get_player_context_api(); };
-    t["get_player_body"] = [this]() { return get_player_body_api(); };
     t["get_zone_count"] = [this]() { return get_zone_count(); };
     t["reload_zones"] = [this]() { return reload_zones(); };
     t["get_zones"] = [this](sol::this_state s) {
@@ -633,7 +632,7 @@ void RE4VRKillswitch::tick_update_scene() {
     } catch (...) {
         if (!m_has_err) {
             m_has_err = true;
-            re4vr::lua_set_string("__re4_ks_err", "evaluate exception");
+            RE4VRShared::get()->re4_ks_err = std::string{"evaluate exception"};
         }
     }
 }
@@ -650,7 +649,7 @@ HookManager::PreHookResult RE4VRKillswitch::pre_try_use(std::vector<uintptr_t>& 
     if (self.m_leaning_ladder_td) {
         auto* td = utility::re_managed_object::get_type_definition(ladder);
         if (td && td->is_a(self.m_leaning_ladder_td)) {
-            re4vr::lua_set_bool("__re4_leaning_ladder_mounted", true);
+            RE4VRShared::get()->re4_leaning_ladder_mounted = true;
         }
     }
     return HookManager::PreHookResult::CALL_ORIGINAL;
@@ -1373,7 +1372,7 @@ bool RE4VRKillswitch::is_gimmick_ks3_spot() {
     }
     if (raw) {
         m_squeeze_latch_t = now_clock();
-        re4vr::lua_set_number("__re4_squeeze_latch_t", m_squeeze_latch_t);
+        RE4VRShared::get()->re4_squeeze_latch_t = m_squeeze_latch_t;
         return true;
     }
     return (now_clock() - m_squeeze_latch_t) < 0.30;
@@ -1420,7 +1419,7 @@ bool RE4VRKillswitch::is_minidemo_ks4_spot() {
     }
     if (raw) {
         m_minidemo_latch_t = now_clock();
-        re4vr::lua_set_number("__re4_minidemo_latch_t", m_minidemo_latch_t);
+        RE4VRShared::get()->re4_minidemo_latch_t = m_minidemo_latch_t;
         return true;
     }
     return (now_clock() - m_minidemo_latch_t) < 0.30;
@@ -1488,7 +1487,7 @@ bool RE4VRKillswitch::is_gimmickfix_ks5_spot() {
     }
     if (raw) {
         m_gfix_latch_t = now_clock();
-        re4vr::lua_set_number("__re4_gfix_latch_t", m_gfix_latch_t);
+        RE4VRShared::get()->re4_gfix_latch_t = m_gfix_latch_t;
         return true;
     }
     return (now_clock() - m_gfix_latch_t) < 0.30;
@@ -1881,7 +1880,7 @@ bool RE4VRKillswitch::is_in_elevator3_zone() {
 }
 
 bool RE4VRKillswitch::is_parented_to_elevator() {
-    return re4vr::lua_is_true("__re4_on_elevator2");
+    return RE4VRShared::get()->re4_on_elevator2;
 }
 
 bool RE4VRKillswitch::is_in_elevator5_cabin() {
@@ -1952,24 +1951,24 @@ void RE4VRKillswitch::reset_frame_flags() {
     m_ks4_active = false;
     m_ks5_active = false;
     m_boxbreak_active = false;
-    re4vr::lua_set_bool("__re4_leaning_ladder_active", false);
-    re4vr::lua_set_bool("__re4_minecart_ks4_active", false);
-    re4vr::lua_set_bool("__re4_minecart2_ks4_active", false);
-    re4vr::lua_set_bool("__re4_grappled_active", false);
-    re4vr::lua_set_bool("__re4_gondola_active", false);
-    re4vr::lua_set_bool("__re4_railcar_mode", false);
+    RE4VRShared::get()->re4_leaning_ladder_active = false;
+    RE4VRShared::get()->re4_minecart_ks4_active = false;
+    RE4VRShared::get()->re4_minecart2_ks4_active = false;
+    RE4VRShared::get()->re4_grappled_active = false;
+    RE4VRShared::get()->re4_gondola_active = false;
+    RE4VRShared::get()->re4_railcar_mode = false;
     m_jetski_active = false;
-    re4vr::lua_set_bool("__re4_jetski_active", false);
-    re4vr::lua_set_bool("__re4_boat_active", false);
-    re4vr::lua_set_bool("__re4_forcecrouch_ks4_active", false);
-    re4vr::lua_set_bool("__re4_in_squeeze", false);
-    re4vr::lua_set_bool("__re4_ks_keep_movement", false);
+    RE4VRShared::get()->re4_jetski_active = false;
+    RE4VRShared::get()->re4_boat_active = false;
+    RE4VRShared::get()->re4_forcecrouch_ks4_active = false;
+    RE4VRShared::get()->re4_in_squeeze = false;
+    RE4VRShared::get()->re4_ks_keep_movement = false;
 }
 
 void RE4VRKillswitch::evaluate_core() {
     reset_frame_flags();
-    m_fp_enabled = re4vr::lua_not_false("__re4_ks_fp_enabled");
-    m_ks2_as_ks4 = re4vr::lua_not_false("__re4_ks2_as_ks4");
+    m_fp_enabled = RE4VRShared::get()->re4_ks_fp_enabled;
+    m_ks2_as_ks4 = RE4VRShared::get()->re4_ks2_as_ks4;
 
     auto set_ks4 = [&](const char* reason, bool latch = true, int latch_level = 4) {
         m_killswitch_active = true;
@@ -1985,7 +1984,7 @@ void RE4VRKillswitch::evaluate_core() {
     auto set_gameplay = [&](const char* reason) {
         m_killswitch_active = false;
         m_pin_release_active = false;
-        re4vr::lua_set_bool("__re4_throwsight_active", false);
+        RE4VRShared::get()->re4_throwsight_active = false;
         m_activating_reason = reason;
         m_fp_latch = false;
         m_fp_latch_state.reset();
@@ -1997,27 +1996,27 @@ void RE4VRKillswitch::evaluate_core() {
         m_activating_reason = "force";
         return;
     }
-    if (re4vr::lua_is_true("__re4_force_killswitch_scope")) {
+    if (RE4VRShared::get()->re4_force_killswitch_scope) {
         m_killswitch_active = true;
         m_activating_reason = "viascope";
         return;
     }
-    if (re4vr::lua_is_true("__re4_force_killswitch_bolt")) {
+    if (RE4VRShared::get()->re4_force_killswitch_bolt) {
         m_killswitch_active = true;
         m_ks4_active = true;
-        re4vr::lua_set_bool("__re4_ks4_active", true);
+        RE4VRShared::get()->re4_ks4_active = true;
         m_activating_reason = "boltcycle";
         return;
     }
-    if (re4vr::lua_is_true("__re4_force_ks4_bulletrush")) {
+    if (RE4VRShared::get()->re4_force_ks4_bulletrush) {
         set_ks4("ks4_bulletrush");
-        re4vr::lua_set_bool("__re4_ks4_active", true);
+        RE4VRShared::get()->re4_ks4_active = true;
         return;
     }
     if (is_elevator_trouble()) {
         set_ks4("ks4_elevatortrouble", false);
-        re4vr::lua_set_bool("__re4_ks4_active", true);
-        re4vr::lua_set_bool("__re4_throwsight_active", false);
+        RE4VRShared::get()->re4_ks4_active = true;
+        RE4VRShared::get()->re4_throwsight_active = false;
         return;
     }
     if (is_in_elevator()) {
@@ -2066,8 +2065,8 @@ void RE4VRKillswitch::evaluate_core() {
             m_ks5_active = true;
         }
         m_pin_release_active = false;
-        re4vr::lua_set_bool("__re4_throwsight_active", false);
-        re4vr::lua_set_bool("__re4_gondola_active", true);
+        RE4VRShared::get()->re4_throwsight_active = false;
+        RE4VRShared::get()->re4_gondola_active = true;
         m_activating_reason = "ks5_gondola";
         m_fp_latch = true;
         m_fp_latch_state.reset();
@@ -2085,14 +2084,14 @@ void RE4VRKillswitch::evaluate_core() {
         }
         if (is_pc_cam) {
             set_ks4("ks4_gondola_parent");
-            re4vr::lua_set_bool("__re4_throwsight_active", false);
+            RE4VRShared::get()->re4_throwsight_active = false;
             return;
         }
     }
 
     if (is_in_legholdtrap() && !is_real_cutscene()) {
         set_ks4("ks4_beartrap");
-        re4vr::lua_set_bool("__re4_throwsight_active", false);
+        RE4VRShared::get()->re4_throwsight_active = false;
         return;
     }
 
@@ -2103,16 +2102,16 @@ void RE4VRKillswitch::evaluate_core() {
 
     if (is_on_jetski() && !is_real_cutscene() && !is_gimmick_motion_now() && !is_demo_priority_now()) {
         set_ks4("ks4_jetski");
-        re4vr::lua_set_bool("__re4_throwsight_active", false);
+        RE4VRShared::get()->re4_throwsight_active = false;
         m_jetski_active = true;
-        re4vr::lua_set_bool("__re4_jetski_active", true);
+        RE4VRShared::get()->re4_jetski_active = true;
         return;
     }
 
     if (is_on_boat() && !is_throwsight_stage() && !is_real_cutscene() && !is_gimmick_motion_now() && !is_demo_priority_now()) {
         set_ks4("ks4_boat");
-        re4vr::lua_set_bool("__re4_throwsight_active", false);
-        re4vr::lua_set_bool("__re4_boat_active", true);
+        RE4VRShared::get()->re4_throwsight_active = false;
+        RE4VRShared::get()->re4_boat_active = true;
         return;
     }
 
@@ -2124,9 +2123,9 @@ void RE4VRKillswitch::evaluate_core() {
         }
         if (now < m_fc_ks4_until && !is_real_cutscene()) {
             set_ks4("ks4_forcecrouch");
-            re4vr::lua_set_bool("__re4_throwsight_active", false);
-            re4vr::lua_set_bool("__re4_forcecrouch_active", false);
-            re4vr::lua_set_bool("__re4_forcecrouch_ks4_active", true);
+            RE4VRShared::get()->re4_throwsight_active = false;
+            RE4VRShared::get()->re4_forcecrouch_active = false;
+            RE4VRShared::get()->re4_forcecrouch_ks4_active = true;
             return;
         }
     }
@@ -2152,12 +2151,12 @@ void RE4VRKillswitch::evaluate_core() {
             }
         }
         if (!in_gang) {
-            re4vr::lua_set_nil("__re4_gang3rd_t");
+            RE4VRShared::get()->re4_gang3rd_t.reset();
         } else {
-            auto gt = re4vr::lua_number("__re4_gang3rd_t");
+            auto gt = RE4VRShared::get()->re4_gang3rd_t;
             if (!gt) {
                 gt = now_clock();
-                re4vr::lua_set_number("__re4_gang3rd_t", *gt);
+                RE4VRShared::get()->re4_gang3rd_t = *gt;
             }
             if ((now_clock() - *gt) < 0.5) {
                 auto* gtf = re4vr::body_transform();
@@ -2167,7 +2166,7 @@ void RE4VRKillswitch::evaluate_core() {
             }
             m_killswitch_active = true;
             m_pin_release_active = false;
-            re4vr::lua_set_bool("__re4_evt60874_fullhide", false);
+            RE4VRShared::get()->re4_evt60874_fullhide = false;
             m_evt60874_t0.reset();
             m_activating_reason = "gang3rd_60874";
             return;
@@ -2193,13 +2192,13 @@ void RE4VRKillswitch::evaluate_core() {
             }
             if ((now_clock() - *m_evt60874_t0) >= EVT60874_DELAY && !is_real_cutscene()) {
                 set_ks4("ks4_evt60874");
-                re4vr::lua_set_bool("__re4_evt60874_fullhide", true);
+                RE4VRShared::get()->re4_evt60874_fullhide = true;
                 return;
             }
-            re4vr::lua_set_bool("__re4_evt60874_fullhide", false);
+            RE4VRShared::get()->re4_evt60874_fullhide = false;
         } else {
             m_evt60874_t0.reset();
-            re4vr::lua_set_bool("__re4_evt60874_fullhide", false);
+            RE4VRShared::get()->re4_evt60874_fullhide = false;
         }
     }
 
@@ -2208,15 +2207,15 @@ void RE4VRKillswitch::evaluate_core() {
     if (carry_stg && (*carry_stg == 68102 || *carry_stg == 68103 || *carry_stg == 68105)
         && is_carrying() && !is_real_cutscene() && !is_gimmick_motion_now() && !is_demo_priority_now()) {
         set_ks4("ks4_ashley_carry");
-        re4vr::lua_set_bool("__re4_throwsight_active", false);
-        re4vr::lua_set_bool("__re4_ks_keep_movement", true);
+        RE4VRShared::get()->re4_throwsight_active = false;
+        RE4VRShared::get()->re4_ks_keep_movement = true;
         return;
     }
 
     if (is_gimmickfix_ks4_spot()) {
         set_ks4("ks4_gfix");
-        re4vr::lua_set_bool("__re4_ks4_active", true);
-        re4vr::lua_set_bool("__re4_throwsight_active", false);
+        RE4VRShared::get()->re4_ks4_active = true;
+        RE4VRShared::get()->re4_throwsight_active = false;
         return;
     }
     if (is_gimmickfix_ks5_spot()) {
@@ -2226,7 +2225,7 @@ void RE4VRKillswitch::evaluate_core() {
             m_ks5_active = true;
         }
         m_pin_release_active = false;
-        re4vr::lua_set_bool("__re4_throwsight_active", false);
+        RE4VRShared::get()->re4_throwsight_active = false;
         m_activating_reason = "ks5_gfix";
         m_fp_latch = true;
         m_fp_latch_state.reset();
@@ -2235,9 +2234,9 @@ void RE4VRKillswitch::evaluate_core() {
     }
     if (is_gimmick_ks3_spot()) {
         set_ks4("ks3_gimmick");
-        re4vr::lua_set_bool("__re4_ks4_active", true);
-        re4vr::lua_set_bool("__re4_in_squeeze", true);
-        re4vr::lua_set_bool("__re4_throwsight_active", false);
+        RE4VRShared::get()->re4_ks4_active = true;
+        RE4VRShared::get()->re4_in_squeeze = true;
+        RE4VRShared::get()->re4_throwsight_active = false;
         return;
     }
     if (is_minidemo_ks4_spot()) {
@@ -2247,7 +2246,7 @@ void RE4VRKillswitch::evaluate_core() {
             m_ks5_active = true;
         }
         m_pin_release_active = false;
-        re4vr::lua_set_bool("__re4_throwsight_active", false);
+        RE4VRShared::get()->re4_throwsight_active = false;
         m_activating_reason = "ks5_minidemo";
         m_fp_latch = true;
         m_fp_latch_state.reset();
@@ -2258,16 +2257,16 @@ void RE4VRKillswitch::evaluate_core() {
     if (auto mc_kind = minecart_ks4_kind()) {
         m_killswitch_active = true;
         m_pin_release_active = false;
-        re4vr::lua_set_bool("__re4_throwsight_active", false);
+        RE4VRShared::get()->re4_throwsight_active = false;
         m_ks4_active = true;
         m_fp_latch = true;
         m_fp_latch_state.reset();
         m_fp_latch_level = 4;
         if (*mc_kind == "cart2") {
-            re4vr::lua_set_bool("__re4_minecart2_ks4_active", true);
+            RE4VRShared::get()->re4_minecart2_ks4_active = true;
             m_activating_reason = "minecart2_ks4";
         } else {
-            re4vr::lua_set_bool("__re4_minecart_ks4_active", true);
+            RE4VRShared::get()->re4_minecart_ks4_active = true;
             m_activating_reason = "minecart_ks4";
         }
         return;
@@ -2275,21 +2274,21 @@ void RE4VRKillswitch::evaluate_core() {
 
     if (is_on_railcar()) {
         set_ks4("railcar_mode");
-        re4vr::lua_set_bool("__re4_throwsight_active", false);
-        re4vr::lua_set_bool("__re4_railcar_mode", true);
+        RE4VRShared::get()->re4_throwsight_active = false;
+        RE4VRShared::get()->re4_railcar_mode = true;
         return;
     }
 
     if (player_is_grappled()) {
         m_killswitch_active = true;
         m_pin_release_active = false;
-        re4vr::lua_set_bool("__re4_throwsight_active", false);
-        re4vr::lua_set_bool("__re4_grappled_active", true);
+        RE4VRShared::get()->re4_throwsight_active = false;
+        RE4VRShared::get()->re4_grappled_active = true;
         auto [gstg, gspc] = read_stage_space();
         (void)gspc;
         if (gstg && *gstg == 65100) {
             m_ks4_active = true;
-            re4vr::lua_set_bool("__re4_ks4_active", true);
+            RE4VRShared::get()->re4_ks4_active = true;
             m_activating_reason = "ks4_grappled";
             m_fp_latch = true;
             m_fp_latch_state.reset();
@@ -2308,7 +2307,7 @@ void RE4VRKillswitch::evaluate_core() {
         auto [s405, sp405] = read_stage_space();
         (void)sp405;
         if (s405 && *s405 == 40510 && is_real_cutscene()) {
-            auto t0 = re4vr::lua_number("__re4_evt40510_t");
+            auto t0 = RE4VRShared::get()->re4_evt40510_t;
             if (!t0) {
                 auto ep = player_pos();
                 bool hit = false;
@@ -2317,14 +2316,14 @@ void RE4VRKillswitch::evaluate_core() {
                     hit = (dx * dx + dy * dy + dz * dz) <= 9.0f;
                 }
                 t0 = hit ? now_clock() : -1.0;
-                re4vr::lua_set_number("__re4_evt40510_t", *t0);
+                RE4VRShared::get()->re4_evt40510_t = *t0;
             }
             if (*t0 >= 0.0 && (now_clock() - *t0) < EVT40510_DELAY) {
                 set_ks4("ks4_evt40510");
                 return;
             }
         } else {
-            re4vr::lua_set_nil("__re4_evt40510_t");
+            RE4VRShared::get()->re4_evt40510_t.reset();
         }
     }
 
@@ -2332,12 +2331,12 @@ void RE4VRKillswitch::evaluate_core() {
     if (is_real_cutscene_impl(&why)) {
         m_killswitch_active = true;
         m_activating_reason = why;
-        re4vr::lua_set_bool("__re4_throwsight_active", false);
+        RE4VRShared::get()->re4_throwsight_active = false;
         return;
     }
 
     if (is_throwsight_stage()) {
-        re4vr::lua_set_bool("__re4_throwsight_active", true);
+        RE4VRShared::get()->re4_throwsight_active = true;
         m_killswitch_active = true;
         m_ks2_active = true;
         m_pin_release_active = false;
@@ -2347,7 +2346,7 @@ void RE4VRKillswitch::evaluate_core() {
         m_fp_latch_level = 2;
         return;
     }
-    re4vr::lua_set_bool("__re4_throwsight_active", false);
+    RE4VRShared::get()->re4_throwsight_active = false;
 
     auto* busy = get_busy_controller();
     std::optional<std::string> ctrl_name;
@@ -2377,10 +2376,10 @@ void RE4VRKillswitch::evaluate_core() {
         }
         {
             const bool dmg_now = m_damage_int && now_clock() < m_damage_until;
-            if (re4vr::lua_is_true("__re4_damage_active") && !dmg_now) {
-                re4vr::lua_set_number("__re4_damage_end_t", now_clock());
+            if (RE4VRShared::get()->re4_damage_active && !dmg_now) {
+                RE4VRShared::get()->re4_damage_end_t = now_clock();
             }
-            re4vr::lua_set_bool("__re4_damage_active", dmg_now);
+            RE4VRShared::get()->re4_damage_active = dmg_now;
         }
         const auto now = now_clock();
         if (player_node_has("jumpdown") || player_node_has("jumpoff") || player_node_has("jump_large") || player_node_has("_jump_")) {
@@ -2419,7 +2418,7 @@ void RE4VRKillswitch::evaluate_core() {
             m_fp_latch = true;
             m_fp_latch_state = st;
             m_fp_latch_level = 2;
-            re4vr::lua_set_bool("__re4_leaning_ladder_active", re4vr::lua_is_true("__re4_leaning_ladder_mounted"));
+            RE4VRShared::get()->re4_leaning_ladder_active = RE4VRShared::get()->re4_leaning_ladder_mounted;
         } else if (now < m_jumpdown_until) {
             m_killswitch_active = true;
             m_ks2_active = true;
@@ -2434,7 +2433,7 @@ void RE4VRKillswitch::evaluate_core() {
             m_fp_latch = false;
             m_fp_latch_state.reset();
             m_fp_latch_level = 0;
-            re4vr::lua_set_bool("__re4_leaning_ladder_mounted", false);
+            RE4VRShared::get()->re4_leaning_ladder_mounted = false;
             if (m_cur_episode_entry) {
                 m_last_episode_entry = m_cur_episode_entry;
                 m_cur_episode_entry.reset();
@@ -2483,10 +2482,10 @@ void RE4VRKillswitch::evaluate_core() {
             }
             if (m_hookshot_int && st == m_hookshot_int) {
                 m_hookshot_seen_t = now_clock();
-                const double grace = re4vr::lua_number("__re4_hookshot_grace_sec").value_or(4.0);
-                re4vr::lua_set_number("__re4_hookshot_recent_until", now_clock() + grace);
+                const double grace = RE4VRShared::get()->re4_hookshot_grace_sec.value_or(4.0);
+                RE4VRShared::get()->re4_hookshot_recent_until = now_clock() + grace;
             }
-            const double ks4_sec = re4vr::lua_number("__re4_hookshot_ks4_sec").value_or(1.5);
+            const double ks4_sec = RE4VRShared::get()->re4_hookshot_ks4_sec.value_or(1.5);
             if (m_gimmick_int && st == m_gimmick_int && m_hookshot_seen_t > 0.0 && (now_clock() - m_hookshot_seen_t) < ks4_sec) {
                 m_fp_latch = true;
                 m_fp_latch_level = 4;
@@ -2515,10 +2514,10 @@ void RE4VRKillswitch::evaluate_core() {
         m_fp_latch = false;
         m_fp_latch_state.reset();
         m_fp_latch_level = 0;
-        const double ks4_sec = re4vr::lua_number("__re4_hookshot_ks4_sec").value_or(1.5);
+        const double ks4_sec = RE4VRShared::get()->re4_hookshot_ks4_sec.value_or(1.5);
         if (m_hookshot_seen_t > 0.0 && (now_clock() - m_hookshot_seen_t) < ks4_sec) {
             m_ks4_active = true;
-            re4vr::lua_set_bool("__re4_ks4_active", true);
+            RE4VRShared::get()->re4_ks4_active = true;
             m_fp_latch = true;
             m_fp_latch_level = 4;
             m_activating_reason = "ks4_hook_actioncam";
@@ -2535,19 +2534,18 @@ void RE4VRKillswitch::evaluate() {
         m_ks4_active = true;
     }
 
-    re4vr::lua_set_bool("__re4_ks4_active", m_ks4_active || m_ks5_active || (!m_fp_enabled && m_killswitch_active));
-    re4vr::lua_set_bool("__re4_ks_active", m_killswitch_active);
-    re4vr::lua_set_bool("__re4_boxbreak_active", m_boxbreak_active);
-    re4vr::lua_set_bool("__re4_fatalkick_active",
-        m_ks4_active && !m_boxbreak_active && m_current_cam_state && is_ks4_camstate(m_current_cam_state));
-    re4vr::lua_set_bool("__re4_forcecrouch_active", m_forcecrouch_int && m_current_cam_state == m_forcecrouch_int);
+    RE4VRShared::get()->re4_ks4_active = m_ks4_active || m_ks5_active || (!m_fp_enabled && m_killswitch_active);
+    RE4VRShared::get()->re4_ks_active = m_killswitch_active;
+    RE4VRShared::get()->re4_boxbreak_active = m_boxbreak_active;
+    RE4VRShared::get()->re4_fatalkick_active = m_ks4_active && !m_boxbreak_active && m_current_cam_state && is_ks4_camstate(m_current_cam_state);
+    RE4VRShared::get()->re4_forcecrouch_active = m_forcecrouch_int && m_current_cam_state == m_forcecrouch_int;
 
     auto [stg, spc] = read_stage_space();
     m_current_stage = stg;
     m_current_space = spc;
 
     if ((m_prev_ks4_exit && !m_ks4_active) || (m_prev_ks3_exit && !m_ks3_active) || (m_prev_ks2_exit && !m_ks2_active)) {
-        re4vr::lua_set_number("__re4_ks4_exit_t", now_clock());
+        RE4VRShared::get()->re4_ks4_exit_t = now_clock();
     }
     m_prev_ks4_exit = m_ks4_active;
     m_prev_ks3_exit = m_ks3_active;
@@ -2586,8 +2584,8 @@ void RE4VRKillswitch::evaluate() {
 }
 
 void RE4VRKillswitch::publish_globals() {
-    re4vr::lua_set_bool("__re4_ks_fp_enabled", m_fp_enabled);
-    re4vr::lua_set_bool("__re4_ks2_as_ks4", m_ks2_as_ks4);
+    RE4VRShared::get()->re4_ks_fp_enabled = m_fp_enabled;
+    RE4VRShared::get()->re4_ks2_as_ks4 = m_ks2_as_ks4;
 }
 
 #endif

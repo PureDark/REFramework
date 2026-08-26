@@ -517,11 +517,16 @@ void RE4VRMotion::release_motion_targets() {
     m_rh_ok = m_lh_ok = false;
 }
 
-Vector3f RE4VRMotion::apply_hand_offset(const Vector3f& pos, const glm::quat& rot, const HandOff& off) {
-    if (off.px == 0 && off.py == 0 && off.pz == 0) {
-        return pos;
+Vector3f RE4VRMotion::apply_hand_offset(const Vector3f& pos, const glm::quat& rot, const HandOff& off, glm::quat& out_rot) {
+    Vector3f p = pos;
+    out_rot = rot;
+    if (off.px != 0 || off.py != 0 || off.pz != 0) {
+        p = pos + re4vr::quat_rotate(rot, Vector3f{off.px, off.py, off.pz});
     }
-    return pos + re4vr::quat_rotate(rot, Vector3f{off.px, off.py, off.pz});
+    if (off.rx != 0 || off.ry != 0 || off.rz != 0) {
+        out_rot = glm::normalize(rot * re4vr::quat_euler_yxz_deg(off.rx, off.ry, off.rz));
+    }
+    return p;
 }
 
 Vector3f RE4VRMotion::clamp_hand_to_arm_reach(const Vector3f& hand_pos, bool left) {
@@ -751,14 +756,11 @@ void RE4VRMotion::attach_right_hand(const CamData& cam, const VrData& vr) {
     auto [ctrl_pos, ctrl_rot] = controller_to_world(vr.rh_pos, vr.rh_rot, cam);
     m_rh_aim = ctrl_rot;
     RE4VRShared::get()->vr_rh_ctrl_raw = ctrl_pos;
-    auto hand_pos = apply_hand_offset(ctrl_pos, ctrl_rot, get_weapon_offset("-1"));
-    auto hand_rot = ctrl_rot;
+    glm::quat hand_rot = ctrl_rot;
+    auto hand_pos = apply_hand_offset(ctrl_pos, ctrl_rot, get_weapon_offset("-1"), hand_rot);
     const auto& wo = get_weapon_offset(m_weapon_key);
     if (m_weapon_key != "-1" && m_weapon_key != "none" && m_weapon_key != "5403" && m_weapon_key != "5405") {
-        hand_pos = apply_hand_offset(hand_pos, hand_rot, wo);
-        if (wo.rx != 0 || wo.ry != 0 || wo.rz != 0) {
-            hand_rot = glm::normalize(hand_rot * re4vr::quat_euler_yxz_deg(wo.rx, wo.ry, wo.rz));
-        }
+        hand_pos = apply_hand_offset(hand_pos, hand_rot, wo, hand_rot);
     }
     if (m_cfg.smooth_rot > 0 && m_smooth_rh_r) {
         hand_rot = slerp_q(*m_smooth_rh_r, hand_rot, 1.0f - m_cfg.smooth_rot);
@@ -1133,7 +1135,9 @@ void RE4VRMotion::elevator_unparent() {
                 break;
             }
             const auto nm = re4vr::go_name((::REManagedObject*)go);
-            if (nm.find("エレベータ") != std::string::npos || nm.find("リフト") != std::string::npos) {
+            static const std::string k_elev = "\xE3\x82\xA8\xE3\x83\xAC\xE3\x83\x99\xE3\x83\xBC\xE3\x82\xBF";
+            static const std::string k_lift = "\xE3\x83\xAA\xE3\x83\x95\xE3\x83\x88";
+            if (nm.find(k_elev) != std::string::npos || nm.find(k_lift) != std::string::npos) {
                 on = true;
                 break;
             }
@@ -1506,11 +1510,8 @@ void RE4VRMotion::attach_left_hand(const CamData& cam, const VrData& vr, bool up
     }
     auto [ctrl_pos, ctrl_rot] = controller_to_world(vr.lh_pos, vr.lh_rot, cam);
     RE4VRShared::get()->vr_lh_ctrl_raw = ctrl_pos;
-    auto hand_pos = apply_hand_offset(ctrl_pos, ctrl_rot, m_hand_l);
-    auto hand_rot = ctrl_rot;
-    if (m_hand_l.rx != 0 || m_hand_l.ry != 0 || m_hand_l.rz != 0) {
-        hand_rot = glm::normalize(hand_rot * re4vr::quat_euler_yxz_deg(m_hand_l.rx, m_hand_l.ry, m_hand_l.rz));
-    }
+    glm::quat hand_rot = ctrl_rot;
+    auto hand_pos = apply_hand_offset(ctrl_pos, ctrl_rot, m_hand_l, hand_rot);
     if (m_cfg.smooth_rot > 0 && m_smooth_lh_r) {
         hand_rot = slerp_q(*m_smooth_lh_r, hand_rot, 1.0f - m_cfg.smooth_rot);
     }

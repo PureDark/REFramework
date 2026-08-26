@@ -7,6 +7,7 @@
 
 #include <sdk/REMath.hpp>
 #include <sdk/RETransform.hpp>
+#include <json.hpp>
 
 #include "../../../../Mod.hpp"
 

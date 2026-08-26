@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include <glm/geometric.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/norm.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -433,6 +434,9 @@ inline std::optional<glm::quat> jrot(::REJoint* j) {
 }
 inline std::optional<Vector3f> jlp(::REJoint* j) {
     return j ? std::optional<Vector3f>{re4vr::v3(sdk::get_joint_local_position(j))} : std::nullopt;
+}
+inline std::optional<Vector3f> tfpos(::RETransform* tf) {
+    return tf ? re4vr::safe([&] { return re4vr::v3(sdk::get_transform_position(tf)); }) : std::nullopt;
 }
 inline std::optional<glm::quat> jlr(::REJoint* j) {
     return j ? std::optional<glm::quat>{sdk::get_joint_local_rotation(j)} : std::nullopt;

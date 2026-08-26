@@ -758,15 +758,6 @@ inline bool MagFed::start_drop() {
         drain_to_zero(wi);
         rack.zeroed_by_us = true;
     }
-    {
-        re4vr::LuaGuard g;
-        if (auto* L = g.lua()) {
-            sol::object o = (*L)["__re4_reload_mag_slide"];
-            if (o.is<sol::table>()) {
-                o.as<sol::table>()["current_mag_joint"] = wep.mag;
-            }
-        }
-    }
     auto* ms = mag_slide();
     if (ms) {
         std::optional<RE4VRReloadAdv::Vec3> target;

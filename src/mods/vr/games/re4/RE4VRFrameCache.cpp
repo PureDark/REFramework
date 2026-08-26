@@ -10,7 +10,7 @@ std::shared_ptr<RE4VRFrameCache>& RE4VRFrameCache::get() {
 }
 
 void RE4VRFrameCache::begin_frame() {
-    m_off = re4vr::lua_is_true("__re4_fc_off");
+    m_off = RE4VRShared::get()->re4_fc_off;
     const auto f = VR::get()->get_frame_count();
     if (f != m_frame) {
         m_frame = f;
@@ -64,8 +64,6 @@ void RE4VRFrameCache::on_lua_state_created(sol::state& lua) {
     auto t = lua.create_table();
     t["on"] = [this]() { return on(); };
     t["ctx"] = [this]() { return ctx(); };
-    t["body_go"] = [this]() { return body_go(); };
-    t["body_tf"] = [this]() { return body_tf(); };
     t["pe"] = [this]() { return pe(); };
     t["equip_wid"] = [this]() { return equip_wid(); };
     t["get_managed_singleton"] = [](const std::string& name) {

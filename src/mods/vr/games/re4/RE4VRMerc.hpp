@@ -23,6 +23,7 @@ public:
     void on_frame() override;
     void on_application_entry(void* entry, const char* name, size_t hash) override;
     bool on_pre_gui_draw_element(REComponent* gui_element, void* primitive_context) override;
+    void apply_bow_pose();
     bool wep_apply(const Vector3f& wpos, const glm::quat& wrot, int32_t wid, const glm::quat* hand_rot, Vector3f& np, glm::quat& nr);
 
 private:
@@ -72,7 +73,6 @@ private:
     void bow_unpin();
     void update_bulletrush();
     void hud_apply();
-    void apply_bow_pose();
     void dot_tick();
     ::REManagedObject* hud_root_ctrl(::REManagedObject* go);
     ::REManagedObject* child_by_name(::REManagedObject* ctrl, const std::string& want);

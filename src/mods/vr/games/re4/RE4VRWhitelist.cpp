@@ -154,7 +154,7 @@ bool RE4VRWhitelist::is_real_breakable_prop(::REManagedObject* go) {
             }
             tf = re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(tf, "get_Parent"); }).value_or(nullptr);
         }
-        const bool need_type = (re4vr::lua_not_false("__re4_wl_require_type")) && !m_tds.empty();
+        const bool need_type = (RE4VRShared::get()->re4_wl_require_type) && !m_tds.empty();
         if (!has_name) {
             return false;
         }
@@ -171,7 +171,7 @@ float RE4VRWhitelist::breakable_yoff(::REManagedObject* go) {
         auto* tf = re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(go, "get_Transform"); }).value_or(nullptr);
         const std::string coin = "\xE9\x9D\x92\xE3\x82\xB3\xE3\x82\xA4\xE3\x83\xB3";
         const std::string vase = "\xE5\xA3\xBA";
-        const std::string small = "\xE5\xB0\x8F";
+        const std::string smalln = "\xE5\xB0\x8F";
         const std::string pre = "gm84_508_00_";
         for (int i = 0; i <= 3; ++i) {
             if (!tf) {
@@ -181,10 +181,10 @@ float RE4VRWhitelist::breakable_yoff(::REManagedObject* go) {
             const auto nm = re4vr::go_name((::REManagedObject*)g);
             if (!nm.empty()) {
                 if (nm.find(coin) != std::string::npos || (nm.size() >= pre.size() && nm.compare(0, pre.size(), pre) == 0)) {
-                    return (float)re4vr::lua_number("__re4_coin_off_y").value_or(m_coin_off_y);
+                    return (float)RE4VRShared::get()->re4_coin_off_y.value_or(m_coin_off_y);
                 }
-                if (nm.find(vase) != std::string::npos && nm.find(small) != std::string::npos) {
-                    return (float)re4vr::lua_number("__re4_vase_off_y").value_or(m_vase_off_y);
+                if (nm.find(vase) != std::string::npos && nm.find(smalln) != std::string::npos) {
+                    return (float)RE4VRShared::get()->re4_vase_off_y.value_or(m_vase_off_y);
                 }
             }
             tf = re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(tf, "get_Parent"); }).value_or(nullptr);
@@ -205,7 +205,7 @@ float RE4VRWhitelist::enemy_off_y(::REManagedObject* ctx) {
         }
         const auto tn = std::string{td->get_full_name()};
         if (tn.find("Ch8g2z0") != std::string::npos) {
-            return (float)re4vr::lua_number("__re4_snake_off_y").value_or(m_snake_off_y);
+            return (float)RE4VRShared::get()->re4_snake_off_y.value_or(m_snake_off_y);
         }
         return 0.0f;
     });
@@ -242,7 +242,7 @@ void RE4VRWhitelist::animal_center(::REManagedObject* anim, float fx, float fy, 
         return;
     }
     const auto p = **got;
-    const float m = (float)re4vr::lua_number("__re4_animal_center_max_d").value_or(m_animal_center_max_d);
+    const float m = (float)RE4VRShared::get()->re4_animal_center_max_d.value_or(m_animal_center_max_d);
     const float dx = p.x - fx, dy = p.y - fy, dz = p.z - fz;
     if (dx * dx + dy * dy + dz * dz > m * m) {
         return;
