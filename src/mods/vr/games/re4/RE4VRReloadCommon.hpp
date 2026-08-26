@@ -140,39 +140,39 @@ inline ::REJoint* right_hand() {
     return j ? j : (bt ? re4vr::joint_by_name(bt, "R_Arm_Hand") : nullptr);
 }
 inline std::optional<Vector3f> lh_world() {
-    if (auto p = re4vr::lua_vec3("__vr_lh_world")) {
+    if (auto p = RE4VRShared::get()->vr_lh_world) {
         return p;
     }
-    if (auto p = re4vr::lua_vec3("__vr_unified_lh_pos")) {
+    if (auto p = RE4VRShared::get()->vr_unified_lh_pos) {
         return p;
     }
-    if (auto p = re4vr::lua_vec3("__vr_lh_joint_pos")) {
+    if (auto p = RE4VRShared::get()->vr_lh_joint_pos) {
         return p;
     }
     auto* j = left_hand();
     return j ? std::optional<Vector3f>{re4vr::v3(sdk::get_joint_position(j))} : std::nullopt;
 }
 inline std::optional<Vector3f> lh_ctrl() {
-    if (auto p = re4vr::lua_vec3("__vr_lh_ctrl_world")) {
+    if (auto p = RE4VRShared::get()->vr_lh_ctrl_world) {
         return p;
     }
-    if (auto p = re4vr::lua_vec3("__vr_lh_ctrl_raw")) {
+    if (auto p = RE4VRShared::get()->vr_lh_ctrl_raw) {
         return p;
     }
     return lh_world();
 }
 inline std::optional<Vector3f> rh_world() {
-    if (auto p = re4vr::lua_vec3("__vr_rh_world")) {
+    if (auto p = RE4VRShared::get()->vr_rh_world) {
         return p;
     }
-    if (auto p = re4vr::lua_vec3("__vr_unified_rh_pos")) {
+    if (auto p = RE4VRShared::get()->vr_unified_rh_pos) {
         return p;
     }
     auto* j = right_hand();
     return j ? std::optional<Vector3f>{re4vr::v3(sdk::get_joint_position(j))} : std::nullopt;
 }
 inline bool right_b() {
-    return re4vr::lua_is_true("__vr_raw_r_bbutton");
+    return RE4VRShared::get()->vr_raw_r_bbutton;
 }
 inline bool left_grip() {
     return re4vr::grip_held(true);
@@ -222,18 +222,8 @@ inline std::optional<int32_t> ammo_count(::REManagedObject* wi) {
     return re4vr::safe([&] { return sdk::call_object_func_easy<int32_t>(wi, "get_CurrentAmmoCount"); });
 }
 inline ::REManagedObject* real_wi(std::optional<int32_t> want = std::nullopt) {
-    if (re4vr::lua_is_true("__re4_use_accessor_item") == false && re4vr::lua_number("__re4_use_accessor_item")) {
-        // only skip when explicitly false; lua_is_true is false for nil, which should still use accessor
-    }
-    {
-        re4vr::LuaGuard g;
-        auto* L = g.lua();
-        if (L) {
-            sol::object o = (*L)["__re4_use_accessor_item"];
-            if (o.get_type() == sol::type::boolean && !o.as<bool>()) {
-                return nullptr;
-            }
-        }
+    if (RE4VRShared::get()->re4_use_accessor_item == false) {
+        return nullptr;
     }
     auto* p = pe();
     if (!p) {
@@ -268,10 +258,10 @@ inline ::REManagedObject* live_wi() {
     if (auto* r = real_wi()) {
         return r;
     }
-    auto* cached = (::REManagedObject*)re4vr::lua_object("__re4_live_wi");
+    auto* cached = (::REManagedObject*)RE4VRShared::get()->re4_live_wi;
     if (re4vr::obj_ok(cached)) {
-        auto t = re4vr::lua_number("__re4_live_wi_t").value_or(-1);
-        if (re4vr::lua_os_clock() - t < 0.25) {
+        auto t = RE4VRShared::get()->re4_live_wi_t.value_or(-1);
+        if (re4vr::now() - t < 0.25) {
             return cached;
         }
     }
@@ -425,8 +415,8 @@ inline void cache_live_wi(::REManagedObject* wi) {
     if (!re4vr::obj_ok(wi)) {
         return;
     }
-    re4vr::lua_set_object("__re4_live_wi", wi);
-    re4vr::lua_set_number("__re4_live_wi_t", re4vr::lua_os_clock());
+    RE4VRShared::get()->re4_live_wi = wi;
+    RE4VRShared::get()->re4_live_wi_t = re4vr::now();
 }
 inline void set_pose_name(std::string_view g, const std::string& name) {
     if (name.empty()) {
@@ -482,7 +472,7 @@ inline void play_wep_sound(::RETransform* tf, uint32_t id) {
     }
 }
 inline bool unlimited() {
-    return re4vr::lua_call_bool("__re4_is_unlimited", false);
+    return false;
 }
 inline bool gameplay() {
     re4vr::LuaGuard g;
@@ -514,8 +504,8 @@ inline void set_scale(::REJoint* j, float s) {
     re4vr::pcall([&] { sdk::call_object_func_easy<void*>(j, "set_LocalScale", Vector3f{s, s, s}); });
 }
 inline void pose_fade_export() {
-    if (!re4vr::lua_number("__re4_pose_fade_dur")) {
-        re4vr::lua_set_number("__re4_pose_fade_dur", 0.10);
+    if (!RE4VRShared::get()->re4_pose_fade_dur) {
+        RE4VRShared::get()->re4_pose_fade_dur = 0.10;
     }
 }
 
@@ -532,10 +522,10 @@ struct PoseFade {
             return {{}, 0.0f};
         }
         if (release_t < 0) {
-            release_t = re4vr::lua_os_clock();
+            release_t = re4vr::now();
         }
-        const float dur = (float)re4vr::lua_number("__re4_pose_fade_dur").value_or(0.10);
-        const float el = (float)(re4vr::lua_os_clock() - release_t);
+        const float dur = (float)RE4VRShared::get()->re4_pose_fade_dur.value_or(0.10);
+        const float el = (float)(re4vr::now() - release_t);
         if (el >= dur) {
             name.clear();
             return {{}, 0.0f};
@@ -601,20 +591,8 @@ inline HookManager::PreHookResult skip_if(bool skip) {
     return skip ? HookManager::PreHookResult::SKIP_ORIGINAL : HookManager::PreHookResult::CALL_ORIGINAL;
 }
 
-inline void wrap_smih(sol::state& lua, std::function<std::optional<bool>(bool)> handler) {
-    sol::object prev = lua["__re4_reload_set_mag_in_hand"];
-    lua["__re4_reload_set_mag_in_hand"] = [prev, handler](bool a) -> bool {
-        if (auto r = handler(a)) {
-            return *r;
-        }
-        if (prev.is<sol::protected_function>()) {
-            auto res = prev.as<sol::protected_function>()(a);
-            if (res.valid() && res.get_type() == sol::type::boolean) {
-                return res.get<bool>();
-            }
-        }
-        return false;
-    };
+inline void wrap_smih(sol::state&, std::function<std::optional<bool>(bool)> handler) {
+    RE4VRShared::get()->mag_in_hand_handlers.push_back(std::move(handler));
 }
 } // namespace re4vr::rl
 #endif

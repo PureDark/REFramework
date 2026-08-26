@@ -16,6 +16,7 @@
 #include <sdk/SystemArray.hpp>
 #include <spdlog/spdlog.h>
 
+#include "RE4VRCrosshair.hpp"
 #include "RE4VRFrameCache.hpp"
 #include "RE4VRShared.hpp"
 #include "../../../ScriptRunner.hpp"
@@ -142,8 +143,8 @@ std::optional<std::string> RE4VRHolster::on_initialize() {
     }
     auto tap = re4vr::load_json_file("re4_vr/re4_vr_holster_tap.json");
     m_aim_hold = re4vr::j_num(tap, "aim_hold", 0.35f);
-    re4vr::lua_set_number("__re4_holster_crouch_gain", re4vr::j_num(tap, "crouch_gain", 0.0f));
-    re4vr::lua_set_number("__re4_holster_ada_mesh_z", re4vr::j_num(tap, "ada_mesh_z", 0.0f));
+    RE4VRShared::get()->re4_holster_crouch_gain = re4vr::j_num(tap, "crouch_gain", 0.0f);
+    RE4VRShared::get()->re4_holster_ada_mesh_z = re4vr::j_num(tap, "ada_mesh_z", 0.0f);
 
     m_mesh_t = typeof_t("via.render.Mesh");
     m_snd_t = typeof_t("soundlib.SoundContainer");
@@ -163,11 +164,11 @@ std::optional<std::string> RE4VRHolster::on_initialize() {
             }
         }
     }
-    re4vr::lua_set_bool("__re4_knife_gate", true);
-    re4vr::lua_set_bool("__re4_melee_gate", true);
-    re4vr::lua_set_bool("__re4_knife_holster_hook", true);
-    re4vr::lua_set_bool("__re4_knife_gate_hook", true);
-    re4vr::lua_set_bool("__re4_melee_gate_hook", true);
+    RE4VRShared::get()->re4_knife_gate = true;
+    RE4VRShared::get()->re4_melee_gate = true;
+    RE4VRShared::get()->re4_knife_holster_hook = true;
+    RE4VRShared::get()->re4_knife_gate_hook = true;
+    RE4VRShared::get()->re4_melee_gate_hook = true;
     return std::nullopt;
 }
 
@@ -194,7 +195,7 @@ void RE4VRHolster::load_slot(Slot& s, const std::string& path) {
 }
 
 void RE4VRHolster::save_slot(Slot& s) {
-    const auto ch = re4vr::lua_string("__re4_knife_char").value_or("");
+    const auto ch = RE4VRShared::get()->re4_knife_char.value_or("");
     if (ch == "ada" && s.path == "re4_vr/re4_vr_knife.json") {
         return;
     }
@@ -378,10 +379,10 @@ bool RE4VRHolster::has_weapon_in_inventory(const std::unordered_set<int32_t>& id
 }
 
 bool RE4VRHolster::slot_dormant(const Slot& s) const {
-    if (re4vr::lua_is_true("__re4_holster_killswitch")) {
+    if (RE4VRShared::get()->re4_holster_killswitch) {
         return true;
     }
-    return re4vr::lua_is_true("__re4_holster_knife_only") && s.name != "knife";
+    return RE4VRShared::get()->re4_holster_knife_only && s.name != "knife";
 }
 
 ::REJoint* RE4VRHolster::slot_joint(Slot& s) {
@@ -498,10 +499,10 @@ void RE4VRHolster::apply_slot(Slot& s) {
         return;
     }
     const float scv = jn(s.cfg, "scale", 1.0f);
-    const float d = (float)re4vr::lua_number("__re4_ub_z_delta").value_or(0);
-    const float g = (float)re4vr::lua_number("__re4_holster_crouch_gain").value_or(0);
-    const float az = (re4vr::lua_string("__re4_knife_char").value_or("") == "ada")
-        ? (float)re4vr::lua_number("__re4_holster_ada_mesh_z").value_or(0)
+    const float d = (float)RE4VRShared::get()->re4_ub_z_delta.value_or(0);
+    const float g = (float)RE4VRShared::get()->re4_holster_crouch_gain.value_or(0);
+    const float az = (RE4VRShared::get()->re4_knife_char.value_or("") == "ada")
+        ? (float)RE4VRShared::get()->re4_holster_ada_mesh_z.value_or(0)
         : 0.0f;
     const float cz = -d * g + az;
     auto write_scale = [&] {
@@ -630,7 +631,7 @@ void RE4VRHolster::tick_slot(Slot& s) {
             }
             if (s.clone_obj && s.clone_mesh) {
                 bool dark = jb(s.cfg, "dim_in_use", true) && s.in_use;
-                if (s.name == "knife" && re4vr::lua_is_true("__re4_knife_left_clone")) {
+                if (s.name == "knife" && RE4VRShared::get()->re4_knife_left_clone) {
                     dark = true;
                 }
                 if (!s.last_dim || *s.last_dim != dark) {
@@ -709,17 +710,17 @@ void RE4VRHolster::tick_slot(Slot& s) {
     }
     // update_grab + knife lh zone
     if (s.name == "knife") {
-        re4vr::lua_set_number("__re4_knife_grab_trigger", jn(s.cfg, "grab_trigger", 0.16f));
-        re4vr::lua_set_number("__re4_knife_grab_release", jn(s.cfg, "grab_release", 0.24f));
+        RE4VRShared::get()->re4_knife_grab_trigger = jn(s.cfg, "grab_trigger", 0.16f);
+        RE4VRShared::get()->re4_knife_grab_release = jn(s.cfg, "grab_release", 0.24f);
         auto anchor = (!slot_dormant(s) && jb(s.cfg, "enabled", true)) ? re4vr::lua_vec3(s.anchor_g) : std::nullopt;
-        auto lhp = anchor ? (re4vr::lua_vec3("__vr_lh_ctrl_raw") ? re4vr::lua_vec3("__vr_lh_ctrl_raw") : lh_world()) : std::nullopt;
+        auto lhp = anchor ? (RE4VRShared::get()->vr_lh_ctrl_raw ? RE4VRShared::get()->vr_lh_ctrl_raw : lh_world()) : std::nullopt;
         if (!anchor || !lhp) {
-            re4vr::lua_set_nil("__re4_knife_lh_dist");
+            RE4VRShared::get()->re4_knife_lh_dist.reset();
             m_lh_knife_zone = false;
-            re4vr::lua_set_bool("__re4_knife_lh_in_zone", false);
+            RE4VRShared::get()->re4_knife_lh_in_zone = false;
         } else {
             const float ld = glm::length(*lhp - *anchor);
-            re4vr::lua_set_number("__re4_knife_lh_dist", ld);
+            RE4VRShared::get()->re4_knife_lh_dist = ld;
             if (!m_lh_knife_zone) {
                 if (ld <= jn(s.cfg, "grab_trigger", 0.16f)) {
                     m_lh_knife_zone = true;
@@ -727,19 +728,19 @@ void RE4VRHolster::tick_slot(Slot& s) {
             } else if (ld > jn(s.cfg, "grab_release", 0.24f)) {
                 m_lh_knife_zone = false;
             }
-            re4vr::lua_set_bool("__re4_knife_lh_in_zone", m_lh_knife_zone);
+            RE4VRShared::get()->re4_knife_lh_in_zone = m_lh_knife_zone;
         }
     }
     if (slot_dormant(s)
-        || (s.name == "shoulder" && re4vr::lua_number("__vr_throw_windup_until").value_or(0) > re4vr::now())
-        || (s.name == "knife" && re4vr::lua_is_true("__re4_knife_left_clone"))) {
+        || (s.name == "shoulder" && RE4VRShared::get()->vr_throw_windup_until.value_or(0) > re4vr::now())
+        || (s.name == "knife" && RE4VRShared::get()->re4_knife_left_clone)) {
         s.grab_in_zone = false;
         s.last_dist = 99;
         re4vr::lua_set_bool(s.zone_g, false);
         return;
     }
     auto anchor = re4vr::lua_vec3(s.anchor_g);
-    auto rh = anchor ? (re4vr::lua_vec3("__vr_rh_ctrl_raw") ? re4vr::lua_vec3("__vr_rh_ctrl_raw") : rh_world()) : std::nullopt;
+    auto rh = anchor ? (RE4VRShared::get()->vr_rh_ctrl_raw ? RE4VRShared::get()->vr_rh_ctrl_raw : rh_world()) : std::nullopt;
     if (!jb(s.cfg, "enabled", true) || !anchor || !rh) {
         s.grab_in_zone = false;
         s.last_dist = 99;
@@ -791,7 +792,7 @@ bool RE4VRHolster::hmd_basis(Vector3f& pos, Vector3f& right, Vector3f& up, Vecto
 }
 
 std::optional<Vector3f> RE4VRHolster::rh_world() {
-    if (auto p = re4vr::lua_vec3("__vr_rh_world")) {
+    if (auto p = RE4VRShared::get()->vr_rh_world) {
         return p;
     }
     auto* tf = body_tf();
@@ -803,10 +804,10 @@ std::optional<Vector3f> RE4VRHolster::rh_world() {
 }
 
 std::optional<Vector3f> RE4VRHolster::lh_world() {
-    if (auto p = re4vr::lua_vec3("__vr_lh_joint_pos")) {
+    if (auto p = RE4VRShared::get()->vr_lh_joint_pos) {
         return p;
     }
-    if (auto p = re4vr::lua_vec3("__vr_lh_world")) {
+    if (auto p = RE4VRShared::get()->vr_lh_world) {
         return p;
     }
     auto* tf = body_tf();
@@ -1050,7 +1051,7 @@ void RE4VRHolster::do_grab(Slot* best) {
         return;
     }
     if (best->name == "knife"
-        && (re4vr::lua_string("__re4_knife_hand").value_or("") == "left" || re4vr::lua_is_true("__re4_knife_left_clone"))) {
+        && (RE4VRShared::get()->re4_knife_hand.value_or("") == "left" || RE4VRShared::get()->re4_knife_left_clone)) {
         return;
     }
     auto ew = equip_wid();
@@ -1058,9 +1059,9 @@ void RE4VRHolster::do_grab(Slot* best) {
     const bool in_hand = really.value_or(false) && ew && best->ids.contains(*ew);
     const double now = re4vr::now();
     if (in_hand) {
-        re4vr::lua_set_number("__vr_post_stow_until", now + 0.6);
+        RE4VRShared::get()->vr_post_stow_until = now + 0.6;
     }
-    re4vr::lua_set_bool("__re4_aim_relatch", true);
+    RE4VRShared::get()->re4_aim_relatch = true;
     defer([this, best, in_hand]() {
         auto* pe = get_pe();
         if (!pe) {
@@ -1069,21 +1070,21 @@ void RE4VRHolster::do_grab(Slot* best) {
         re4vr::pcall([&] { sdk::call_object_func_easy<void*>(pe, "clearRequest"); });
         const double t = re4vr::now();
         if (best->name == "knife") {
-            re4vr::lua_set_number("__re4_stow_guard_until", t + 0.5);
-            re4vr::lua_set_number("__re4_stow_ours_until", t + 0.2);
+            RE4VRShared::get()->re4_stow_guard_until = t + 0.5;
+            RE4VRShared::get()->re4_stow_ours_until = t + 0.2;
             if (in_hand) {
                 re4vr::pcall([&] { sdk::call_object_func_easy<void*>(pe, "requestEquipBareHand", false, false); });
                 m_ar.suppress = true;
                 m_ar.stow_until = t + 0.5;
             } else {
-                re4vr::lua_set_number("__re4_knife_draw_ours_t", t);
+                RE4VRShared::get()->re4_knife_draw_ours_t = t;
                 re4vr::pcall([&] { sdk::call_object_func_easy<void*>(pe, "requestEquipKnife"); });
                 m_ar.suppress = false;
-                re4vr::lua_set_bool("__re4_knife_left_intent", false);
-                re4vr::lua_set_bool("__re4_knife_left_clone", false);
+                RE4VRShared::get()->re4_knife_left_intent = false;
+                RE4VRShared::get()->re4_knife_left_clone = false;
             }
             re4vr::pcall([&] { sdk::call_object_func_easy<void*>(pe, "execChangeWeapon"); });
-            re4vr::lua_set_number("__re4_stow_ours_until", 0);
+            RE4VRShared::get()->re4_stow_ours_until = 0;
             return;
         }
         if (in_hand) {
@@ -1113,7 +1114,7 @@ void RE4VRHolster::do_grab(Slot* best) {
                 draw_last_pistol(pe);
             }
             m_ar.suppress = false;
-            re4vr::lua_set_bool("__re4_clone_no_autogun", false);
+            RE4VRShared::get()->re4_clone_no_autogun = false;
         }
         re4vr::pcall([&] { sdk::call_object_func_easy<void*>(pe, "execChangeWeapon"); });
     });
@@ -1133,7 +1134,7 @@ RE4VRHolster::Slot* RE4VRHolster::nearest_with_clone() {
     Slot* best = nullptr;
     float bestd = 1e9f;
     for (auto* s : {&m_knife, &m_pistol, &m_grenade, &m_shoulder}) {
-        const bool cloneless_knife = s->name == "knife" && re4vr::lua_not_false("__re4_knife_clonless_grab") && s->has_inv;
+        const bool cloneless_knife = s->name == "knife" && RE4VRShared::get()->re4_knife_clonless_grab && s->has_inv;
         const bool grabbable = s->clone_obj || s->detached_zone || cloneless_knife;
         if (!slot_dormant(*s) && jb(s->cfg, "enabled", true) && grabbable && s->last_dist < bestd) {
             best = s;
@@ -1144,11 +1145,11 @@ RE4VRHolster::Slot* RE4VRHolster::nearest_with_clone() {
 }
 
 void RE4VRHolster::grab_dispatch() {
-    if (re4vr::lua_is_true("__re4_holster_killswitch")) {
+    if (RE4VRShared::get()->re4_holster_killswitch) {
         m_grip_prev = right_grip();
         m_press_armed = false;
         m_tap_mode = false;
-        re4vr::lua_set_bool("__vr_holster_grab_armed", false);
+        RE4VRShared::get()->vr_holster_grab_armed = false;
         return;
     }
     const double now = re4vr::now();
@@ -1188,20 +1189,20 @@ void RE4VRHolster::grab_dispatch() {
         m_tap_mode = false;
     }
     m_grip_prev = grip;
-    if (m_tap_mode && re4vr::lua_number("__re4_scope_wid")) {
-        re4vr::lua_set_bool("__vr_holster_grab_armed", grip && (now - m_grip_t0) < m_aim_hold);
+    if (m_tap_mode && RE4VRShared::get()->re4_scope_wid) {
+        RE4VRShared::get()->vr_holster_grab_armed = grip && (now - m_grip_t0) < m_aim_hold;
     } else {
-        re4vr::lua_set_bool("__vr_holster_grab_armed", m_press_armed);
+        RE4VRShared::get()->vr_holster_grab_armed = m_press_armed;
     }
 }
 
 void RE4VRHolster::mag_tick() {
-    if (re4vr::lua_is_true("__re4_holster_killswitch") || re4vr::lua_is_true("__re4_holster_knife_only") || !jb(m_mag_cfg, "enabled", true)) {
+    if (RE4VRShared::get()->re4_holster_killswitch || RE4VRShared::get()->re4_holster_knife_only || !jb(m_mag_cfg, "enabled", true)) {
         if (m_mag_holding) {
             m_mag_holding = false;
-            re4vr::lua_pcall_name("__re4_reload_set_mag_in_hand", false);
+            RE4VRShared::get()->set_mag_in_hand(false);
         }
-        re4vr::lua_set_bool("__vr_in_mag_holster_zone", false);
+        RE4VRShared::get()->vr_in_mag_holster_zone = false;
         return;
     }
     auto* tf = body_tf();
@@ -1220,12 +1221,12 @@ void RE4VRHolster::mag_tick() {
         const auto jr = sdk::get_joint_rotation(m_mag_joint);
         anchor = jp + re4vr::quat_rotate(jr, Vector3f{jn(m_mag_cfg, "off_x"), jn(m_mag_cfg, "off_y"), jn(m_mag_cfg, "off_z")});
     }
-    auto lh = re4vr::lua_vec3("__vr_lh_ctrl_raw");
+    auto lh = RE4VRShared::get()->vr_lh_ctrl_raw;
     if (!lh) {
         lh = lh_world();
     }
     if (!anchor || !lh) {
-        re4vr::lua_set_bool("__vr_in_mag_holster_zone", m_mag_holding);
+        RE4VRShared::get()->vr_in_mag_holster_zone = m_mag_holding;
         return;
     }
     m_mag_dist = glm::length(*lh - *anchor);
@@ -1239,19 +1240,19 @@ void RE4VRHolster::mag_tick() {
     const bool lgrip = left_grip();
     if (!m_mag_holding) {
         if (m_mag_in_zone && lgrip) {
-            if (re4vr::lua_is_true("__re4_reload_grab_empty")) {
+            if (RE4VRShared::get()->re4_reload_grab_empty) {
                 haptic_left(0.16f, 80.0f, 1.0f);
             } else {
                 m_mag_holding = true;
-                re4vr::lua_pcall_name("__re4_reload_set_mag_in_hand", true);
+                RE4VRShared::get()->set_mag_in_hand(true);
                 haptic_left(0.16f, 80.0f, 1.0f);
             }
         }
     } else if (!lgrip) {
         m_mag_holding = false;
-        re4vr::lua_pcall_name("__re4_reload_set_mag_in_hand", false);
+        RE4VRShared::get()->set_mag_in_hand(false);
     }
-    re4vr::lua_set_bool("__vr_in_mag_holster_zone", m_mag_in_zone || m_mag_holding);
+    RE4VRShared::get()->vr_in_mag_holster_zone = m_mag_in_zone || m_mag_holding;
 }
 
 void RE4VRHolster::track_last_weapons() {
@@ -1314,7 +1315,7 @@ void RE4VRHolster::knife_char_tick() {
         return;
     }
     m_char = want;
-    re4vr::lua_set_string("__re4_knife_char", want);
+    RE4VRShared::get()->re4_knife_char = std::string{want};
     const auto path = (want == "ada") ? m_knife.path_ada : std::string("re4_vr/re4_vr_knife.json");
     if (want == "ada") {
         auto existing = re4vr::load_json_file(path);
@@ -1330,9 +1331,9 @@ void RE4VRHolster::knife_char_tick() {
 void RE4VRHolster::auto_redraw_tick() {
     auto [in_hand_now, knife_now, gren_now, amb] = weapon_in_hand();
     if (in_hand_now) {
-        re4vr::lua_set_bool("__vr_bare_hands", !*in_hand_now);
-        re4vr::lua_set_bool("__vr_knife_in_hand", knife_now);
-        re4vr::lua_set_bool("__vr_grenade_in_hand", gren_now);
+        RE4VRShared::get()->vr_bare_hands = !*in_hand_now;
+        RE4VRShared::get()->vr_knife_in_hand = knife_now;
+        RE4VRShared::get()->vr_grenade_in_hand = gren_now;
     }
     auto* c = ctx();
     if (c) {
@@ -1348,19 +1349,19 @@ void RE4VRHolster::auto_redraw_tick() {
                 }
             });
             dmg_mask = m;
-            re4vr::lua_set_number("__re4_state_damage_mask", m);
+            RE4VRShared::get()->re4_state_damage_mask = m;
         }
         if (dmg_mask && *dmg_mask) {
             auto* sv = re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(c, "get_State"); }).value_or(nullptr);
             auto svn = sv ? re4vr::safe([&] { return utility::re_managed_object::get_field<int32_t>(sv, "value__"); }) : std::nullopt;
             if (svn && (*svn & *dmg_mask) == *dmg_mask) {
-                re4vr::lua_set_number("__vr_stagger_recent_until", re4vr::now() + 0.6);
+                RE4VRShared::get()->vr_stagger_recent_until = re4vr::now() + 0.6;
             }
         }
     }
     bool pg = re4vr::call_killswitch_bool("is_pure_gameplay", false);
-    if (!pg && re4vr::lua_number("__re4_hookshot_recent_until").value_or(0) > re4vr::now()
-        && !re4vr::lua_is_true("__re4_holster_killswitch")) {
+    if (!pg && RE4VRShared::get()->re4_hookshot_recent_until.value_or(0) > re4vr::now()
+        && !RE4VRShared::get()->re4_holster_killswitch) {
         pg = true;
     }
     const double now = re4vr::now();
@@ -1372,7 +1373,7 @@ void RE4VRHolster::auto_redraw_tick() {
         m_ar.pure_since = 0;
         m_ar.left_pure_t = now;
     }
-    if (re4vr::lua_is_true("__re4_in_mercs")) {
+    if (RE4VRShared::get()->re4_in_mercs) {
         const bool body_da = re4vr::body_game_object() != nullptr;
         if (!body_da) {
             m_merc_body_weg = true;
@@ -1399,24 +1400,24 @@ void RE4VRHolster::auto_redraw_tick() {
             m_ar.has_snap = true;
         }
     }
-    re4vr::lua_set_bool("__re4_ar_suppress", m_ar.suppress);
-    re4vr::lua_set_bool("__re4_ar_pg", pg);
+    RE4VRShared::get()->re4_ar_suppress = m_ar.suppress;
+    RE4VRShared::get()->re4_ar_pg = pg;
     float stable_need = 0.4f;
-    if ((now - re4vr::lua_number("__re4_finisher_prompt_seen").value_or(-999)) < 5.0) {
+    if ((now - RE4VRShared::get()->re4_finisher_prompt_seen.value_or(-999)) < 5.0) {
         stable_need = 0.05f;
     }
     if (in_hand_now == false && !m_ar.suppress && m_ar.has_snap && !m_ar.snap_bare && m_ar.snap
         && pg && (now - m_ar.pure_since) >= stable_need && now >= m_ar.next_try
-        && ((now - m_ar.left_pure_t) < 2.0 || re4vr::lua_number("__vr_stagger_recent_until").value_or(0) > now)
+        && ((now - m_ar.left_pure_t) < 2.0 || RE4VRShared::get()->vr_stagger_recent_until.value_or(0) > now)
         && !no_weapons_yet()) {
         m_ar.next_try = now + 0.20;
         auto* pe = get_pe();
         if (pe) {
-            re4vr::lua_set_number("__re4_our_equip_until", now + 0.5);
+            RE4VRShared::get()->re4_our_equip_until = now + 0.5;
             re4vr::pcall([&] { sdk::call_object_func_easy<void*>(pe, "clearRequest"); });
             const int32_t snap = *m_ar.snap;
             if (m_knife.ids.contains(snap)) {
-                re4vr::lua_set_number("__re4_knife_draw_ours_t", now);
+                RE4VRShared::get()->re4_knife_draw_ours_t = now;
                 re4vr::pcall([&] { sdk::call_object_func_easy<void*>(pe, "requestEquipKnife"); });
             } else if (m_grenade.ids.contains(snap)) {
                 draw_last_grenade(pe);
@@ -1454,7 +1455,7 @@ void RE4VRHolster::holster_exec() {
 void RE4VRHolster::holster_bare() {
     m_ar.suppress = true;
     m_ar.stow_until = re4vr::now() + 0.5;
-    re4vr::lua_set_number("__re4_our_equip_until", re4vr::now() + 0.5);
+    RE4VRShared::get()->re4_our_equip_until = re4vr::now() + 0.5;
     defer([this]() {
         auto* pe = get_pe();
         if (!pe) {
@@ -1494,40 +1495,40 @@ void RE4VRHolster::run_pending() {
     }
     auto pa = std::move(m_pending);
     m_pending = {};
-    re4vr::lua_set_number("__re4_our_equip_until", re4vr::now() + 0.5);
+    RE4VRShared::get()->re4_our_equip_until = re4vr::now() + 0.5;
     re4vr::pcall([&] { pa(); });
 }
 
 bool RE4VRHolster::knife_gate_skip() {
-    if (!re4vr::lua_not_false("__re4_knife_gate")) {
+    if (!RE4VRShared::get()->re4_knife_gate) {
         return false;
     }
-    if ((re4vr::now() - re4vr::lua_number("__re4_knife_draw_ours_t").value_or(-999)) < 1.0) {
+    if ((re4vr::now() - RE4VRShared::get()->re4_knife_draw_ours_t.value_or(-999)) < 1.0) {
         return false;
     }
-    if (re4vr::lua_is_true("__re4_holster_killswitch") || re4vr::lua_is_true("__re4_ks4_active")
-        || re4vr::lua_is_true("__re4_holster_knife_only") || re4vr::lua_is_true("__re4_knife_equipped")
-        || re4vr::lua_is_true("__re4_knife_left_clone") || re4vr::lua_is_true("__re4_knife_left_intent")
-        || re4vr::lua_is_true("__re4_knife_flying") || re4vr::lua_is_true("__re4_clone_finisher_restore")) {
+    if (RE4VRShared::get()->re4_holster_killswitch || RE4VRShared::get()->re4_ks4_active
+        || RE4VRShared::get()->re4_holster_knife_only || RE4VRShared::get()->re4_knife_equipped
+        || RE4VRShared::get()->re4_knife_left_clone || RE4VRShared::get()->re4_knife_left_intent
+        || RE4VRShared::get()->re4_knife_flying || RE4VRShared::get()->re4_clone_finisher_restore) {
         return false;
     }
     return true;
 }
 bool RE4VRHolster::melee_gate_skip() {
-    if (!re4vr::lua_not_false("__re4_melee_gate")) {
+    if (!RE4VRShared::get()->re4_melee_gate) {
         return false;
     }
-    if (re4vr::lua_call_bool("__re4_is_finisher_prompt", false)) {
+    if (RE4VRCrosshair::get()->is_finisher_prompt()) {
         return false;
     }
-    if ((re4vr::now() - re4vr::lua_number("__re4_knife_draw_ours_t").value_or(-999)) < 1.0) {
+    if ((re4vr::now() - RE4VRShared::get()->re4_knife_draw_ours_t.value_or(-999)) < 1.0) {
         return false;
     }
-    if (re4vr::lua_is_true("__re4_holster_killswitch") || re4vr::lua_is_true("__re4_ks4_active")
-        || re4vr::lua_is_true("__re4_ks_active") || re4vr::lua_is_true("__re4_holster_knife_only")
-        || re4vr::lua_is_true("__re4_knife_equipped") || re4vr::lua_is_true("__re4_knife_left_clone")
-        || re4vr::lua_is_true("__re4_knife_left_intent") || re4vr::lua_is_true("__re4_knife_flying")
-        || re4vr::lua_is_true("__re4_clone_finisher_restore")) {
+    if (RE4VRShared::get()->re4_holster_killswitch || RE4VRShared::get()->re4_ks4_active
+        || RE4VRShared::get()->re4_ks_active || RE4VRShared::get()->re4_holster_knife_only
+        || RE4VRShared::get()->re4_knife_equipped || RE4VRShared::get()->re4_knife_left_clone
+        || RE4VRShared::get()->re4_knife_left_intent || RE4VRShared::get()->re4_knife_flying
+        || RE4VRShared::get()->re4_clone_finisher_restore) {
         return false;
     }
     return true;
@@ -1581,10 +1582,10 @@ void RE4VRHolster::on_lua_state_destroyed(sol::state&) {
 void RE4VRHolster::on_frame() {
     ScriptProfileGuard guard("re4_vr_holster.lua", "on_frame", re4vr::profile_frame());
     m_hol_frame++;
-    const bool ks = re4vr::call_killswitch_bool("is_active", re4vr::lua_is_true("__re4_ks_active"))
-        || re4vr::lua_is_true("__re4_throwsight_active") || no_weapons_yet();
-    re4vr::lua_set_bool("__re4_holster_killswitch", ks);
-    re4vr::lua_set_bool("__re4_holster_knife_only", knife_only_stage());
+    const bool ks = re4vr::call_killswitch_bool("is_active", RE4VRShared::get()->re4_ks_active)
+        || RE4VRShared::get()->re4_throwsight_active || no_weapons_yet();
+    RE4VRShared::get()->re4_holster_killswitch = ks;
+    RE4VRShared::get()->re4_holster_knife_only = knife_only_stage();
     knife_char_tick();
     track_last_weapons();
     auto_redraw_tick();

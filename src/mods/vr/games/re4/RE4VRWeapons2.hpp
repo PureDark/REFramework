@@ -25,6 +25,8 @@ public:
     void on_application_entry(void* entry, const char* name, size_t hash) override;
 
     void apply_left_knife_pose(::REManagedObject* go);
+    void apply_wildwest_fingers();
+    void apply_wildwest(Vector3f& wpos, glm::quat& wrot);
 
 private:
     struct Off3 {
@@ -34,6 +36,7 @@ private:
 
     void export_globals(sol::state& lua);
     void load_json();
+    void load_wildwest();
     void save_parry();
     void save_lefthand();
     void save_lh_off();
@@ -75,5 +78,90 @@ private:
     std::optional<int32_t> m_current_knife_wid{};
     bool m_parry_was{false};
     double m_parry_until{0};
+    struct WwEuler {
+        float x{0}, y{0}, z{0};
+    };
+    struct WwKf {
+        float a{0}, x{0}, y{0}, z{0};
+    };
+    struct WwCfg {
+        bool enabled{true};
+        bool sound{true};
+        bool rt_gate{true};
+        bool pose_preview{false};
+        bool prev_interp{false};
+        bool block_with_stock{true};
+        float sustain{0.60f};
+        float sens{1.20f};
+        float rt_sens{0.10f};
+        float rt_lockout{1.0f};
+        float speed{720.0f};
+        float dir{1.0f};
+        float pivot_x{0}, pivot_y{0}, pivot_z{0};
+        float off_x{0}, off_y{0}, off_z{0};
+        float prev_angle{90.0f};
+        float snd_interval{0.12f};
+    };
+    struct WwSpin {
+        bool active{false};
+        bool finishing{false};
+        bool by_rt{false};
+        float deg{0};
+        float finish_target{0};
+    };
+    struct WwVoice {
+        std::optional<double> t0{};
+        double dur{0};
+        int count{0};
+        int end_count{0};
+        uint32_t last_id{0};
+        bool fired{false};
+    };
+
+    std::unordered_map<std::string, WwEuler> m_ww_fing{};
+    float m_ww_finger_blend{0};
+    WwCfg m_ww{};
+    WwSpin m_ww_spin{};
+    WwVoice m_ww_voice{};
+    std::unordered_map<int32_t, std::vector<WwKf>> m_ww_okeys{};
+    std::unordered_map<int32_t, Vector3f> m_ww_pivot{};
+    std::optional<Vector3f> m_ww_active_lp{};
+    float m_ww_angle{0};
+    float m_ww_progress{0};
+    std::optional<int32_t> m_ww_cur_wid{};
+    std::optional<float> m_ww_prev_y{};
+    std::optional<double> m_ww_prev_t{};
+    int m_ww_prev_vsign{0};
+    double m_ww_prev_vsign_t{0};
+    std::optional<double> m_ww_bob_started{};
+    double m_ww_last_flip_t{0};
+    bool m_ww_rt_gate_prev{false};
+    bool m_ww_rt_press_armed{false};
+    bool m_ww_rt_prev_raw{false};
+    double m_ww_last_shot_t{-999};
+    std::optional<double> m_ww_last_shot_seq{};
+    double m_ww_snd_next{0};
+    std::optional<int32_t> m_ww_stock_wid{};
+    double m_ww_stock_t{0};
+    bool m_ww_stock_on{false};
+    ::REManagedObject* m_ww_pe{nullptr};
+
+    void ww_reset_all();
+    void ww_reset_bob();
+    bool ww_is_pistol(int32_t wid) const;
+    bool ww_stock_mounted(int32_t wid);
+    ::REManagedObject* ww_head_updater();
+    std::optional<int32_t> ww_wid(::REManagedObject* hu);
+    ::RETransform* ww_weap_tf(::REManagedObject* hu);
+    std::optional<Vector3f> ww_local_pivot(::RETransform* tf);
+    std::optional<Vector3f> ww_offset_at(float phase);
+    bool ww_rt_gate();
+    std::optional<float> ww_right_ctrl_y();
+    void ww_sound_tick(::REManagedObject* hu, double now);
+    void ww_sound_reset();
+    ::REManagedObject* ww_sound_container(::REManagedObject* hu);
+    void ww_voice_tick();
+    void ww_voice_end();
+    ::REManagedObject* ww_voice_container();
 };
 #endif

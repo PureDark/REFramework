@@ -150,8 +150,8 @@ void RE4VRUI::apply_mono(bool want) {
 }
 
 void RE4VRUI::apply_canvas(bool want) {
-    if (!re4vr::lua_is_true("__re4_fork_canvas") && !re4vr::lua_not_false("__re4_fork_canvas")) {
-        // still try: builtin fork always has canvas
+    if (!RE4VRShared::get()->re4_fork_canvas) {
+        // builtin fork always has canvas; continue anyway
     }
     if (want == m_canvas) {
         return;
@@ -344,7 +344,7 @@ void RE4VRUI::on_lua_state_destroyed(sol::state&) {
 void RE4VRUI::on_frame() {
     ScriptProfileGuard guard("re4_vr_ui.lua", "on_frame", re4vr::profile_frame());
     apply_ptr_pitch();
-    const double now = re4vr::lua_os_clock();
+    const double now = re4vr::now();
     if (m_cfg_dirty_t && (now - *m_cfg_dirty_t) > 0.5) {
         m_cfg_dirty_t.reset();
         save_json();
@@ -414,7 +414,7 @@ bool RE4VRUI::on_pre_gui_draw_element(REComponent* gui_element, void*) {
     }
 
     if (name == BINO_GUI) {
-        m_bino_seen_t = re4vr::lua_os_clock();
+        m_bino_seen_t = re4vr::now();
     }
 
     if (m_map_open && m_opt.mapglue && !m_glue_auto.count(name)) {

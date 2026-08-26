@@ -87,6 +87,8 @@ private:
     bool native_reload_active();
     void release_motion_targets();
     void post_poses(bool lock_pass);
+    void apply_ada_lazy_pose();
+    void apply_ada_flashlight();
     void publish_globals();
     glm::quat knife_flip_spin(const glm::quat& wrot);
     std::string rel_key(int32_t wid);
@@ -188,6 +190,11 @@ private:
     ::RETransform* m_fl_tf{nullptr};
     ::RETransform* m_fl_light_tf{nullptr};
     double m_fl_check{0};
+    bool m_ada_body{false};
+    double m_ada_body_t{-1.0};
+    ::RETransform* m_ada_fl_tf{nullptr};
+    ::RETransform* m_ada_fl_light_tf{nullptr};
+    double m_ada_fl_check{0};
     nlohmann::json m_cfg_raw{nlohmann::json::object()};
     std::unordered_set<int32_t> m_two_hand_ids{
         4100, 4101, 4102, 4200, 4201, 4202, 4400, 4401, 4402, 4500, 4501, 4502, 4600, 4701,

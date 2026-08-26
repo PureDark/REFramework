@@ -300,13 +300,13 @@ inline void RevolverFamily::update_cyl() {
     } else if (cyl_st.prog > tgt) {
         cyl_st.prog = std::max(tgt, cyl_st.prog - r.lerp);
     }
-    re4vr::lua_set_bool("__vr_revolver_cyl_open", cyl_st.prog > 0.15f);
+    RE4VRShared::get()->vr_revolver_cyl_open = cyl_st.prog > 0.15f;
 }
 inline void RevolverFamily::update_spin() {
     if (!wep.wid) {
         return;
     }
-    const int seq = (int)re4vr::lua_number("__vr_shot_seq").value_or(0);
+    const int seq = (int)RE4VRShared::get()->vr_shot_seq.value_or(0);
     if (!spin_st.prev_seq) {
         spin_st.prev_seq = seq;
     } else if (seq > *spin_st.prev_seq) {
@@ -327,9 +327,9 @@ inline void RevolverFamily::update_hammer() {
         ham = {};
         return;
     }
-    const float ry = (float)re4vr::lua_number("__vr_right_stick_y").value_or(0);
+    const float ry = (float)RE4VRShared::get()->vr_right_stick_y.value_or(0);
     const bool stick = ry <= -0.70f;
-    const int seq = (int)re4vr::lua_number("__vr_shot_seq").value_or(0);
+    const int seq = (int)RE4VRShared::get()->vr_shot_seq.value_or(0);
     if (!ham.prev_seq) {
         ham.prev_seq = seq;
     } else if (seq > *ham.prev_seq) {
@@ -339,14 +339,14 @@ inline void RevolverFamily::update_hammer() {
     }
     if (stick && !ham.prev_stick && !ham.cocked && !ham.running) {
         ham.running = true;
-        ham.t0 = re4vr::lua_os_clock();
+        ham.t0 = re4vr::now();
         ham.snd = false;
         ham.phase = 0;
     }
     ham.prev_stick = stick;
     if (ham.running) {
         const float dur = std::max(cock_dur, 0.05f);
-        ham.phase = std::min(1.f, (float)(re4vr::lua_os_clock() - ham.t0) / dur);
+        ham.phase = std::min(1.f, (float)(re4vr::now() - ham.t0) / dur);
         float u = std::min(ham.phase / 0.5f, 1.f);
         u = u * u * (3 - 2 * u);
         ham.ham_frac = u;
@@ -372,13 +372,13 @@ inline void RevolverFamily::update_hammer() {
         ham.hand_frac = 0;
         ham.ham_frac = ham.cocked ? 1.f : 0.f;
     }
-    re4vr::lua_set_number("__vr_rev_cock_frac", ham.hand_frac);
+    RE4VRShared::get()->vr_rev_cock_frac = ham.hand_frac;
 }
 inline void RevolverFamily::update_reload() {
     if (!cart || !wep.insert || !reload_ammo) {
         return;
     }
-    if (!re4vr::lua_is_true("__vr_revolver_cyl_open")) {
+    if (!RE4VRShared::get()->vr_revolver_cyl_open) {
         return;
     }
     auto hp = lh_world();
@@ -393,7 +393,7 @@ inline void RevolverFamily::update_reload() {
             insert_one();
         } else if (insert_one()) {
             cart = false;
-            insert_t = re4vr::lua_os_clock();
+            insert_t = re4vr::now();
             play(snd_insert);
             clone_destroy(clone_obj, clone_mesh);
         }
@@ -406,40 +406,40 @@ inline void RevolverFamily::on_frame() {
     refresh();
     if (!wep.wid) {
         cyl_st.prev_b = false;
-        re4vr::lua_set_number("__vr_rev_cock_frac", 0);
+        RE4VRShared::get()->vr_rev_cock_frac = 0;
         if (mih_owned) {
-            re4vr::lua_set_bool("__vr_mag_in_hand", false);
+            RE4VRShared::get()->vr_mag_in_hand = false;
             mih_owned = false;
         }
         return;
     }
-    re4vr::lua_set_bool("__vr_manual_reload_consume_b", true);
+    RE4VRShared::get()->vr_manual_reload_consume_b = true;
     const int loaded = ammo_count(live_wi()).value_or(gun_ammo().value_or(0));
     const int cap = live_wi() ? re4vr::safe([&] { return sdk::call_object_func_easy<int32_t>(live_wi(), "get_CurrentAmmoMax"); }).value_or(6) : 6;
-    re4vr::lua_set_bool("__re4_reload_grab_empty", loaded >= cap || (reserve_of(live_wi()) <= 0 && !unlimited()));
+    RE4VRShared::get()->re4_reload_grab_empty = loaded >= cap || (reserve_of(live_wi()) <= 0 && !unlimited());
     update_cyl();
     update_spin();
     update_hammer();
     update_reload();
-    re4vr::lua_set_number("__re4_reload_ui_wid", *wep.wid);
+    RE4VRShared::get()->re4_reload_ui_wid = *wep.wid;
     if (*wep.wid == hammer_wid) {
-        const bool cd = insert_t > 0 && (re4vr::lua_os_clock() - insert_t) < support_cooldown;
-        re4vr::lua_set_bool("__vr_mag_in_hand", cart || cd);
+        const bool cd = insert_t > 0 && (re4vr::now() - insert_t) < support_cooldown;
+        RE4VRShared::get()->vr_mag_in_hand = cart || cd;
         mih_owned = true;
     } else if (mih_owned) {
-        re4vr::lua_set_bool("__vr_mag_in_hand", false);
+        RE4VRShared::get()->vr_mag_in_hand = false;
         mih_owned = false;
     }
-    const bool cyl_open = re4vr::lua_is_true("__vr_revolver_cyl_open");
+    const bool cyl_open = RE4VRShared::get()->vr_revolver_cyl_open;
     const bool single = hammer_wid && *wep.wid == hammer_wid;
     auto* p = pe();
     const bool empty = single && p && re4vr::safe([&] { return sdk::call_object_func_easy<bool>(p, "isGunAmmoEmpty"); }).value_or(false);
     if (single) {
-        re4vr::lua_set_bool("__vr_block_fire_when_empty", cyl_open || (!ham.cocked && !unlimited()) || (empty && !unlimited()));
+        RE4VRShared::get()->vr_block_fire_when_empty = cyl_open || (!ham.cocked && !unlimited()) || (empty && !unlimited());
     } else {
-        re4vr::lua_set_bool("__vr_block_fire_when_empty", cyl_open);
+        RE4VRShared::get()->vr_block_fire_when_empty = cyl_open;
     }
-    const bool et = re4vr::lua_is_true("__re4_empty_trigger_held");
+    const bool et = RE4VRShared::get()->re4_empty_trigger_held;
     if (et && !dry_prev) {
         play(snd_dry);
         if (single && ham.cocked && !cyl_open) {
@@ -487,7 +487,7 @@ inline void RevolverFamily::apply() {
             clone_place_hand(clone_obj, s.x, s.y, s.z, s.rx, s.ry, s.rz, s.scale);
         }
         if (!s.pose.empty()) {
-            re4vr::lua_pcall_name("__re4_reload_apply_pose", s.pose, 1.0);
+            RE4VRShared::get()->apply_reload_pose(s.pose, 1.0f);
         }
     } else if (clone_obj) {
         clone_destroy(clone_obj, clone_mesh);
@@ -674,12 +674,12 @@ inline void BoltFamily::on_frame() {
     suppress_cycle();
     if (!wep.id) {
         if (mih) {
-            re4vr::lua_set_bool("__vr_mag_in_hand", false);
+            RE4VRShared::get()->vr_mag_in_hand = false;
             mih = false;
         }
         return;
     }
-    re4vr::lua_set_bool("__vr_manual_reload_consume_b", true);
+    RE4VRShared::get()->vr_manual_reload_consume_b = true;
     const int loaded = gun_ammo().value_or(ammo_count(live_wi()).value_or(0));
     if (bolt.prev_loaded && loaded < *bolt.prev_loaded) {
         bolt.needs = true;
@@ -724,13 +724,13 @@ inline void BoltFamily::on_frame() {
         if (jp && glm::distance(*hp, *jp) <= insert_distance && !cart.insert) {
             cart.slp = wep.cart ? jlp(wep.cart) : std::nullopt;
             cart.slr = wep.cart ? jlr(wep.cart) : std::nullopt;
-            cart.t0 = re4vr::lua_os_clock();
+            cart.t0 = re4vr::now();
             cart.insert = true;
             cart.active = false;
         }
     }
     if (cart.insert) {
-        const float t = std::min(1.f, (float)(re4vr::lua_os_clock() - cart.t0) / 0.18f);
+        const float t = std::min(1.f, (float)(re4vr::now() - cart.t0) / 0.18f);
         if (t >= 1.f) {
             cart.insert = false;
             if (reload_ammo) {
@@ -738,12 +738,12 @@ inline void BoltFamily::on_frame() {
             }
         }
     }
-    re4vr::lua_set_bool("__vr_block_fire_when_empty", bolt.open || bolt.needs);
-    re4vr::lua_set_bool("__vr_mag_in_hand", cart.active || cart.insert);
+    RE4VRShared::get()->vr_block_fire_when_empty = bolt.open || bolt.needs;
+    RE4VRShared::get()->vr_mag_in_hand = cart.active || cart.insert;
     mih = cart.active || cart.insert;
     const int cap = live_wi() ? re4vr::safe([&] { return sdk::call_object_func_easy<int32_t>(live_wi(), "get_CurrentAmmoMax"); }).value_or(0) : 0;
-    re4vr::lua_set_bool("__re4_reload_grab_empty", !bolt.open || loaded >= cap || (reserve_of(live_wi()) <= 0 && !unlimited()));
-    re4vr::lua_set_number("__re4_reload_ui_wid", wid);
+    RE4VRShared::get()->re4_reload_grab_empty = !bolt.open || loaded >= cap || (reserve_of(live_wi()) <= 0 && !unlimited());
+    RE4VRShared::get()->re4_reload_ui_wid = wid;
 }
 inline void BoltFamily::apply() {
     if (!enabled || !wep.bolt || !wep.rest_lp || !wep.rest_rot) {
@@ -753,7 +753,7 @@ inline void BoltFamily::apply() {
     set_jlr(wep.bolt, glm::normalize(*wep.rest_rot * quat_from_euler(0, 0, brz * bolt.roll)));
     if ((cart.active || cart.insert) && wep.cart) {
         if (cart.insert && cart.slp && wep.cart_rest) {
-            const float t = ease(std::min(1.f, (float)(re4vr::lua_os_clock() - cart.t0) / 0.18f));
+            const float t = ease(std::min(1.f, (float)(re4vr::now() - cart.t0) / 0.18f));
             set_jlp(wep.cart, Vector3f{
                 cart.slp->x + (wep.cart_rest->x - cart.slp->x) * t,
                 cart.slp->y + (wep.cart_rest->y - cart.slp->y) * t,
@@ -858,30 +858,30 @@ inline void XbowFamily::on_frame() {
     }
     refresh();
     if (!wep.id) {
-        re4vr::lua_set_bool("__re4_xbow_dummy_await", false);
+        RE4VRShared::get()->re4_xbow_dummy_await = false;
         return;
     }
-    re4vr::lua_set_bool("__vr_manual_reload_consume_b", true);
+    RE4VRShared::get()->vr_manual_reload_consume_b = true;
     auto hp = lh_world();
     auto gp = wep.tf ? re4vr::safe([&] { return sdk::get_transform_position(wep.tf); }) : std::nullopt;
     if (arrow.active && hp && gp && glm::distance(*hp, *gp) <= insert_distance) {
         arrow.active = false;
         arrow.insert = true;
-        arrow.t0 = re4vr::lua_os_clock();
+        arrow.t0 = re4vr::now();
     }
-    if (arrow.insert && (re4vr::lua_os_clock() - arrow.t0) >= 0.18) {
+    if (arrow.insert && (re4vr::now() - arrow.t0) >= 0.18) {
         arrow.insert = false;
         if (reload_ammo) {
             load_and_book(1);
         }
     }
     const bool show = arrow.active || arrow.insert;
-    re4vr::lua_set_bool("__vr_mag_in_hand", show);
-    re4vr::lua_set_bool("__re4_xbow_dummy_await", show);
+    RE4VRShared::get()->vr_mag_in_hand = show;
+    RE4VRShared::get()->re4_xbow_dummy_await = show;
     const int loaded = ammo_count(live_wi()).value_or(0);
     const int cap = live_wi() ? re4vr::safe([&] { return sdk::call_object_func_easy<int32_t>(live_wi(), "get_CurrentAmmoMax"); }).value_or(0) : 0;
-    re4vr::lua_set_bool("__re4_reload_grab_empty", loaded >= cap || (reserve_of(live_wi()) <= 0 && !unlimited()));
-    re4vr::lua_set_number("__re4_reload_ui_wid", wid);
+    RE4VRShared::get()->re4_reload_grab_empty = loaded >= cap || (reserve_of(live_wi()) <= 0 && !unlimited());
+    RE4VRShared::get()->re4_reload_ui_wid = wid;
 }
 inline void XbowFamily::apply() {
     if (!owns()) {
@@ -1027,7 +1027,7 @@ inline void Red9Family::on_frame() {
         clone_destroy(clone_obj, clone_mesh);
         return;
     }
-    re4vr::lua_set_bool("__vr_manual_reload_consume_b", true);
+    RE4VRShared::get()->vr_manual_reload_consume_b = true;
     auto hp = lh_world();
     if (clip.active && hp && wep.tf) {
         auto* dj = re4vr::joint_by_name(wep.tf, ip_joint);
@@ -1040,10 +1040,10 @@ inline void Red9Family::on_frame() {
         if (jp && glm::distance(*hp, dock) <= insert_dist) {
             clip.active = false;
             clip.insert = true;
-            clip.t0 = re4vr::lua_os_clock();
+            clip.t0 = re4vr::now();
         }
     }
-    if (clip.insert && (re4vr::lua_os_clock() - clip.t0) >= insert_dur) {
+    if (clip.insert && (re4vr::now() - clip.t0) >= insert_dur) {
         clip.insert = false;
         if (reload_ammo) {
             load_and_book(5);
@@ -1082,13 +1082,13 @@ inline void Red9Family::on_frame() {
             }
         }
     }
-    re4vr::lua_set_bool("__vr_block_fire_when_empty", rack.open || rack.grabbed);
-    re4vr::lua_set_bool("__vr_mag_in_hand", clip.active || clip.insert);
-    re4vr::lua_set_bool("__vr_slide_rack_active", rack.grabbed);
+    RE4VRShared::get()->vr_block_fire_when_empty = rack.open || rack.grabbed;
+    RE4VRShared::get()->vr_mag_in_hand = clip.active || clip.insert;
+    RE4VRShared::get()->vr_slide_rack_active = rack.grabbed;
     const int loaded = ammo_count(live_wi()).value_or(0);
     const int cap = live_wi() ? re4vr::safe([&] { return sdk::call_object_func_easy<int32_t>(live_wi(), "get_CurrentAmmoMax"); }).value_or(0) : 0;
-    re4vr::lua_set_bool("__re4_reload_grab_empty", loaded >= cap || (reserve_of(live_wi()) <= 0 && !unlimited()));
-    re4vr::lua_set_number("__re4_reload_ui_wid", wid);
+    RE4VRShared::get()->re4_reload_grab_empty = loaded >= cap || (reserve_of(live_wi()) <= 0 && !unlimited());
+    RE4VRShared::get()->re4_reload_ui_wid = wid;
 }
 inline void Red9Family::apply() {
     if (!owns() || !wep.slide) {
@@ -1209,24 +1209,24 @@ inline void RLFamily::on_frame() {
         clone_destroy(clone_obj, clone_mesh);
         return;
     }
-    re4vr::lua_set_bool("__vr_manual_reload_consume_b", true);
+    RE4VRShared::get()->vr_manual_reload_consume_b = true;
     auto hp = lh_world();
     auto gp = wep.tf ? re4vr::safe([&] { return sdk::get_transform_position(wep.tf); }) : std::nullopt;
     if (hold.active && hp && gp && glm::distance(*hp, *gp) <= insert_distance) {
         hold.active = false;
         hold.insert = true;
-        hold.t0 = re4vr::lua_os_clock();
+        hold.t0 = re4vr::now();
     }
-    if (hold.insert && (re4vr::lua_os_clock() - hold.t0) >= 0.25) {
+    if (hold.insert && (re4vr::now() - hold.t0) >= 0.25) {
         hold.insert = false;
         if (reload_ammo) {
             load_and_book(1);
         }
         clone_destroy(clone_obj, clone_mesh);
     }
-    re4vr::lua_set_bool("__vr_mag_in_hand", hold.active || hold.insert);
+    RE4VRShared::get()->vr_mag_in_hand = hold.active || hold.insert;
     const int loaded = ammo_count(live_wi()).value_or(0);
-    re4vr::lua_set_bool("__re4_reload_grab_empty", loaded > 0 || (reserve_of(live_wi()) <= 0 && !unlimited()));
+    RE4VRShared::get()->re4_reload_grab_empty = loaded > 0 || (reserve_of(live_wi()) <= 0 && !unlimited());
 }
 inline void RLFamily::apply() {
     if (!owns()) {
@@ -1355,14 +1355,14 @@ inline void FlameFamily::on_frame() {
     if (!wep.id) {
         return;
     }
-    re4vr::lua_set_bool("__vr_manual_reload_consume_b", true);
+    RE4VRShared::get()->vr_manual_reload_consume_b = true;
     const bool b = right_b();
     if (b && !saf.prev_b) {
         saf.open = !saf.open;
         play_wep_sound(wep.tf, 942865223);
         if (saf.open && tank.phase == "idle") {
             tank.phase = "dropping";
-            tank.t0 = re4vr::lua_os_clock();
+            tank.t0 = re4vr::now();
             if (auto p = wep.tank ? jpos(wep.tank) : std::nullopt) {
                 tank.sx = p->x;
                 tank.sy = p->y;
@@ -1379,7 +1379,7 @@ inline void FlameFamily::on_frame() {
         saf.prog = std::max(tgt, saf.prog - saf_lerp);
     }
     if (tank.phase == "dropping") {
-        const float t = (float)(re4vr::lua_os_clock() - tank.t0);
+        const float t = (float)(re4vr::now() - tank.t0);
         if (t > 0.8f) {
             tank.phase = "floor";
         }
@@ -1395,9 +1395,9 @@ inline void FlameFamily::on_frame() {
             play_wep_sound(wep.tf, 943565871);
         }
     }
-    re4vr::lua_set_bool("__vr_mag_in_hand", tank.in_hand);
-    re4vr::lua_set_bool("__vr_block_fire_when_empty", saf.open || tank.phase != "idle");
-    re4vr::lua_set_bool("__re4_reload_grab_empty", tank.phase == "idle" || tank.in_hand);
+    RE4VRShared::get()->vr_mag_in_hand = tank.in_hand;
+    RE4VRShared::get()->vr_block_fire_when_empty = saf.open || tank.phase != "idle";
+    RE4VRShared::get()->re4_reload_grab_empty = tank.phase == "idle" || tank.in_hand;
 }
 inline void FlameFamily::apply() {
     if (!owns()) {
@@ -1417,7 +1417,7 @@ inline void FlameFamily::apply() {
                 set_jrot(wep.tank, *hr);
             }
         } else if (tank.phase == "dropping") {
-            const float t = (float)(re4vr::lua_os_clock() - tank.t0);
+            const float t = (float)(re4vr::now() - tank.t0);
             set_jpos(wep.tank, Vector3f{tank.sx, tank.sy - 9.8f * t * t * 0.5f, tank.sz});
         } else if (tank.phase == "floor") {
             set_jpos(wep.tank, Vector3f{tank.sx, tank.sy - 0.85f, tank.sz});
@@ -1501,7 +1501,7 @@ struct BlastBow {
         if (!wep.id) {
             return;
         }
-        re4vr::lua_set_bool("__vr_manual_reload_consume_b", true);
+        RE4VRShared::get()->vr_manual_reload_consume_b = true;
         const int loaded = ammo_count(live_wi()).value_or(0);
         if (loaded <= 0) {
             drawn = false;
@@ -1524,9 +1524,9 @@ struct BlastBow {
                 drawn = zf >= 0.85f;
             }
         }
-        re4vr::lua_set_bool("__vr_mag_in_hand", bolt_hand);
-        re4vr::lua_set_bool("__vr_block_fire_when_empty", loaded <= 0 || !drawn);
-        re4vr::lua_set_bool("__re4_reload_grab_empty", loaded > 0 || (reserve_of(live_wi()) <= 0 && !unlimited()));
+        RE4VRShared::get()->vr_mag_in_hand = bolt_hand;
+        RE4VRShared::get()->vr_block_fire_when_empty = loaded <= 0 || !drawn;
+        RE4VRShared::get()->re4_reload_grab_empty = loaded > 0 || (reserve_of(live_wi()) <= 0 && !unlimited());
     }
     void apply() {
         if (!owns()) {
@@ -1622,15 +1622,15 @@ struct RifleSwitch {
         } else if (prog > tgt) {
             prog = std::max(tgt, prog - L);
         }
-        re4vr::lua_set_number("__vr_rifle_fire_mode", stage);
+        RE4VRShared::get()->vr_rifle_fire_mode = stage;
         if (burst.contains(w) && stage == 1) {
-            re4vr::lua_set_bool("__vr_burst_active", true);
-            re4vr::lua_set_number("__vr_burst_count", burst[w]);
+            RE4VRShared::get()->vr_burst_active = true;
+            RE4VRShared::get()->vr_burst_count = burst[w];
         } else {
-            re4vr::lua_set_bool("__vr_burst_active", false);
+            RE4VRShared::get()->vr_burst_active = false;
         }
         if (blocks_fire.contains(w) && blocks_fire[w] && stage == 1) {
-            re4vr::lua_set_bool("__vr_block_fire_when_empty", true);
+            RE4VRShared::get()->vr_block_fire_when_empty = true;
         }
     }
     void apply() {

@@ -677,10 +677,10 @@ inline void MagFed::queue_haptic(float amp, float dur) {
         rack_haptic(amp, dur);
         return;
     }
-    haptic_q.push_back({re4vr::lua_os_clock() + cfg.pump_haptic_delay, amp, dur});
+    haptic_q.push_back({re4vr::now() + cfg.pump_haptic_delay, amp, dur});
 }
 inline void MagFed::service_haptics() {
-    const double now = re4vr::lua_os_clock();
+    const double now = re4vr::now();
     for (size_t i = 0; i < haptic_q.size();) {
         if (now >= haptic_q[i].at) {
             rack_haptic(haptic_q[i].amp, haptic_q[i].dur);
@@ -721,8 +721,8 @@ inline void MagFed::refresh() {
     if (*w == 4101) {
         wep.slide2 = re4vr::joint_by_name(tf, "_08");
     }
-    re4vr::lua_set_string("__re4_rack_joint_name", cfgj.slide);
-    re4vr::lua_set_number("__re4_rack_joint_wid", *w);
+    RE4VRShared::get()->re4_rack_joint_name = std::string{cfgj.slide};
+    RE4VRShared::get()->re4_rack_joint_wid = *w;
     if ((rotary_cycle.contains(*w) || break_action.contains(*w)) && wep.slide) {
         wep.cycle_rest = re4vr::safe([&] { return sdk::call_object_func_easy<glm::quat>(wep.slide, "get_BaseLocalRotation"); }).value_or(sdk::get_joint_local_rotation(wep.slide));
         if (break_action.contains(*w) && wep.cycle_rest) {
@@ -751,8 +751,8 @@ inline bool MagFed::start_drop() {
     if (cfg.reload_ammo) {
         auto* p = pe();
         mag_retained = p ? gun_ammo().value_or(ammo_count(live_wi()).value_or(0)) : ammo_count(live_wi()).value_or(0);
-        re4vr::lua_set_number("__re4_mag_carry", mag_retained);
-        re4vr::lua_set_number("__re4_mag_carry_wid", wid());
+        RE4VRShared::get()->re4_mag_carry = mag_retained;
+        RE4VRShared::get()->re4_mag_carry_wid = wid();
         auto* wi = live_wi();
         drain_to_zero(wi);
         rack.zeroed_by_us = true;
@@ -802,7 +802,7 @@ inline bool MagFed::start_drop() {
     drop.sy = p->y;
     drop.sz = p->z;
     drop.sr = jrot(wep.mag);
-    drop.t0 = re4vr::lua_os_clock();
+    drop.t0 = re4vr::now();
     drop.active = true;
     return true;
 }
@@ -829,7 +829,7 @@ inline void MagFed::update_drop() {
     if (!drop.joint) {
         return;
     }
-    const float t = (float)(re4vr::lua_os_clock() - drop.t0);
+    const float t = (float)(re4vr::now() - drop.t0);
     if (t > 1.0f) {
         if (shotgun(wid()) && wep.mag && wep.rest_lp) {
             set_jlp(wep.mag, *wep.rest_lp);
@@ -849,27 +849,27 @@ inline void MagFed::update_drop() {
 }
 
 inline float MagFed::mag_push_dist() {
-    auto lp = re4vr::lua_vec3("__vr_lh_ctrl_raw");
+    auto lp = RE4VRShared::get()->vr_lh_ctrl_raw;
     return lp ? -lp->y : 0;
 }
 
 inline void MagFed::update_in_hand() {
-    re4vr::lua_set_number("__re4_reload_ui_wid", wid());
+    RE4VRShared::get()->re4_reload_ui_wid = wid();
     auto* joint = mag_hand.active ? mag_hand.joint : (mag_tune ? wep.mag : nullptr);
     if (!joint) {
-        re4vr::lua_set_nil("__vr_mag_hand_pose");
-        re4vr::lua_set_nil("__vr_mag_hand_trx");
-        re4vr::lua_set_nil("__vr_mag_hand_try");
-        re4vr::lua_set_nil("__vr_mag_hand_trz");
+        RE4VRShared::get()->vr_mag_hand_pose.reset();
+        RE4VRShared::get()->vr_mag_hand_trx.reset();
+        RE4VRShared::get()->vr_mag_hand_try.reset();
+        RE4VRShared::get()->vr_mag_hand_trz.reset();
         return;
     }
     const int32_t wf = mag_hand.active && mag_hand.wid ? *mag_hand.wid : wid();
     auto& m = mh_of(wf);
     std::string mp = mag_pose.contains(wid()) ? mag_pose[wid()] : cfg.mag_hold_pose;
     set_pose_name("__vr_mag_hand_pose", mp);
-    re4vr::lua_set_number("__vr_mag_hand_trx", m.t_rx);
-    re4vr::lua_set_number("__vr_mag_hand_try", m.t_ry);
-    re4vr::lua_set_number("__vr_mag_hand_trz", m.t_rz);
+    RE4VRShared::get()->vr_mag_hand_trx = m.t_rx;
+    RE4VRShared::get()->vr_mag_hand_try = m.t_ry;
+    RE4VRShared::get()->vr_mag_hand_trz = m.t_rz;
     if (wid() == ss_wid && ss_wid) {
         return;
     }
@@ -896,7 +896,7 @@ inline void MagFed::capture_rest() {
     if (!gameplay() || seject.preview || seject.flying || mag_out) {
         return;
     }
-    if (re4vr::lua_is_true("__re4_mag_eject_kf_preview")) {
+    if (RE4VRShared::get()->re4_mag_eject_kf_preview) {
         return;
     }
     wep.rest_lp = jlp(wep.mag);
@@ -946,7 +946,7 @@ inline bool MagFed::start_insert() {
     }
     auto* ms = mag_slide();
     mag_insert.keyframe = ms && ms->has_shell_keys(wid());
-    mag_insert.t0 = re4vr::lua_os_clock();
+    mag_insert.t0 = re4vr::now();
     mag_insert.dur = cfg.insert_dur;
     if (mag_insert.keyframe && ms) {
         mag_insert.dur = ms->kf_insert_dur(wid()).value_or(ms->has_shell_keys(wid()) ? 0.40f : cfg.insert_dur);
@@ -988,7 +988,7 @@ inline void MagFed::finish_insert() {
     if (cfg.insert_haptic > 0) {
         haptic_right(cfg.insert_haptic, 0.06f);
     }
-    rack.ammo_input_t = (float)re4vr::lua_os_clock();
+    rack.ammo_input_t = (float)re4vr::now();
     auto* p = pe();
     const int loaded0 = p ? gun_ammo().value_or(ammo_count(live_wi()).value_or(0)) : ammo_count(live_wi()).value_or(0);
     const bool empty_chamber = loaded0 == 0 && !shotgun(wid()) && !rack.zeroed_by_us;
@@ -1037,7 +1037,7 @@ inline void MagFed::finish_insert() {
     }
     if (cfg.insert_punch && mag_insert.rlp && mag_insert.joint) {
         mag_insert.settle = true;
-        mag_insert.settle_t0 = re4vr::lua_os_clock();
+        mag_insert.settle_t0 = re4vr::now();
         auto axis = *mag_insert.rlp - mag_insert.slp.value_or(*mag_insert.rlp);
         auto n = glm::length(axis);
         if (n > 1e-6f) {
@@ -1050,7 +1050,7 @@ inline void MagFed::finish_insert() {
 
 inline void MagFed::update_insert() {
     if (mag_insert.settle && mag_insert.joint) {
-        float st = (float)(re4vr::lua_os_clock() - mag_insert.settle_t0) / std::max(cfg.insert_settle, 0.01f);
+        float st = (float)(re4vr::now() - mag_insert.settle_t0) / std::max(cfg.insert_settle, 0.01f);
         if (st >= 1.0f) {
             st = 1.0f;
             if (!mag_insert.visual) {
@@ -1065,7 +1065,7 @@ inline void MagFed::update_insert() {
     if (!mag_insert.active || !mag_insert.joint) {
         return;
     }
-    float t = (float)(re4vr::lua_os_clock() - mag_insert.t0) / std::max(mag_insert.dur, 0.01f);
+    float t = (float)(re4vr::now() - mag_insert.t0) / std::max(mag_insert.dur, 0.01f);
     if (mag_insert.manual) {
         const float d = mag_push_dist();
         if (mag_insert.d0) {
@@ -1172,7 +1172,7 @@ inline bool MagFed::drop_simple() {
     drop.sy = p->y;
     drop.sz = p->z;
     drop.sr = jrot(wep.mag);
-    drop.t0 = re4vr::lua_os_clock();
+    drop.t0 = re4vr::now();
     drop.active = true;
     return true;
 }
@@ -1191,7 +1191,7 @@ inline bool MagFed::force_eject() {
     auto* p = pe();
     auto ga = p ? gun_ammo() : std::nullopt;
     rack.empty_when_dropped = ga ? (*ga == 0) : (live_loaded() == 0);
-    if (re4vr::lua_number("__re4_mag_carry").value_or(0) > 0) {
+    if (RE4VRShared::get()->re4_mag_carry.value_or(0) > 0) {
         rack.empty_when_dropped = false;
     }
     rack.chambered_hold = false;
@@ -1209,7 +1209,7 @@ inline bool MagFed::force_eject() {
     if (started) {
         mag_out = true;
         play("mag_eject");
-        mag_floor_at = re4vr::lua_os_clock() + cfg.mag_floor_delay;
+        mag_floor_at = re4vr::now() + cfg.mag_floor_delay;
     }
     return started;
 }
@@ -1229,9 +1229,9 @@ inline void MagFed::clear_rack() {
     rack.pulled = false;
     rack.pushed = false;
     rack.frac = 0;
-    re4vr::lua_set_bool("__vr_needs_rack", false);
-    re4vr::lua_set_bool("__vr_block_fire_when_empty", false);
-    re4vr::lua_set_bool("__vr_rack_block_left_knife", false);
+    RE4VRShared::get()->vr_needs_rack = false;
+    RE4VRShared::get()->vr_block_fire_when_empty = false;
+    RE4VRShared::get()->vr_rack_block_left_knife = false;
     auto* p = pe();
     auto* g = p ? re4vr::safe([&] { return utility::re_managed_object::get_field<::REManagedObject*>(p, "WeaponList"); }).value_or(nullptr) : nullptr;
     (void)g;
@@ -1274,19 +1274,19 @@ inline void MagFed::update_rack_state() {
         rack.prev_gun_ammo = ga;
     }
     if (shotgun(wid())) {
-        const int seq = (int)re4vr::lua_number("__vr_shot_seq").value_or(0);
+        const int seq = (int)RE4VRShared::get()->vr_shot_seq.value_or(0);
         if (rack.prev_shot_seq && seq > *rack.prev_shot_seq && rack.has_mag && !no_cycle_after.contains(wid())) {
             rack.needs = true;
         }
         rack.prev_shot_seq = seq;
     }
-    re4vr::lua_set_bool("__vr_needs_rack", rack.needs && !shotgun(wid()));
-    re4vr::lua_set_bool("__vr_slide_rack_active", rack.grab_active);
+    RE4VRShared::get()->vr_needs_rack = rack.needs && !shotgun(wid());
+    RE4VRShared::get()->vr_slide_rack_active = rack.grab_active;
     const bool flow = !mag_present();
     bool block = false;
     if (break_action.contains(wid())) {
         block = brk.open || mag_hand.active || mag_insert.active;
-        re4vr::lua_set_bool("__vr_break_open", brk.open);
+        RE4VRShared::get()->vr_break_open = brk.open;
     } else if (rotary_cycle.contains(wid())) {
         block = rack.needs || mag_hand.active || mag_insert.active;
     } else {
@@ -1295,10 +1295,10 @@ inline void MagFed::update_rack_state() {
             block = true;
         }
     }
-    re4vr::lua_set_bool("__vr_block_fire_when_empty", block);
-    re4vr::lua_set_bool("__vr_shotgun_pump_active", shotgun(wid()) && rack.grab_active);
-    re4vr::lua_set_bool("__vr_rack_block_left_knife", rack.needs || rack.grab_active);
-    re4vr::lua_set_bool("__vr_block_two_hand", rot.grip_latched);
+    RE4VRShared::get()->vr_block_fire_when_empty = block;
+    RE4VRShared::get()->vr_shotgun_pump_active = shotgun(wid()) && rack.grab_active;
+    RE4VRShared::get()->vr_rack_block_left_knife = rack.needs || rack.grab_active;
+    RE4VRShared::get()->vr_block_two_hand = rot.grip_latched;
 }
 
 inline void MagFed::update_rack_gesture() {
@@ -1309,7 +1309,7 @@ inline void MagFed::update_rack_gesture() {
         return;
     }
     auto* sj = rack_j();
-    auto hp = shotgun(wid()) ? (re4vr::lua_vec3("__vr_lh_ctrl_world") ? re4vr::lua_vec3("__vr_lh_ctrl_world") : lh_world()) : lh_world();
+    auto hp = shotgun(wid()) ? (RE4VRShared::get()->vr_lh_ctrl_world ? RE4VRShared::get()->vr_lh_ctrl_world : lh_world()) : lh_world();
     auto sp = jpos(sj);
     const bool grip = left_grip();
     rack.last_grip = grip;
@@ -1323,7 +1323,7 @@ inline void MagFed::update_rack_gesture() {
             rack.pump_init.reset();
             return;
         }
-        if (!shotgun(wid()) && rack.ammo_input_t && (re4vr::lua_os_clock() - *rack.ammo_input_t) < 0.2) {
+        if (!shotgun(wid()) && rack.ammo_input_t && (re4vr::now() - *rack.ammo_input_t) < 0.2) {
             rack.armed = false;
             return;
         }
@@ -1351,7 +1351,7 @@ inline void MagFed::update_rack_gesture() {
                     rack.pump_init = dist;
                     rack.pump_max = 0;
                     rack_haptic(0.25f, 0.03f);
-                    auto shp = re4vr::lua_vec3("__vr_support_hand_world_pos");
+                    auto shp = RE4VRShared::get()->vr_support_hand_world_pos;
                     auto srot = jrot(sj);
                     if (shp && srot) {
                         rack.pump_off = glm::inverse(*srot) * (*shp - *sp);
@@ -1375,11 +1375,11 @@ inline void MagFed::update_rack_gesture() {
             rack.pulled = false;
             rack.pushed = false;
             rack.frac = 0;
-            auto hpr = re4vr::lua_vec3("__vr_lh_ctrl_world").value_or(*hp);
+            auto hpr = RE4VRShared::get()->vr_lh_ctrl_world.value_or(*hp);
             rack.gx = hpr.x;
             rack.gy = hpr.y;
             rack.gz = hpr.z;
-            auto rhr = re4vr::lua_vec3("__vr_rh_ctrl_raw") ? re4vr::lua_vec3("__vr_rh_ctrl_raw") : rh_world();
+            auto rhr = RE4VRShared::get()->vr_rh_ctrl_raw ? RE4VRShared::get()->vr_rh_ctrl_raw : rh_world();
             if (rhr) {
                 rack.rgx = rhr->x;
                 rack.rgy = rhr->y;
@@ -1405,7 +1405,7 @@ inline void MagFed::update_rack_gesture() {
         float pull = 0;
         if (shotgun(wid()) && rack.pump_init) {
             auto rhp = rh_world();
-            auto hpr = re4vr::lua_vec3("__vr_lh_ctrl_world").value_or(*hp);
+            auto hpr = RE4VRShared::get()->vr_lh_ctrl_world.value_or(*hp);
             if (rhp) {
                 const float dist = glm::length(hpr - *rhp);
                 pull = *rack.pump_init - dist;
@@ -1418,10 +1418,10 @@ inline void MagFed::update_rack_gesture() {
                 rack.pump_max = std::max(rack.pump_max.value_or(0), pull);
             }
         } else {
-            auto hpr = re4vr::lua_vec3("__vr_lh_ctrl_world").value_or(*hp);
+            auto hpr = RE4VRShared::get()->vr_lh_ctrl_world.value_or(*hp);
             Vector3f delta{hpr.x - rack.gx, hpr.y - rack.gy, hpr.z - rack.gz};
-            if (rack.rgx && re4vr::lua_vec3("__vr_rh_ctrl_raw")) {
-                auto rh = *re4vr::lua_vec3("__vr_rh_ctrl_raw");
+            if (rack.rgx && RE4VRShared::get()->vr_rh_ctrl_raw) {
+                auto rh = *RE4VRShared::get()->vr_rh_ctrl_raw;
                 delta -= Vector3f{rh.x - *rack.rgx, rh.y - *rack.rgy, rh.z - *rack.rgz};
             }
             auto srot = jrot(sj);
@@ -1438,7 +1438,7 @@ inline void MagFed::update_rack_gesture() {
         }
         if (shotgun(wid()) && rack.pulled && rack.pump_max) {
             auto rhp = rh_world();
-            auto hpr = re4vr::lua_vec3("__vr_lh_ctrl_world").value_or(*hp);
+            auto hpr = RE4VRShared::get()->vr_lh_ctrl_world.value_or(*hp);
             if (rhp && rack.pump_init) {
                 const float dist = glm::length(hpr - *rhp);
                 const float from_max = *rack.pump_max - std::max(0.f, *rack.pump_init - dist);
@@ -1529,7 +1529,7 @@ inline void MagFed::update_break() {
     } else {
         brk.prog = std::max(want, brk.prog - lerp);
     }
-    re4vr::lua_set_bool("__vr_break_open", brk.open);
+    RE4VRShared::get()->vr_break_open = brk.open;
 }
 
 inline void MagFed::update_dock_blend() {
@@ -1546,7 +1546,7 @@ inline void MagFed::update_dock_blend() {
         b = std::max(b - down, want);
     }
     rack.dock_blend = b;
-    re4vr::lua_set_number("__vr_slide_dock_blend_factor", ease(b));
+    RE4VRShared::get()->vr_slide_dock_blend_factor = ease(b);
 }
 
 inline bool MagFed::publish_push_dock() {
@@ -1568,9 +1568,9 @@ inline bool MagFed::publish_push_dock() {
     *p += glm::rotate(*r, Vector3f{ox, oy, oz});
     (void)b;
     // rotation offsets from push
-    re4vr::lua_set_vec3("__vr_slide_hand_world_pos", *p);
-    re4vr::lua_set_quat("__vr_slide_hand_world_rot", *r);
-    re4vr::lua_set_number("__vr_slide_dock_blend_factor", b);
+    RE4VRShared::get()->vr_slide_hand_world_pos = *p;
+    RE4VRShared::get()->vr_slide_hand_world_rot = *r;
+    RE4VRShared::get()->vr_slide_dock_blend_factor = b;
     rack.pushdock_was = true;
     return true;
 }
@@ -1585,7 +1585,7 @@ inline void MagFed::publish_dock() {
             if (p && r) {
                 *p += glm::rotate(*r, *rack.pump_off);
             }
-            if (auto srot = re4vr::lua_quat("__vr_support_hand_world_rot")) {
+            if (auto srot = RE4VRShared::get()->vr_support_hand_world_rot) {
                 r = srot;
             }
         } else {
@@ -1606,21 +1606,21 @@ inline void MagFed::publish_dock() {
             }
         }
         if (p) {
-            re4vr::lua_set_vec3("__vr_slide_hand_world_pos", *p);
+            RE4VRShared::get()->vr_slide_hand_world_pos = *p;
         }
         if (r) {
-            re4vr::lua_set_quat("__vr_slide_hand_world_rot", *r);
+            RE4VRShared::get()->vr_slide_hand_world_rot = *r;
         }
         return;
     }
     if (!publish_push_dock()) {
         if (rack.pushdock_was) {
-            re4vr::lua_set_number("__re4_reload_lexit_t", re4vr::lua_os_clock());
+            RE4VRShared::get()->re4_reload_lexit_t = re4vr::now();
             rack.pushdock_was = false;
         }
-        re4vr::lua_set_nil("__vr_slide_hand_world_pos");
-        re4vr::lua_set_nil("__vr_slide_hand_world_rot");
-        re4vr::lua_set_number("__vr_slide_dock_blend_factor", 0);
+        RE4VRShared::get()->vr_slide_hand_world_pos.reset();
+        RE4VRShared::get()->vr_slide_hand_world_rot.reset();
+        RE4VRShared::get()->vr_slide_dock_blend_factor = 0;
     }
 }
 
@@ -1705,7 +1705,7 @@ inline void MagFed::update_shell_eject() {
         seject.prev_pulled = false;
         return;
     }
-    const double now = re4vr::lua_os_clock();
+    const double now = re4vr::now();
     float dt = (float)(now - seject.last_clock);
     seject.last_clock = now;
     if (dt < 0 || dt > 0.1f) {
@@ -1889,37 +1889,37 @@ inline void MagFed::reset_reload() {
     rack.empty_reload = false;
     rot = {};
     brk = {};
-    re4vr::lua_set_bool("__vr_block_two_hand", false);
-    re4vr::lua_set_bool("__vr_break_open", false);
+    RE4VRShared::get()->vr_block_two_hand = false;
+    RE4VRShared::get()->vr_break_open = false;
     rack.chambered_hold = false;
     rack.prev_shot_seq.reset();
-    re4vr::lua_set_bool("__vr_block_fire_when_empty", false);
-    re4vr::lua_set_bool("__vr_needs_rack", false);
-    re4vr::lua_set_bool("__vr_shotgun_pump_active", false);
-    re4vr::lua_set_bool("__vr_rack_block_left_knife", false);
-    re4vr::lua_set_bool("__vr_manual_reload_consume_b", false);
-    re4vr::lua_set_nil("__vr_slide_hand_world_pos");
-    re4vr::lua_set_nil("__vr_slide_hand_world_rot");
-    re4vr::lua_set_number("__vr_slide_dock_blend_factor", 0);
+    RE4VRShared::get()->vr_block_fire_when_empty = false;
+    RE4VRShared::get()->vr_needs_rack = false;
+    RE4VRShared::get()->vr_shotgun_pump_active = false;
+    RE4VRShared::get()->vr_rack_block_left_knife = false;
+    RE4VRShared::get()->vr_manual_reload_consume_b = false;
+    RE4VRShared::get()->vr_slide_hand_world_pos.reset();
+    RE4VRShared::get()->vr_slide_hand_world_rot.reset();
+    RE4VRShared::get()->vr_slide_dock_blend_factor = 0;
     rack.dock_blend = 0;
-    re4vr::lua_set_nil("__vr_rack_hand_pose");
-    re4vr::lua_set_nil("__re4_live_wi");
+    RE4VRShared::get()->vr_rack_hand_pose.reset();
+    RE4VRShared::get()->re4_live_wi = nullptr;
 }
 
 inline void MagFed::clear_globals() {
     managed = false;
-    re4vr::lua_set_bool("__vr_manual_reload_consume_b", false);
-    re4vr::lua_set_bool("__vr_block_fire_when_empty", false);
-    re4vr::lua_set_bool("__vr_needs_rack", false);
-    re4vr::lua_set_bool("__vr_rack_block_left_knife", false);
-    re4vr::lua_set_nil("__vr_rack_hand_pose");
-    re4vr::lua_set_bool("__re4_reload_grab_empty", false);
-    re4vr::lua_set_bool("__vr_motion_paused", false);
+    RE4VRShared::get()->vr_manual_reload_consume_b = false;
+    RE4VRShared::get()->vr_block_fire_when_empty = false;
+    RE4VRShared::get()->vr_needs_rack = false;
+    RE4VRShared::get()->vr_rack_block_left_knife = false;
+    RE4VRShared::get()->vr_rack_hand_pose.reset();
+    RE4VRShared::get()->re4_reload_grab_empty = false;
+    RE4VRShared::get()->vr_motion_paused = false;
     if (dlc) {
-        re4vr::lua_set_nil("__vr_mag_hand_pose");
-        re4vr::lua_set_nil("__vr_mag_hand_trx");
-        re4vr::lua_set_nil("__vr_mag_hand_try");
-        re4vr::lua_set_nil("__vr_mag_hand_trz");
+        RE4VRShared::get()->vr_mag_hand_pose.reset();
+        RE4VRShared::get()->vr_mag_hand_trx.reset();
+        RE4VRShared::get()->vr_mag_hand_try.reset();
+        RE4VRShared::get()->vr_mag_hand_trz.reset();
     }
 }
 
@@ -2061,13 +2061,13 @@ inline void MagFed::on_frame() {
     if (!hwid) {
         clear_globals();
         if (dlc) {
-            re4vr::lua_set_bool("__re4_r4dlc_had", false);
+            RE4VRShared::get()->re4_r4dlc_had = false;
         }
         return;
     }
     managed = true;
     if (dlc) {
-        re4vr::lua_set_bool("__re4_r4dlc_had", true);
+        RE4VRShared::get()->re4_r4dlc_had = true;
     }
     capture_rest();
     check_proximity();
@@ -2078,7 +2078,7 @@ inline void MagFed::on_frame() {
     if (drop.active && !drop.use_module && drop.joint != wep.mag) {
         stop_drop();
     }
-    re4vr::lua_set_bool("__vr_manual_reload_consume_b", !top_loader.contains(*hwid));
+    RE4VRShared::get()->vr_manual_reload_consume_b = !top_loader.contains(*hwid);
     if (mag_out && !mag_insert.active) {
         auto* wi = live_wi();
         if (ammo_count(wi).value_or(0) > 0) {
@@ -2092,14 +2092,14 @@ inline void MagFed::on_frame() {
         const int cp = wi ? re4vr::safe([&] { return sdk::call_object_func_easy<int32_t>(wi, "get_CurrentAmmoMax"); }).value_or(0) : 0;
         const bool full = cp > 0 && lo >= cp;
         const bool rb = rotary_cycle.contains(wid()) && rack.needs;
-        const bool bb = break_action.contains(wid()) && !re4vr::lua_is_true("__vr_break_open");
-        re4vr::lua_set_bool("__re4_reload_grab_empty", !mag_hand.active && !mag_insert.active && (reserve_of(wi) <= 0 || full || rb || bb));
+        const bool bb = break_action.contains(wid()) && !RE4VRShared::get()->vr_break_open;
+        RE4VRShared::get()->re4_reload_grab_empty = !mag_hand.active && !mag_insert.active && (reserve_of(wi) <= 0 || full || rb || bb);
     } else {
         bool avail = false;
         if (mag_out && !mag_hand.active && !mag_insert.active) {
             avail = mag_retained > 0 || reserve_of(live_wi()) > 0;
         }
-        re4vr::lua_set_bool("__re4_reload_grab_empty", mag_out && !mag_hand.active && !mag_insert.active && !avail);
+        RE4VRShared::get()->re4_reload_grab_empty = mag_out && !mag_hand.active && !mag_insert.active && !avail;
     }
     const bool b = right_b();
     if (b && !b_prev && !shotgun(wid()) && !top_loader.contains(wid()) && !break_action.contains(wid())) {
@@ -2110,9 +2110,9 @@ inline void MagFed::on_frame() {
     }
     b_prev = b;
     if (drop.active && !drop_prev) {
-        mag_floor_at = re4vr::lua_os_clock() + cfg.mag_floor_delay;
+        mag_floor_at = re4vr::now() + cfg.mag_floor_delay;
     }
-    if (mag_floor_at > 0 && re4vr::lua_os_clock() >= mag_floor_at) {
+    if (mag_floor_at > 0 && re4vr::now() >= mag_floor_at) {
         play("mag_floor");
         mag_floor_at = 0;
     }
@@ -2123,12 +2123,12 @@ inline void MagFed::on_frame() {
     update_dock_blend();
     update_shell_eject();
     service_haptics();
-    if (rack.empty && !empty_trig_prev && re4vr::lua_is_true("__vr_rt_down")) {
+    if (rack.empty && !empty_trig_prev && RE4VRShared::get()->vr_rt_down) {
         play("dry_fire");
     }
     empty_trig_prev = rack.empty;
-    re4vr::lua_set_bool("__vr_mag_in_hand", mag_hand.active);
-    re4vr::lua_set_number("__re4_shotgun_ratio", shotgun_ratio_wid.contains(wid()) ? shotgun_ratio_wid[wid()] : cfg.shotgun_ratio);
+    RE4VRShared::get()->vr_mag_in_hand = mag_hand.active;
+    RE4VRShared::get()->re4_shotgun_ratio = shotgun_ratio_wid.contains(wid()) ? shotgun_ratio_wid[wid()] : cfg.shotgun_ratio;
 }
 
 inline void MagFed::export_globals(sol::state& lua) {
@@ -2179,18 +2179,21 @@ inline void MagFed::export_globals(sol::state& lua) {
     lua["__re4_safe_inv_reload"] = lua["__re4_load_and_book"];
     lua["__re4_carry_capture"] = [](::REManagedObject* wi, sol::object, sol::object) {
         auto c = ammo_count(wi).value_or(0);
-        if (c > 0 && re4vr::lua_number("__re4_mag_carry").value_or(0) <= 0) {
-            re4vr::lua_set_number("__re4_mag_carry", c);
+        if (c > 0 && RE4VRShared::get()->re4_mag_carry.value_or(0) <= 0) {
+            RE4VRShared::get()->re4_mag_carry = c;
         }
     };
     lua["__re4_run_pending_reload"] = []() {};
-    lua["__re4_mag_push_dist"] = []() { auto lp = re4vr::lua_vec3("__vr_lh_ctrl_raw"); return lp ? sol::optional<float>{-lp->y} : sol::optional<float>{}; };
+    lua["__re4_mag_push_dist"] = []() { auto lp = RE4VRShared::get()->vr_lh_ctrl_raw; return lp ? sol::optional<float>{-lp->y} : sol::optional<float>{}; };
     lua["__re4_shotgun_ratio_get"] = [this](sol::object w) {
         int32_t id = w.is<int>() ? w.as<int>() : (w.is<double>() ? (int32_t)w.as<double>() : 0);
         return shotgun_ratio_wid.contains(id) ? shotgun_ratio_wid[id] : cfg.shotgun_ratio;
     };
     lua["__re4_reload_apply_pose"] = [this](const std::string& name, sol::object blend) {
         float b = blend.is<double>() ? (float)blend.as<double>() : 1.f;
+        RE4VRShared::get()->apply_reload_pose(name, b);
+    };
+    RE4VRShared::get()->apply_reload_pose_fn = [this](const std::string& name, float b) {
         if (poses.contains(name)) {
             re4vr::apply_pose_bones(poses[name], b);
         }

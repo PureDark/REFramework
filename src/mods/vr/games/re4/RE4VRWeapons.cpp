@@ -17,7 +17,9 @@
 #include <sdk/SceneManager.hpp>
 #include <spdlog/spdlog.h>
 
+#include "RE4VRCrosshair.hpp"
 #include "RE4VRFrameCache.hpp"
+#include "RE4VRHolster.hpp"
 #include "RE4VRMenu.hpp"
 #include "RE4VRShared.hpp"
 #include "../../../ScriptRunner.hpp"
@@ -175,11 +177,11 @@ std::optional<std::string> RE4VRWeapons::on_initialize() {
         }
     }
     register_ui();
-    re4vr::lua_set_bool("__re4_knife_change_block_hooked", true);
-    re4vr::lua_set_bool("__re4_quickknife_hooked", true);
-    re4vr::lua_set_bool("__re4_qk_block", true);
-    re4vr::lua_set_bool("__re4_stow_guard_hooked", true);
-    re4vr::lua_set_bool("__re4_stow_block", true);
+    RE4VRShared::get()->re4_knife_change_block_hooked = true;
+    RE4VRShared::get()->re4_quickknife_hooked = true;
+    RE4VRShared::get()->re4_qk_block = true;
+    RE4VRShared::get()->re4_stow_guard_hooked = true;
+    RE4VRShared::get()->re4_stow_block = true;
     return std::nullopt;
 }
 
@@ -193,8 +195,8 @@ void RE4VRWeapons::export_globals(sol::state& lua) {
         if (!L) {
             return sol::nil;
         }
-        const bool left = re4vr::lua_string("__re4_knife_hand").value_or("R") == "left" || re4vr::lua_is_true("__re4_knife_left_clone");
-        auto p = left ? re4vr::lua_vec3("__vr_lh_world") : re4vr::lua_vec3("__vr_rh_world");
+        const bool left = RE4VRShared::get()->re4_knife_hand.value_or("R") == "left" || RE4VRShared::get()->re4_knife_left_clone;
+        auto p = left ? RE4VRShared::get()->vr_lh_world : RE4VRShared::get()->vr_rh_world;
         if (!p) {
             auto* tf = re4vr::body_transform();
             auto* j = tf ? re4vr::joint_by_name(tf, left ? "L_Hand" : "R_Hand") : nullptr;
@@ -205,7 +207,7 @@ void RE4VRWeapons::export_globals(sol::state& lua) {
         return p ? sol::make_object(*L, *p) : sol::object(sol::nil);
     };
     lua["__re4_knife_grip_held"] = [this]() {
-        const bool left = re4vr::lua_string("__re4_knife_hand").value_or("") == "left" || re4vr::lua_is_true("__re4_knife_left_clone");
+        const bool left = RE4VRShared::get()->re4_knife_hand.value_or("") == "left" || RE4VRShared::get()->re4_knife_left_clone;
         return re4vr::grip_held(left);
     };
     lua["__re4_throw_override"] = [](sol::variadic_args) {};
@@ -333,23 +335,23 @@ void RE4VRWeapons::scope_killswitch_tick() {
         on = re4vr::safe([&] { return sdk::call_object_func_easy<bool>(gun, "get__IsViaScope"); }).value_or(false)
             || re4vr::safe([&] { return utility::re_managed_object::get_field<bool>(gun, "_IsViaScope"); }).value_or(false);
     }
-    re4vr::lua_set_bool("__re4_scope_via_raw", on);
+    RE4VRShared::get()->re4_scope_via_raw = on;
     auto ewid = get_equip_weapon_id();
     if (ewid && m_scope_weps.contains(*ewid)) {
-        re4vr::lua_set_number("__re4_scope_wid", *ewid);
+        RE4VRShared::get()->re4_scope_wid = *ewid;
         m_scope_wid = *ewid;
     } else {
-        re4vr::lua_set_nil("__re4_scope_wid");
+        RE4VRShared::get()->re4_scope_wid.reset();
         m_scope_wid.reset();
     }
     static bool via_seen = false;
-    if (!re4vr::lua_is_true("__vr_aim_input")) {
+    if (!RE4VRShared::get()->vr_aim_input) {
         via_seen = false;
     } else if (on) {
         via_seen = true;
     }
-    if (!on && via_seen && re4vr::lua_is_true("__re4_fork_ok") && re4vr::lua_not_false("__re4_scope_hold_enable")
-        && re4vr::lua_is_true("__vr_aim_input") && m_scope_wid) {
+    if (!on && via_seen && RE4VRShared::get()->re4_fork_ok && RE4VRShared::get()->re4_scope_hold_enable
+        && RE4VRShared::get()->vr_aim_input && m_scope_wid) {
         on = true;
     }
     if (ewid && m_bolt_rifles.contains(*ewid) && ctx) {
@@ -359,28 +361,28 @@ void RE4VRWeapons::scope_killswitch_tick() {
         if (n5) {
             auto ns = utility::re_string::get_string(n5);
             if (ns.find("Shoot") != std::string::npos) {
-                re4vr::lua_set_number("__re4_bolt_shoot_t", re4vr::now());
-                if (re4vr::lua_not_false("__re4_bolt_reaim") && re4vr::lua_is_true("__vr_aim_input")
-                    && !re4vr::lua_number("__re4_bolt_aim_cut_t")) {
-                    re4vr::lua_set_number("__re4_bolt_aim_cut_t", re4vr::now());
+                RE4VRShared::get()->re4_bolt_shoot_t = re4vr::now();
+                if (RE4VRShared::get()->re4_bolt_reaim && RE4VRShared::get()->vr_aim_input
+                    && !RE4VRShared::get()->re4_bolt_aim_cut_t) {
+                    RE4VRShared::get()->re4_bolt_aim_cut_t = re4vr::now();
                 }
             }
         }
     }
-    const bool iron = on && ewid && m_iron_rifles.contains(*ewid) && !re4vr::lua_string("__re4_scope_id");
+    const bool iron = on && ewid && m_iron_rifles.contains(*ewid) && !RE4VRShared::get()->re4_scope_id;
     const bool scope_aim = on && !iron;
-    const bool native = scope_aim && re4vr::lua_is_true("__re4_fork_ok") && re4vr::lua_not_false("__re4_scope_mono_enable");
-    re4vr::lua_set_bool("__re4_scope_native", native);
+    const bool native = scope_aim && RE4VRShared::get()->re4_fork_ok && RE4VRShared::get()->re4_scope_mono_enable;
+    RE4VRShared::get()->re4_scope_native = native;
     m_scope_native = native;
     bool bolt_win = false;
     if (ewid && m_bolt_rifles.contains(*ewid)) {
-        auto st = re4vr::lua_number("__re4_bolt_shoot_t");
+        auto st = RE4VRShared::get()->re4_bolt_shoot_t;
         bolt_win = st && (re4vr::now() - *st) < 0.25;
     }
-    re4vr::lua_set_bool("__re4_force_killswitch_scope", scope_aim && !bolt_win);
-    re4vr::lua_set_bool("__re4_force_killswitch_bolt", false);
+    RE4VRShared::get()->re4_force_killswitch_scope = scope_aim && !bolt_win;
+    RE4VRShared::get()->re4_force_killswitch_bolt = false;
     m_force_ks_scope = scope_aim && !bolt_win;
-    re4vr::lua_set_bool("__vr_unlock_ry", scope_aim);
+    RE4VRShared::get()->vr_unlock_ry = scope_aim;
     if (scope_aim && gun) {
         auto* go = re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(gun, "get_GameObject"); }).value_or(nullptr);
         auto* gtf = go ? re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(go, "get_Transform"); }).value_or(nullptr) : nullptr;
@@ -388,14 +390,14 @@ void RE4VRWeapons::scope_killswitch_tick() {
             auto rot = sdk::get_transform_rotation(gtf);
             auto f = re4vr::quat_rotate(rot, Vector3f{0, 0, 1});
             const float fy = std::clamp(f.y, -1.0f, 1.0f);
-            auto st = re4vr::lua_number("__re4_bolt_shoot_t");
+            auto st = RE4VRShared::get()->re4_bolt_shoot_t;
             const bool freeze = ewid && m_bolt_rifles.contains(*ewid) && st && (re4vr::now() - *st) < 1.6;
             if (!freeze) {
-                re4vr::lua_set_number("__re4_scope_aim_pitch", glm::degrees(std::asin(fy)));
+                RE4VRShared::get()->re4_scope_aim_pitch = glm::degrees(std::asin(fy));
             }
         }
     } else {
-        re4vr::lua_set_nil("__re4_scope_aim_pitch");
+        RE4VRShared::get()->re4_scope_aim_pitch.reset();
     }
     if (on) {
         // detect_scope_id: look for scope child names
@@ -415,9 +417,9 @@ void RE4VRWeapons::scope_killswitch_tick() {
                 });
             }
             if (sid) {
-                re4vr::lua_set_string("__re4_scope_id", *sid);
+                RE4VRShared::get()->re4_scope_id = std::string{*sid};
             } else {
-                re4vr::lua_set_nil("__re4_scope_id");
+                RE4VRShared::get()->re4_scope_id.reset();
             }
         }
     }
@@ -490,14 +492,14 @@ void RE4VRWeapons::keep_knife_out() {
     }
     auto* arr = re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(hc, "get_RequestSetAttackUserData"); }).value_or(nullptr);
     if (!arr) {
-        arr = re4vr::lua_object("__re4_knife_atkUD");
+        arr = RE4VRShared::get()->re4_knife_atkUD;
         return arr;
     }
     const int n = re4vr::safe([&] { return sdk::call_object_func_easy<int32_t>(arr, "get_Count"); }).value_or(0);
     if (n > 0) {
         return re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(arr, "get_Item", 0); }).value_or(nullptr);
     }
-    return re4vr::lua_object("__re4_knife_atkUD");
+    return RE4VRShared::get()->re4_knife_atkUD;
 }
 
 void RE4VRWeapons::do_knife_melee() {
@@ -515,9 +517,9 @@ void RE4VRWeapons::do_knife_melee() {
         return;
     }
     auto* atk = knife_get_attack_ud(hc);
-    auto hand = re4vr::lua_vec3("__vr_rh_world");
-    if (re4vr::lua_string("__re4_knife_hand").value_or("") == "left" || re4vr::lua_is_true("__re4_knife_left_clone")) {
-        hand = re4vr::lua_vec3("__vr_lh_world");
+    auto hand = RE4VRShared::get()->vr_rh_world;
+    if (RE4VRShared::get()->re4_knife_hand.value_or("") == "left" || RE4VRShared::get()->re4_knife_left_clone) {
+        hand = RE4VRShared::get()->vr_lh_world;
     }
     if (!atk || !hand) {
         return;
@@ -527,10 +529,10 @@ void RE4VRWeapons::do_knife_melee() {
     if (!dmg) {
         return;
     }
-    re4vr::lua_set_number("__re4_knife_our_until", now + 0.25);
+    RE4VRShared::get()->re4_knife_our_until = now + 0.25;
     re4vr::pcall([&] { sdk::call_object_func_easy<void*>(hc, "set_AttackEnable", true); });
     // requestAttack needs a target collider; remaining lua scripts may supply via globals
-    auto* target = re4vr::lua_object("__re4_knife_last_target");
+    auto* target = RE4VRShared::get()->re4_knife_last_target;
     if (target) {
         re4vr::pcall([&] { sdk::call_object_func_easy<void*>(hc, "requestAttack", target, atk, dmg); });
     }
@@ -543,9 +545,9 @@ void RE4VRWeapons::knife_throw_launch(const Vector3f& dir, float speed) {
     }
     ::REGameObject* go = nullptr;
     ::RETransform* tf = nullptr;
-    const bool clone = re4vr::lua_is_true("__re4_knife_left_clone");
+    const bool clone = RE4VRShared::get()->re4_knife_left_clone;
     if (clone) {
-        go = (::REGameObject*)re4vr::lua_object("__re4_knife_lh_clone_go");
+        go = (::REGameObject*)RE4VRShared::get()->re4_knife_lh_clone_go;
         tf = go ? re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(go, "get_Transform"); }).value_or(nullptr) : nullptr;
         if (tf) {
             re4vr::pcall([&] { sdk::call_object_func_easy<void*>(tf, "set_Parent(via.Transform)", (::RETransform*)nullptr); });
@@ -584,7 +586,7 @@ void RE4VRWeapons::knife_throw_launch(const Vector3f& dir, float speed) {
     m_fly.returning = false;
     m_fly.landed = false;
     m_knife_flying = true;
-    re4vr::lua_set_bool("__re4_knife_flying", true);
+    RE4VRShared::get()->re4_knife_flying = true;
 }
 
 void RE4VRWeapons::knife_flight_tick() {
@@ -618,8 +620,8 @@ void RE4VRWeapons::knife_flight_tick() {
         m_fly.pos += m_fly.vel * dt;
         m_fly.vel.y -= grav * dt;
         m_fly.spin = re4vr::axis_angle(Vector3f{1, 0, 0}, spin * dt) * m_fly.spin;
-        if (auto home = re4vr::lua_vec3("__re4_knife_home")) {
-            const float hs = (float)re4vr::lua_number("__re4_knife_home_str").value_or(0);
+        if (auto home = RE4VRShared::get()->re4_knife_home) {
+            const float hs = (float)RE4VRShared::get()->re4_knife_home_str.value_or(0);
             if (hs > 0) {
                 auto to = glm::normalize(*home - m_fly.pos);
                 const float sp = glm::length(m_fly.vel);
@@ -638,13 +640,13 @@ void RE4VRWeapons::knife_flight_tick() {
     } else if (m_fly.returning) {
         m_fly.active = false;
         m_knife_flying = false;
-        re4vr::lua_set_bool("__re4_knife_flying", false);
-        re4vr::lua_pcall_name("__re4_knife_play_grab_sound");
+        RE4VRShared::get()->re4_knife_flying = false;
+        RE4VRHolster::get()->play_grab_sound();
     }
 }
 
 void RE4VRWeapons::knife_flight_apply() {
-    re4vr::lua_set_bool("__re4_knife_flying", m_fly.active);
+    RE4VRShared::get()->re4_knife_flying = m_fly.active;
     if (!m_fly.active || !m_fly.tf) {
         return;
     }
@@ -658,15 +660,15 @@ void RE4VRWeapons::knife_flight_apply() {
 }
 
 void RE4VRWeapons::update_throw_velocity() {
-    auto p = re4vr::lua_vec3("__vr_rh_ctrl_raw");
+    auto p = RE4VRShared::get()->vr_rh_ctrl_raw;
     if (!p) {
-        p = re4vr::lua_vec3("__vr_rh_world");
+        p = RE4VRShared::get()->vr_rh_world;
     }
-    const bool left = re4vr::lua_string("__re4_knife_hand").value_or("") == "left" || re4vr::lua_is_true("__re4_knife_left_clone");
+    const bool left = RE4VRShared::get()->re4_knife_hand.value_or("") == "left" || RE4VRShared::get()->re4_knife_left_clone;
     if (left) {
-        p = re4vr::lua_vec3("__vr_lh_ctrl_raw");
+        p = RE4VRShared::get()->vr_lh_ctrl_raw;
         if (!p) {
-            p = re4vr::lua_vec3("__vr_lh_world");
+            p = RE4VRShared::get()->vr_lh_world;
         }
     }
     if (!p) {
@@ -710,38 +712,38 @@ std::optional<Vector3f> RE4VRWeapons::get_hmd_forward() {
 
 void RE4VRWeapons::throw_on_frame() {
     const bool knife_equ = is_knife_equipped();
-    re4vr::lua_set_bool("__re4_knife_equipped", knife_equ);
+    RE4VRShared::get()->re4_knife_equipped = knife_equ;
     if (!knife_equ) {
-        re4vr::lua_set_string("__re4_knife_hand", "none");
+        RE4VRShared::get()->re4_knife_hand = std::string{"none"};
         m_knife_hand = "none";
     } else {
-        const bool left = re4vr::lua_is_true("__re4_knife_left_intent");
-        re4vr::lua_set_string("__re4_knife_hand", left ? "left" : "right");
+        const bool left = RE4VRShared::get()->re4_knife_left_intent;
+        RE4VRShared::get()->re4_knife_hand = std::string{left ? "left" : "right"};
         m_knife_hand = left ? "left" : "right";
     }
-    if (knife_equ || re4vr::lua_is_true("__re4_knife_left_clone")) {
+    if (knife_equ || RE4VRShared::get()->re4_knife_left_clone) {
         knife_flight_tick();
-        const bool left_knife = m_knife_hand == "left" || re4vr::lua_is_true("__re4_knife_left_clone");
+        const bool left_knife = m_knife_hand == "left" || RE4VRShared::get()->re4_knife_left_clone;
         const bool grip = re4vr::grip_held(left_knife);
-        const bool hz = left_knife ? re4vr::lua_is_true("__vr_knife_lh_holster_zone") : re4vr::lua_is_true("__vr_knife_holster_zone");
-        const bool flipped = re4vr::lua_is_true("__vr_knife_flip");
+        const bool hz = left_knife ? RE4VRShared::get()->vr_knife_lh_holster_zone : RE4VRShared::get()->vr_knife_holster_zone;
+        const bool flipped = RE4VRShared::get()->vr_knife_flip;
         const bool gripping = !m_fly.active && !hz && !flipped && grip;
-        re4vr::lua_set_bool("__re4_knife_throw_gripping", gripping);
+        RE4VRShared::get()->re4_knife_throw_gripping = gripping;
         if (gripping) {
             update_throw_velocity();
             if (auto d = get_throw_direction()) {
-                re4vr::lua_set_vec3("__re4_knife_throw_dir", *d);
+                RE4VRShared::get()->re4_knife_throw_dir = *d;
             }
             m_winding = true;
         }
         if (m_grip_was && !gripping) {
-            auto dir = re4vr::lua_vec3("__re4_knife_throw_dir");
+            auto dir = RE4VRShared::get()->re4_knife_throw_dir;
             if (dir && dir->y < -0.25f) {
                 const float h = std::sqrt(dir->x * dir->x + dir->z * dir->z);
                 if (h > 0.001f) {
                     const float hs = std::sqrt(std::max(0.0001f, 1.0f - 0.25f * 0.25f)) / h;
                     dir = Vector3f{dir->x * hs, -0.25f, dir->z * hs};
-                    re4vr::lua_set_vec3("__re4_knife_throw_dir", *dir);
+                    RE4VRShared::get()->re4_knife_throw_dir = *dir;
                 }
             }
             const float peak = glm::length(m_hand_vel);
@@ -763,8 +765,8 @@ void RE4VRWeapons::throw_on_frame() {
         m_grip_was = gripping;
     }
     // melee on swing edge
-    const bool swing = re4vr::lua_is_true("vr_knife_swing");
-    if (swing && !m_prev_swing && !re4vr::lua_is_true("__re4_knife_throw_gripping") && !m_fly.active) {
+    const bool swing = RE4VRShared::get()->vr_knife_swing;
+    if (swing && !m_prev_swing && !RE4VRShared::get()->re4_knife_throw_gripping && !m_fly.active) {
         do_knife_melee();
     }
     m_prev_swing = swing;
@@ -772,10 +774,10 @@ void RE4VRWeapons::throw_on_frame() {
 
 HookManager::PreHookResult RE4VRWeapons::pre_change_weapon(std::vector<uintptr_t>&, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
     auto& self = *get();
-    if (!re4vr::lua_is_true("__re4_frame_is_gameplay")) {
+    if (!RE4VRShared::get()->re4_frame_is_gameplay) {
         return HookManager::PreHookResult::CALL_ORIGINAL;
     }
-    auto until = re4vr::lua_number("__re4_our_equip_until");
+    auto until = RE4VRShared::get()->re4_our_equip_until;
     if (until && re4vr::now() < *until) {
         return HookManager::PreHookResult::CALL_ORIGINAL;
     }
@@ -787,24 +789,24 @@ HookManager::PreHookResult RE4VRWeapons::pre_change_weapon(std::vector<uintptr_t
 }
 
 HookManager::PreHookResult RE4VRWeapons::pre_request_equip_knife(std::vector<uintptr_t>&, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
-    if (!re4vr::lua_not_false("__re4_qk_block")) {
+    if (!RE4VRShared::get()->re4_qk_block) {
         return HookManager::PreHookResult::CALL_ORIGINAL;
     }
-    auto until = re4vr::lua_number("__re4_our_equip_until");
+    auto until = RE4VRShared::get()->re4_our_equip_until;
     if (until && re4vr::now() < *until) {
         return HookManager::PreHookResult::CALL_ORIGINAL;
     }
-    if ((re4vr::now() - re4vr::lua_number("__re4_knife_draw_ours_t").value_or(-999)) < 1.0) {
+    if ((re4vr::now() - RE4VRShared::get()->re4_knife_draw_ours_t.value_or(-999)) < 1.0) {
         return HookManager::PreHookResult::CALL_ORIGINAL;
     }
-    if (re4vr::lua_call_bool("__re4_is_finisher_prompt", false)) {
+    if (RE4VRCrosshair::get()->is_finisher_prompt()) {
         return HookManager::PreHookResult::CALL_ORIGINAL;
     }
-    if (!re4vr::call_killswitch_bool("is_pure_gameplay", re4vr::lua_is_true("__re4_frame_is_gameplay"))) {
+    if (!re4vr::call_killswitch_bool("is_pure_gameplay", RE4VRShared::get()->re4_frame_is_gameplay)) {
         return HookManager::PreHookResult::CALL_ORIGINAL;
     }
-    const bool aim = re4vr::lua_is_true("__vr_aim_input");
-    const bool rt = re4vr::lua_is_true("__vr_rt_raw") || re4vr::lua_is_true("__re4_rt_held");
+    const bool aim = RE4VRShared::get()->vr_aim_input;
+    const bool rt = RE4VRShared::get()->vr_rt_raw || RE4VRShared::get()->re4_rt_held;
     if (rt && !aim) {
         return HookManager::PreHookResult::SKIP_ORIGINAL;
     }
@@ -812,10 +814,10 @@ HookManager::PreHookResult RE4VRWeapons::pre_request_equip_knife(std::vector<uin
 }
 
 HookManager::PreHookResult RE4VRWeapons::pre_equip_weapon(std::vector<uintptr_t>& args, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
-    if (!re4vr::lua_not_false("__re4_qk_block")) {
+    if (!RE4VRShared::get()->re4_qk_block) {
         return HookManager::PreHookResult::CALL_ORIGINAL;
     }
-    auto until = re4vr::lua_number("__re4_our_equip_until");
+    auto until = RE4VRShared::get()->re4_our_equip_until;
     if (until && re4vr::now() < *until) {
         return HookManager::PreHookResult::CALL_ORIGINAL;
     }
@@ -823,10 +825,10 @@ HookManager::PreHookResult RE4VRWeapons::pre_equip_weapon(std::vector<uintptr_t>
 }
 
 HookManager::PreHookResult RE4VRWeapons::pre_change_active(std::vector<uintptr_t>&, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
-    auto g = re4vr::lua_number("__re4_stow_guard_until");
+    auto g = RE4VRShared::get()->re4_stow_guard_until;
     if (g && re4vr::now() < *g) {
-        auto ours = re4vr::lua_number("__re4_stow_ours_until");
-        if (!(ours && re4vr::now() < *ours) && re4vr::lua_not_false("__re4_stow_block")) {
+        auto ours = RE4VRShared::get()->re4_stow_ours_until;
+        if (!(ours && re4vr::now() < *ours) && RE4VRShared::get()->re4_stow_block) {
             return HookManager::PreHookResult::SKIP_ORIGINAL;
         }
     }
@@ -848,7 +850,7 @@ HookManager::PreHookResult RE4VRWeapons::pre_attack_hit(std::vector<uintptr_t>&,
     return HookManager::PreHookResult::CALL_ORIGINAL;
 }
 HookManager::PreHookResult RE4VRWeapons::pre_calc_damage(std::vector<uintptr_t>& args, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
-    auto until = re4vr::lua_number("__re4_knife_our_until");
+    auto until = RE4VRShared::get()->re4_knife_our_until;
     if (until && re4vr::now() < *until && args.size() > 2) {
         // damage override applied by remaining lua consumers reading __re4_knife_dmg_override
     }
@@ -856,7 +858,7 @@ HookManager::PreHookResult RE4VRWeapons::pre_calc_damage(std::vector<uintptr_t>&
 }
 HookManager::PreHookResult RE4VRWeapons::pre_gun_object(std::vector<uintptr_t>& args, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
     if (args.size() > 1 && args[1]) {
-        re4vr::lua_set_object("__re4_grenade_gen", (::REManagedObject*)args[1]);
+        RE4VRShared::get()->re4_grenade_gen = (::REManagedObject*)args[1];
     }
     return HookManager::PreHookResult::CALL_ORIGINAL;
 }
@@ -864,7 +866,7 @@ void RE4VRWeapons::post_nop(uintptr_t&, sdk::RETypeDefinition*, uintptr_t) {}
 
 void RE4VRWeapons::snappy_wep_tick() {
     const bool on = m_snappy.enabled && re4vr::j_bool(m_snappy.data, "direct_snap", true);
-    re4vr::lua_set_bool("__vr_wsw_pin", on);
+    RE4VRShared::get()->vr_wsw_pin = on;
     auto* ctx = get_player_ctx();
     auto* body = ctx ? re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(ctx, "get_BodyGameObject"); }).value_or(nullptr) : nullptr;
     const uintptr_t addr = (uintptr_t)body;
@@ -1086,7 +1088,7 @@ void RE4VRWeapons::grenade_on_frame() {
     }
     update_throw_velocity();
     if (auto d = get_throw_direction()) {
-        re4vr::lua_set_vec3("__re4_throw_dir", *d);
+        RE4VRShared::get()->re4_throw_dir = *d;
     }
 }
 
@@ -1119,7 +1121,7 @@ void RE4VRWeapons::on_pre_application_entry(void*, const char* name, size_t hash
         hide_body_weapons_tick();
         snappy_wep_tick();
         auto ewid = get_equip_weapon_id();
-        if (ewid && m_iron_rifles.contains(*ewid) && re4vr::lua_is_true("__vr_aim_input")) {
+        if (ewid && m_iron_rifles.contains(*ewid) && RE4VRShared::get()->vr_aim_input) {
             iron_sight_tick(ewid);
         }
         scope_proto_tick();

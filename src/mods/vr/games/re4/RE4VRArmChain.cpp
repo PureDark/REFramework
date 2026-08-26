@@ -12,6 +12,7 @@
 #include <sdk/RETypeDB.hpp>
 #include <spdlog/spdlog.h>
 
+#include "RE4VRMinecart.hpp"
 #include "RE4VRShared.hpp"
 #include "../../../ScriptRunner.hpp"
 
@@ -264,7 +265,7 @@ void RE4VRArmChain::save_json() {
 }
 
 std::string RE4VRArmChain::resolve_config_key() {
-    if (auto s = re4vr::lua_string("__vr_active_char")) {
+    if (auto s = RE4VRShared::get()->vr_active_char) {
         if (!s->empty()) {
             std::string k = *s;
             std::transform(k.begin(), k.end(), k.begin(), [](unsigned char c) { return (char)std::tolower(c); });
@@ -496,18 +497,18 @@ void RE4VRArmChain::flush_joint_cache() {
 }
 
 bool RE4VRArmChain::should_pause() {
-    if (re4vr::lua_is_true("__re4_railcar_mode") && !re4vr::lua_is_true("__re4_railcar_reloading")) {
+    if (RE4VRShared::get()->re4_railcar_mode && !RE4VRShared::get()->re4_railcar_reloading) {
         return false;
     }
-    if (re4vr::call_killswitch_bool("is_active", re4vr::lua_is_true("__re4_ks_active"))) {
+    if (re4vr::call_killswitch_bool("is_active", RE4VRShared::get()->re4_ks_active)) {
         return true;
     }
-    return re4vr::lua_is_true("__vr_motion_paused");
+    return RE4VRShared::get()->vr_motion_paused;
 }
 
 bool RE4VRArmChain::should_apply_now() {
     if (m_require_motion_tick) {
-        const int32_t mt = (int32_t)re4vr::lua_number("__vr_motion_tick_id").value_or(-1);
+        const int32_t mt = (int32_t)RE4VRShared::get()->vr_motion_tick_id.value_or(-1);
         if (mt <= m_last_motion_tick) {
             return false;
         }
@@ -520,7 +521,7 @@ bool RE4VRArmChain::should_apply_now() {
         m_last_frame_applied = f;
     }
     if (m_require_motion_tick) {
-        m_last_motion_tick = (int32_t)re4vr::lua_number("__vr_motion_tick_id").value_or(m_last_motion_tick);
+        m_last_motion_tick = (int32_t)RE4VRShared::get()->vr_motion_tick_id.value_or(m_last_motion_tick);
     }
     return true;
 }
@@ -698,7 +699,7 @@ void RE4VRArmChain::apply_arm_ik_side(const char* prefix, Vector3f hand_pos, con
     if (m_shoulder_pin && !pin) {
         const float max_r0 = upper_len + lower_len - m_shoulder_reach_follow_slack;
         const float d0 = glm::length(hand_pos - *sw);
-        auto anim = re4vr::lua_string("__vr_anim_l0");
+        auto anim = RE4VRShared::get()->vr_anim_l0;
         bool stand = false;
         if (anim) {
             std::string a = *anim;
@@ -725,7 +726,7 @@ void RE4VRArmChain::apply_arm_ik_side(const char* prefix, Vector3f hand_pos, con
                 auto sp = re4vr::safe([&] { return re4vr::v3(sdk::get_joint_position(sj)); });
                 if (sp) {
                     float excess = d - max_r;
-                    if (!re4vr::lua_is_true("__re4_railcar_mode") && excess > m_shoulder_reach_follow_max) {
+                    if (!RE4VRShared::get()->re4_railcar_mode && excess > m_shoulder_reach_follow_max) {
                         excess = m_shoulder_reach_follow_max;
                     }
                     const auto delta = dir * excess;
@@ -735,7 +736,7 @@ void RE4VRArmChain::apply_arm_ik_side(const char* prefix, Vector3f hand_pos, con
             }
         }
     }
-    if (m_hand_clamp && !re4vr::lua_is_true("__re4_railcar_mode")) {
+    if (m_hand_clamp && !RE4VRShared::get()->re4_railcar_mode) {
         const float max_r = upper_len + lower_len - m_shoulder_reach_follow_slack;
         const auto w = hand_pos - shoulder_world;
         const float d = glm::length(w);
@@ -755,9 +756,9 @@ void RE4VRArmChain::apply_arm_ik_side(const char* prefix, Vector3f hand_pos, con
         hand_solve = re4vr::quat_rotate(root->inv_rot, hand_pos - root->pos);
     }
     if (prefix[0] == 'R') {
-        re4vr::lua_set_vec3("__vr_arm_chain_rh_clamped_pos", hand_solve);
+        RE4VRShared::get()->vr_arm_chain_rh_clamped_pos = hand_solve;
     } else {
-        re4vr::lua_set_vec3("__vr_arm_chain_lh_clamped_pos", hand_solve);
+        RE4VRShared::get()->vr_arm_chain_lh_clamped_pos = hand_solve;
     }
     const bool is_right = prefix[0] == 'R';
     Vector3f pole_vec = char_rot ? arm_pole_world(*char_rot, is_right) : Vector3f{0, -1, 0};
@@ -792,7 +793,7 @@ void RE4VRArmChain::apply_arm_ik_side(const char* prefix, Vector3f hand_pos, con
 }
 
 void RE4VRArmChain::apply_body_chain() {
-    re4vr::lua_set_bool("__vr_re4_two_bone_ik_active", false);
+    RE4VRShared::get()->vr_re4_two_bone_ik_active = false;
     if (!m_enabled || should_pause() || !should_apply_now()) {
         return;
     }
@@ -811,7 +812,7 @@ void RE4VRArmChain::apply_body_chain() {
     if (!player_tf) {
         return;
     }
-    re4vr::lua_set_bool("__vr_re4_two_bone_ik_active", true);
+    RE4VRShared::get()->vr_re4_two_bone_ik_active = true;
     std::optional<RootPose> root;
     auto pos = re4vr::safe([&] { return sdk::get_transform_position(player_tf); });
     auto rot = re4vr::safe([&] { return sdk::get_transform_rotation(player_tf); });
@@ -826,34 +827,34 @@ void RE4VRArmChain::apply_body_chain() {
     }
     std::optional<glm::quat> char_rot = rot;
 
-    auto rh_pos = re4vr::lua_vec3("__vr_rh_joint_pos");
+    auto rh_pos = RE4VRShared::get()->vr_rh_joint_pos;
     if (!rh_pos) {
-        rh_pos = re4vr::lua_vec3("__vr_unified_rh_pos");
+        rh_pos = RE4VRShared::get()->vr_unified_rh_pos;
     }
     if (!rh_pos) {
-        rh_pos = re4vr::lua_vec3("__vr_rh_world");
+        rh_pos = RE4VRShared::get()->vr_rh_world;
     }
-    auto lh_raw = re4vr::lua_vec3("__vr_lh_joint_pos");
+    auto lh_raw = RE4VRShared::get()->vr_lh_joint_pos;
     if (!lh_raw) {
-        lh_raw = re4vr::lua_vec3("__vr_unified_lh_pos");
+        lh_raw = RE4VRShared::get()->vr_unified_lh_pos;
     }
     if (!lh_raw) {
-        lh_raw = re4vr::lua_vec3("__vr_lh_world");
+        lh_raw = RE4VRShared::get()->vr_lh_world;
     }
     auto lh_pos = lh_raw;
-    if (auto dock = re4vr::lua_vec3("__vr_slide_hand_world_pos")) {
-        const float sblend = (float)re4vr::lua_number("__vr_slide_dock_blend_factor").value_or(0.0);
+    if (auto dock = RE4VRShared::get()->vr_slide_hand_world_pos) {
+        const float sblend = (float)RE4VRShared::get()->vr_slide_dock_blend_factor.value_or(0.0);
         if (sblend > 0.001f) {
-            auto rh_rot = re4vr::lua_quat("__vr_rh_joint_rot");
+            auto rh_rot = RE4VRShared::get()->vr_rh_joint_rot;
             if (rh_pos && rh_rot) {
-                auto prev = re4vr::lua_vec3("__ldock_rhprev");
+                auto prev = RE4VRShared::get()->ldock_rhprev;
                 const float moved = prev ? glm::length(*rh_pos - *prev) : 999.0f;
-                re4vr::lua_set_vec3("__ldock_rhprev", *rh_pos);
-                if (!re4vr::lua_vec3("__ldock_off") || moved < 0.006f) {
+                RE4VRShared::get()->ldock_rhprev = *rh_pos;
+                if (!RE4VRShared::get()->ldock_off || moved < 0.006f) {
                     const auto inv = glm::inverse(*rh_rot);
-                    re4vr::lua_set_vec3("__ldock_off", re4vr::quat_rotate(inv, *dock - *rh_pos));
+                    RE4VRShared::get()->ldock_off = re4vr::quat_rotate(inv, *dock - *rh_pos);
                 }
-                if (auto off = re4vr::lua_vec3("__ldock_off")) {
+                if (auto off = RE4VRShared::get()->ldock_off) {
                     *dock = *rh_pos + re4vr::quat_rotate(*rh_rot, *off);
                 }
             }
@@ -863,7 +864,7 @@ void RE4VRArmChain::apply_body_chain() {
                 lh_pos = dock;
             }
             if (lh_pos) {
-                re4vr::lua_set_vec3("__vr_ldock_anchored", *lh_pos);
+                RE4VRShared::get()->vr_ldock_anchored = *lh_pos;
             }
         }
     }
@@ -898,10 +899,10 @@ void RE4VRArmChain::apply_body_chain() {
 
 void RE4VRArmChain::publish_clamp_anchors() {
     if (!m_hand_clamp) {
-        re4vr::lua_set_nil("__vr_arm_chain_R_root");
-        re4vr::lua_set_nil("__vr_arm_chain_R_maxreach");
-        re4vr::lua_set_nil("__vr_arm_chain_L_root");
-        re4vr::lua_set_nil("__vr_arm_chain_L_maxreach");
+        RE4VRShared::get()->vr_arm_chain_R_root.reset();
+        RE4VRShared::get()->vr_arm_chain_R_maxreach.reset();
+        RE4VRShared::get()->vr_arm_chain_L_root.reset();
+        RE4VRShared::get()->vr_arm_chain_L_maxreach.reset();
         return;
     }
     for (const char* prefix : {"R", "L"}) {
@@ -922,16 +923,16 @@ void RE4VRArmChain::publish_clamp_anchors() {
 }
 
 void RE4VRArmChain::railcar_pin_spine() {
-    if (!re4vr::lua_is_true("__re4_railcar_mode") || re4vr::lua_is_true("__re4_railcar_reloading")) {
+    if (!RE4VRShared::get()->re4_railcar_mode || RE4VRShared::get()->re4_railcar_reloading) {
         return;
     }
-    re4vr::lua_pcall_name("__re4_minecart_apply_spine_pin");
+    RE4VRMinecart::get()->apply_spine_pin();
 }
 
 void RE4VRArmChain::phase_pre(const char* lua_call, bool enabled) {
     ScriptProfileGuard guard("re4_vr_arm_chain.lua", lua_call, re4vr::profile_frame());
     if (should_pause()) {
-        re4vr::lua_set_bool("__vr_re4_two_bone_ik_active", false);
+        RE4VRShared::get()->vr_re4_two_bone_ik_active = false;
         publish_clamp_anchors();
         return;
     }

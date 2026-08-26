@@ -16,8 +16,8 @@ HookManager::PreHookResult cache_wi(std::vector<uintptr_t>& args) {
     if (args.size() > 1) {
         auto* wi = (::REManagedObject*)args[1];
         if (re4vr::obj_ok(wi)) {
-            const double now = re4vr::lua_os_clock();
-            const double t = re4vr::lua_number("__re4_live_wi_t").value_or(-1);
+            const double now = re4vr::now();
+            const double t = RE4VRShared::get()->re4_live_wi_t.value_or(-1);
             if (now - t > 0.1) {
                 int32_t cwid = 0;
                 if (auto n = re4vr::safe([&] { return sdk::call_object_func_easy<int32_t>(wi, "get_WeaponId"); })) {
@@ -87,6 +87,7 @@ std::optional<std::string> RE4VRReload::on_initialize() {
 }
 
 void RE4VRReload::on_lua_state_created(sol::state& lua) {
+    RE4VRShared::get()->mag_in_hand_handlers.clear();
     g_mag.seed_leon();
     g_mag.load();
     g_mag.export_globals(lua);

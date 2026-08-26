@@ -31,14 +31,6 @@
 #include "RE4VRMovement.hpp"
 #include "RE4VRShared.hpp"
 
-using re4vr::lua_is_true;
-using re4vr::lua_not_false;
-using re4vr::lua_number;
-using re4vr::lua_string;
-using re4vr::lua_set_bool;
-using re4vr::lua_set_number;
-using re4vr::lua_set_string;
-using re4vr::lua_set_nil;
 using re4vr::obj_ok;
 using re4vr::pcall;
 using re4vr::safe;
@@ -579,7 +571,7 @@ void RE4VRMovement::reset_runtime() {
     m_crouch_ubz_has_base = false;
     m_crouch_ubz_base.clear();
     m_crouchpin_capture_req = false;
-    lua_set_bool("__vr_surge_bridged", false);
+    RE4VRShared::get()->vr_surge_bridged = false;
     m_auto_center_ctx = nullptr;
     m_bw_motion = nullptr;
     m_pose_freeze_now = false;
@@ -593,10 +585,10 @@ double RE4VRMovement::now_clock() const {
 // ---- Killswitch / gameplay gates (C++ mods, not Lua package.loaded) ----
 
 bool RE4VRMovement::is_ks_active() {
-    if (lua_is_true("__re4_throwsight_active")) {
+    if (RE4VRShared::get()->re4_throwsight_active) {
         return true;
     }
-    if (lua_is_true("__re4_ks_keep_movement")) {
+    if (RE4VRShared::get()->re4_ks_keep_movement) {
         return false;
     }
     return RE4VRKillswitch::get()->is_active();
@@ -611,14 +603,14 @@ bool RE4VRMovement::is_crouch_active() {
 }
 
 bool RE4VRMovement::is_aim() {
-    return lua_is_true("is_aim");
+    return RE4VRShared::get()->is_aim;
 }
 
 bool RE4VRMovement::pure_gameplay_only() {
     if (is_ks_active()) {
         return false;
     }
-    if (lua_is_true("__re4_ks_active")) {
+    if (RE4VRShared::get()->re4_ks_active) {
         return false;
     }
     if (!RE4VRKillswitch::get()->is_pure_gameplay()) {
@@ -985,14 +977,14 @@ bool RE4VRMovement::spinepin_restore(bool crouch, std::vector<PinRel>& rel, std:
 void RE4VRMovement::apply_spine_pin(bool can_capture) {
     if (!m_cfg.spine_pin) {
         m_spinepin_rel.reset();
-        lua_set_bool("__vr_surge_bridged", false);
+        RE4VRShared::get()->vr_surge_bridged = false;
         return;
     }
     if (is_ks_active()) {
         return;
     }
     if (is_pin_release()) {
-        lua_set_bool("__vr_surge_bridged", false);
+        RE4VRShared::get()->vr_surge_bridged = false;
         return;
     }
     if (is_crouch_active()) {
@@ -1014,7 +1006,7 @@ void RE4VRMovement::apply_spine_pin(bool can_capture) {
     }
 
     if (!m_spinepin_rel) {
-        lua_set_bool("__vr_surge_bridged", false);
+        RE4VRShared::get()->vr_surge_bridged = false;
         if (!m_spinepin_cfg_tried) {
             m_spinepin_cfg_tried = true;
             std::vector<PinRel> r;
@@ -1028,7 +1020,7 @@ void RE4VRMovement::apply_spine_pin(bool can_capture) {
             }
         }
         if (can_capture) {
-            auto a = lua_string("__vr_anim_l0");
+            auto a = RE4VRShared::get()->vr_anim_l0;
             std::vector<PinRel> r;
             std::vector<std::optional<glm::quat>> pi;
             std::optional<PinRel> nr;
@@ -1050,7 +1042,7 @@ void RE4VRMovement::apply_spine_pin(bool can_capture) {
     }
 
     if (m_spinepin_provisional && can_capture) {
-        auto a = lua_string("__vr_anim_l0");
+        auto a = RE4VRShared::get()->vr_anim_l0;
         std::string al = a ? *a : "";
         std::transform(al.begin(), al.end(), al.begin(), [](unsigned char c) { return (char)std::tolower(c); });
         if (al.find("stand") != std::string::npos) {
@@ -1068,10 +1060,10 @@ void RE4VRMovement::apply_spine_pin(bool can_capture) {
     }
 
     auto& cur_rel = *m_spinepin_rel;
-    lua_set_bool("__vr_surge_bridged", true);
+    RE4VRShared::get()->vr_surge_bridged = true;
 
     if (can_capture) {
-        auto a = lua_string("__vr_anim_l0");
+        auto a = RE4VRShared::get()->vr_anim_l0;
         bool running = false, walking = false;
         if (a) {
             std::string al = *a;
@@ -1084,8 +1076,8 @@ void RE4VRMovement::apply_spine_pin(bool can_capture) {
     }
 
     Vector3f anchor_p = (!cur_rel.empty()) ? cur_rel[0].p : Vector3f{};
-    const auto sdx = (float)lua_number("__vr_surge_dx").value_or(0.0);
-    const auto sdz = (float)lua_number("__vr_surge_dz").value_or(0.0);
+    const auto sdx = (float)RE4VRShared::get()->vr_surge_dx.value_or(0.0);
+    const auto sdz = (float)RE4VRShared::get()->vr_surge_dz.value_or(0.0);
     if (!cur_rel.empty() && (sdx != 0.0f || sdz != 0.0f)) {
         auto tr = safe([&] { return sdk::get_transform_rotation(tf); });
         if (tr) {
@@ -1094,7 +1086,7 @@ void RE4VRMovement::apply_spine_pin(bool can_capture) {
         }
     }
 
-    lua_set_number("__re4_ub_z_delta", 0.0);
+    RE4VRShared::get()->re4_ub_z_delta = 0.0;
 
     for (size_t i = 0; i < m_spinepin_joints.size() && i < cur_rel.size(); ++i) {
         auto* j = m_spinepin_joints[i];
@@ -1407,20 +1399,20 @@ void RE4VRMovement::apply_crouch_pin(bool can_capture) {
             }
         }
         if (!m_crouchpin_rel) {
-            lua_set_bool("__vr_surge_bridged", false);
+            RE4VRShared::get()->vr_surge_bridged = false;
             return;
         }
     }
 
     auto& cur_rel = *m_crouchpin_rel;
     const auto ubz = m_cfg.pin_ub_z_crouch;
-    lua_set_number("__re4_ub_z_delta", (double)(ubz - m_cfg.pin_ub_z));
+    RE4VRShared::get()->re4_ub_z_delta = (double)(ubz - m_cfg.pin_ub_z);
     const auto hipz = m_cfg.pin_z_hip_crouch.value_or(pin_lookup(m_cfg.pin_z, "Hip"));
 
-    lua_set_bool("__vr_surge_bridged", true);
+    RE4VRShared::get()->vr_surge_bridged = true;
     Vector3f anchor_p = (!cur_rel.empty()) ? cur_rel[0].p : Vector3f{};
-    const auto sdx = (float)lua_number("__vr_surge_dx").value_or(0.0);
-    const auto sdz = (float)lua_number("__vr_surge_dz").value_or(0.0);
+    const auto sdx = (float)RE4VRShared::get()->vr_surge_dx.value_or(0.0);
+    const auto sdz = (float)RE4VRShared::get()->vr_surge_dz.value_or(0.0);
     if (!cur_rel.empty() && (sdx != 0.0f || sdz != 0.0f)) {
         auto tr = safe([&] { return sdk::get_transform_rotation(tf); });
         if (tr) {
@@ -1739,7 +1731,7 @@ void RE4VRMovement::roomscale_crouch() {
         return;
     }
     m_rs_crouch_next_t = now + 0.6;
-    lua_set_bool("__re4_want_crouch_press", true);
+    RE4VRShared::get()->re4_want_crouch_press = true;
 }
 
 void RE4VRMovement::apply_hmd_body_follow() {
@@ -1857,12 +1849,12 @@ void RE4VRMovement::roomscale_flush_body() {
 }
 
 RE4VRMovement::ScopeSlot* RE4VRMovement::active_scope_slot() {
-    auto wnum = lua_number("__re4_scope_wid");
+    auto wnum = RE4VRShared::get()->re4_scope_wid;
     if (!wnum) {
         return nullptr;
     }
     int w = (int)*wnum;
-    if (lua_not_false("__re4_ada_uses_leon_scope")) {
+    if (RE4VRShared::get()->re4_ada_uses_leon_scope) {
         if (w == 6105) w = 4401;
         else if (w == 6114) w = 4400;
     }
@@ -1871,7 +1863,7 @@ RE4VRMovement::ScopeSlot* RE4VRMovement::active_scope_slot() {
     if (wit == m_cfg.scope_sets.end()) {
         return nullptr;
     }
-    auto state = lua_string("__re4_scope_id").value_or("ironsight");
+    auto state = RE4VRShared::get()->re4_scope_id.value_or("ironsight");
     auto sit = wit->second.find(state);
     if (sit == wit->second.end()) {
         sit = wit->second.find("ironsight");
@@ -1884,13 +1876,13 @@ RE4VRMovement::ScopeSlot* RE4VRMovement::active_scope_slot() {
 
 void RE4VRMovement::drive_hmd_yaw() {
     auto& vr = VR::get();
-    if (!lua_is_true("__re4_force_killswitch_scope")) {
+    if (!RE4VRShared::get()->re4_force_killswitch_scope) {
         m_scope_pitch_base.reset();
     }
-    if (lua_is_true("__re4_force_killswitch_scope")) {
+    if (RE4VRShared::get()->re4_force_killswitch_scope) {
         const auto hq = hmd_quat();
         auto off = glm::conjugate(hq);
-        if (auto ap = lua_number("__re4_scope_aim_pitch")) {
+        if (auto ap = RE4VRShared::get()->re4_scope_aim_pitch) {
             const auto delta = (float)*ap * SCOPE_PITCH_SIGN * m_cfg.scope_pitch_gain;
             const auto h = glm::radians(delta) * 0.5f;
             const auto pq = glm::quat{std::cos(h), std::sin(h), 0.0f, 0.0f};
@@ -1900,7 +1892,7 @@ void RE4VRMovement::drive_hmd_yaw() {
         auto hmd = vr->get_position(0);
         auto so = vr->get_standing_origin();
         auto* sset = active_scope_slot();
-        lua_set_number("__re4_scope_eye", 0.0);
+        RE4VRShared::get()->re4_scope_eye = 0.0;
         const float eye_x = sset ? sset->x_r : 0.0f;
         const float eye_z = sset ? sset->z_r : 0.0f;
         const auto pre = glm::conjugate(off) * Vector3f{eye_x, 0.0f, eye_z};
@@ -1914,8 +1906,8 @@ void RE4VRMovement::drive_hmd_yaw() {
         if (mp) gain = 0.0f;
         else if (xr) gain = m_cfg.scope_yaw_xr;
         else gain = sset ? sset->yaw : 0.0f;
-        lua_set_number("__re4_scope_bullet_yaw", (double)(eye_x * gain));
-        lua_set_string("__re4_scope_bullet_src", mp ? "multipass" : (xr ? "openxr" : "openvr"));
+        RE4VRShared::get()->re4_scope_bullet_yaw = (double)(eye_x * gain);
+        RE4VRShared::get()->re4_scope_bullet_src = std::string{mp ? "multipass" : (xr ? "openxr" : "openvr")};
         m_hmd_yaw_prev.reset();
         return;
     }
@@ -1923,7 +1915,7 @@ void RE4VRMovement::drive_hmd_yaw() {
     const bool active = m_cfg.hmd_yaw_drive && vr->is_hmd_active() && !is_ks_active();
     if (!active) {
         m_hmd_yaw_prev.reset();
-        if (!lua_is_true("__vr_recenter_hold")) {
+        if (!RE4VRShared::get()->vr_recenter_hold) {
             vr->set_rotation_offset(yaw_to_quat(0.0f));
         }
         return;
@@ -1979,14 +1971,14 @@ void RE4VRMovement::apply_pose_freeze(bool on) {
 }
 
 void RE4VRMovement::apply_scope_freeze_late() {
-    if (!lua_is_true("__re4_force_killswitch_scope")) {
+    if (!RE4VRShared::get()->re4_force_killswitch_scope) {
         apply_pose_freeze(false);
         return;
     }
     apply_pose_freeze(true);
     auto& vr = VR::get();
     auto off = glm::conjugate(hmd_quat());
-    if (auto ap = lua_number("__re4_scope_aim_pitch")) {
+    if (auto ap = RE4VRShared::get()->re4_scope_aim_pitch) {
         const auto h = glm::radians((float)*ap * SCOPE_PITCH_SIGN * m_cfg.scope_pitch_gain) * 0.5f;
         off = glm::normalize(glm::quat{std::cos(h), std::sin(h), 0.0f, 0.0f} * off);
     }
@@ -2169,7 +2161,7 @@ void RE4VRMovement::update_stop_skip() {
 void RE4VRMovement::update_anim_export() {
     auto* tf = get_body_transform();
     if (!tf) {
-        lua_set_nil("__vr_anim_l0");
+        RE4VRShared::get()->vr_anim_l0.reset();
         m_bw_motion = nullptr;
         return;
     }
@@ -2183,7 +2175,7 @@ void RE4VRMovement::update_anim_export() {
         }
     }
     if (!obj_ok(m_bw_motion)) {
-        lua_set_nil("__vr_anim_l0");
+        RE4VRShared::get()->vr_anim_l0.reset();
         return;
     }
     auto* layer = safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(m_bw_motion, "getLayer", 0); }).value_or(nullptr);
@@ -2192,11 +2184,11 @@ void RE4VRMovement::update_anim_export() {
     if (name) {
         const auto s = utility::re_string::get_string(name);
         if (!s.empty()) {
-            lua_set_string("__vr_anim_l0", s);
+            RE4VRShared::get()->vr_anim_l0 = std::string{s};
             return;
         }
     }
-    lua_set_nil("__vr_anim_l0");
+    RE4VRShared::get()->vr_anim_l0.reset();
     m_bw_motion = nullptr;
 }
 
@@ -2376,8 +2368,8 @@ void RE4VRMovement::sqab_tick() {
     }
     const Vector3f pp{p->x, p->y, p->z};
 
-    auto sq_end = lua_number("__re4_sq_end_t").value_or(-999.0);
-    auto sq_exit = re4vr::lua_vec3("__re4_sq_exit");
+    auto sq_end = RE4VRShared::get()->re4_sq_end_t.value_or(-999.0);
+    auto sq_exit = RE4VRShared::get()->re4_sq_exit;
 
     auto dist = [](const Vector3f& A, const Vector3f& B) {
         const auto d = A - B;
@@ -2405,18 +2397,18 @@ void RE4VRMovement::sqab_tick() {
     if (m_sqab_active && !a) {
         m_sqab_active = false;
         const auto exitp = (m_sqab_pin && m_sqab_pin_pos) ? *m_sqab_pin_pos : m_sqab_last.value_or(pp);
-        re4vr::lua_set_vec3("__re4_sq_exit", exitp);
-        lua_set_number("__re4_sq_end_t", now);
+        RE4VRShared::get()->re4_sq_exit = exitp;
+        RE4VRShared::get()->re4_sq_end_t = now;
         m_sqab_pin = false;
     }
 }
 
 bool RE4VRMovement::sqab_is_retrigger() {
-    const auto dt = now_clock() - lua_number("__re4_sq_end_t").value_or(-999.0);
+    const auto dt = now_clock() - RE4VRShared::get()->re4_sq_end_t.value_or(-999.0);
     if (dt >= SQAB_RETRIG_WINDOW) {
         return false;
     }
-    auto ex = re4vr::lua_vec3("__re4_sq_exit");
+    auto ex = RE4VRShared::get()->re4_sq_exit;
     const auto p = sqab_body_pos();
     if (!ex) {
         return false;
