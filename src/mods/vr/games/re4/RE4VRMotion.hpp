@@ -89,7 +89,7 @@ private:
     void write_joint_pose(::REJoint* j, const Vector3f& pos, const glm::quat& rot);
     Vector3f apply_hand_offset(const Vector3f& pos, const glm::quat& rot, const HandOff& off, glm::quat& out_rot);
     Vector3f clamp_hand_to_arm_reach(const Vector3f& hand_pos, bool left);
-    std::optional<CamData> get_camera_data();
+    std::optional<CamData> get_camera_data(bool use_vr_origin = false);
     std::optional<VrData> get_vr_data();
     std::pair<Vector3f, glm::quat> controller_to_world(const Vector3f& pos, const glm::quat& rot, const CamData& cam);
     void find_joints();
@@ -232,6 +232,7 @@ private:
     std::optional<Vector3f> m_rh_jpos{}, m_lh_jpos{};
     std::optional<glm::quat> m_rh_jrot{}, m_lh_jrot{};
     std::optional<Vector3f> m_smooth_rh_p{}, m_smooth_lh_p{};
+    std::optional<Vector3f> m_smooth_rh_cam{}, m_smooth_lh_cam{};
     std::optional<glm::quat> m_smooth_rh_r{}, m_smooth_lh_r{};
     float m_flip_lerp{0};
     float m_flip_prev{-1};

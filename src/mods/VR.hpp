@@ -624,6 +624,19 @@ public:
 
     void apply_hmd_transform(glm::quat& rotation, Vector4f& position);
     void apply_hmd_transform(::REJoint* camera_joint);
+
+    // Pose VR captured at WaitRendering/BeginRendering PRE (game camera, no HMD offset).
+    // Hand/weapon lock must use this origin on the render pass — camera_fix is written later
+    // and would sit one locomotion step ahead of the view.
+    bool has_original_camera() const {
+        return m_needs_camera_restore;
+    }
+    const Vector4f& get_original_camera_position() const {
+        return m_original_camera_position;
+    }
+    const glm::quat& get_original_camera_rotation() const {
+        return m_original_camera_rotation;
+    }
     
     bool is_hand_behind_head(VRRuntime::Hand hand, float sensitivity = 0.2f) const;
     bool is_action_active(vr::VRActionHandle_t action, vr::VRInputValueHandle_t source = vr::k_ulInvalidInputValueHandle) const;

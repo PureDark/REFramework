@@ -1296,6 +1296,10 @@ void RE4VRFirstPerson::on_application_entry(void*, const char* name, size_t hash
     } else if (hash == "UpdateMotion"_fnv) {
         ScriptProfileGuard guard("re4_vr_firstperson.lua", "on_application_entry:UpdateMotion", re4vr::profile_frame());
         apply_movement_stabilization();
+        if (active()) {
+            compute_and_set(false);
+            apply_all_event_offsets();
+        }
     }
 }
 #endif

@@ -547,7 +547,16 @@ Vector3f RE4VRMotion::clamp_hand_to_arm_reach(const Vector3f& hand_pos, bool lef
     return *root + dlt * ((float)*maxr / d);
 }
 
-std::optional<RE4VRMotion::CamData> RE4VRMotion::get_camera_data() {
+std::optional<RE4VRMotion::CamData> RE4VRMotion::get_camera_data(bool use_vr_origin) {
+    CamData c;
+    if (use_vr_origin) {
+        auto& vr = VR::get();
+        if (vr->has_original_camera()) {
+            c.pos = re4vr::v3(vr->get_original_camera_position());
+            c.rot = vr->get_original_camera_rotation();
+            return c;
+        }
+    }
     auto* cam = sdk::get_primary_camera();
     if (!cam) {
         return std::nullopt;
@@ -557,7 +566,6 @@ std::optional<RE4VRMotion::CamData> RE4VRMotion::get_camera_data() {
     if (!tf) {
         return std::nullopt;
     }
-    CamData c;
     auto rot = re4vr::safe([&] { return sdk::call_object_func_easy<glm::quat>(tf, "get_Rotation"); });
     if (!rot) {
         return std::nullopt;
@@ -766,9 +774,14 @@ void RE4VRMotion::attach_right_hand(const CamData& cam, const VrData& vr) {
         hand_rot = slerp_q(*m_smooth_rh_r, hand_rot, 1.0f - m_cfg.smooth_rot);
     }
     if (m_cfg.smooth_pos > 0 && m_smooth_rh_p) {
-        hand_pos = lerp3(*m_smooth_rh_p, hand_pos, 1.0f - m_cfg.smooth_pos);
+        Vector3f prev = *m_smooth_rh_p;
+        if (m_smooth_rh_cam) {
+            prev += cam.pos - *m_smooth_rh_cam;
+        }
+        hand_pos = lerp3(prev, hand_pos, 1.0f - m_cfg.smooth_pos);
     }
     m_smooth_rh_p = hand_pos;
+    m_smooth_rh_cam = cam.pos;
     m_smooth_rh_r = hand_rot;
     hand_pos = clamp_hand_to_arm_reach(hand_pos, false);
     m_rh_world = hand_pos;
@@ -1516,9 +1529,14 @@ void RE4VRMotion::attach_left_hand(const CamData& cam, const VrData& vr, bool up
         hand_rot = slerp_q(*m_smooth_lh_r, hand_rot, 1.0f - m_cfg.smooth_rot);
     }
     if (m_cfg.smooth_pos > 0 && m_smooth_lh_p) {
-        hand_pos = lerp3(*m_smooth_lh_p, hand_pos, 1.0f - m_cfg.smooth_pos);
+        Vector3f prev = *m_smooth_lh_p;
+        if (m_smooth_lh_cam) {
+            prev += cam.pos - *m_smooth_lh_cam;
+        }
+        hand_pos = lerp3(prev, hand_pos, 1.0f - m_cfg.smooth_pos);
     }
     m_smooth_lh_p = hand_pos;
+    m_smooth_lh_cam = cam.pos;
     m_smooth_lh_r = hand_rot;
     RE4VRShared::get()->vr_lh_ctrl_world = hand_pos;
     auto sp = get_support_pose();
@@ -2076,8 +2094,10 @@ void RE4VRMotion::tick(bool late) {
         release_motion_targets();
         m_smooth_rh_p.reset();
         m_smooth_rh_r.reset();
+        m_smooth_rh_cam.reset();
         m_smooth_lh_p.reset();
         m_smooth_lh_r.reset();
+        m_smooth_lh_cam.reset();
         return;
     }
     if (is_killswitch_active()) {
@@ -2085,8 +2105,10 @@ void RE4VRMotion::tick(bool late) {
         release_motion_targets();
         m_smooth_rh_p.reset();
         m_smooth_rh_r.reset();
+        m_smooth_rh_cam.reset();
         m_smooth_lh_p.reset();
         m_smooth_lh_r.reset();
+        m_smooth_lh_cam.reset();
         restore_hands_native();
         return;
     }
@@ -2224,11 +2246,13 @@ void RE4VRMotion::on_application_entry(void*, const char* name, size_t hash) {
             restore_hands_native();
             return;
         }
-        auto cam = get_camera_data();
+        auto cam = get_camera_data(true);
         auto vrd = get_vr_data();
         if (!cam || !vrd) {
             return;
         }
+        m_standing = re4vr::v3(VR::get()->get_standing_origin());
+        m_standing_set = true;
         const bool pin = RE4VRShared::get()->vr_wsw_pin;
         const bool calib_suspend = !m_wep.frozen && m_wep.calib_wait <= 0 && m_wep.calib_sample > 0;
         bool did_left = false;
