@@ -1,0 +1,1143 @@
+#define NOMINMAX
+#include "RE4VRWeapons.hpp"
+
+#if defined(RE4)
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <functional>
+
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/norm.hpp>
+#include <glm/gtx/quaternion.hpp>
+#include <imgui.h>
+#include <sdk/MotionFsm2Layer.hpp>
+#include <sdk/MurmurHash.hpp>
+#include <sdk/RETypeDB.hpp>
+#include <sdk/SceneManager.hpp>
+#include <spdlog/spdlog.h>
+
+#include "RE4VRFrameCache.hpp"
+#include "RE4VRMenu.hpp"
+#include "RE4VRShared.hpp"
+#include "../../../ScriptRunner.hpp"
+
+namespace {
+void walk_children(::RETransform* t, const std::function<void(::REGameObject*, ::RETransform*)>& fn, int nmax = 64) {
+    auto* c = re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(t, "get_Child"); }).value_or(nullptr);
+    int n = 0;
+    while (c && n < nmax) {
+        ++n;
+        auto* go = re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(c, "get_GameObject"); }).value_or(nullptr);
+        fn(go, c);
+        c = re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(c, "get_Next"); }).value_or(nullptr);
+    }
+}
+
+int32_t wid_of(::REManagedObject* o) {
+    if (!o) {
+        return 0;
+    }
+    auto n = re4vr::safe([&] { return sdk::call_object_func_easy<int32_t>(o, "ToInt32"); });
+    if (n) {
+        return *n;
+    }
+    return re4vr::safe([&] { return utility::re_managed_object::get_field<int32_t>(o, "value__"); }).value_or(0);
+}
+
+::REManagedObject* fsm_node_name(::REManagedObject* go, int layer) {
+    auto* fsm = re4vr::get_component((::REManagedObject*)go, "via.motion.MotionFsm2");
+    if (!fsm) {
+        return nullptr;
+    }
+    return re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(fsm, "getCurrentNodeName", layer); }).value_or(nullptr);
+}
+}
+
+std::shared_ptr<RE4VRWeapons>& RE4VRWeapons::get() {
+    static auto inst = std::make_shared<RE4VRWeapons>();
+    return inst;
+}
+
+bool RE4VRWeapons::is_knife_id(int32_t id) const {
+    return m_knife_ids.contains(id);
+}
+bool RE4VRWeapons::is_scope_weapon(int32_t id) const {
+    return m_scope_weps.contains(id);
+}
+
+::REManagedObject* RE4VRWeapons::get_player_ctx() {
+    auto& fc = RE4VRFrameCache::get();
+    if (fc->on()) {
+        return fc->ctx();
+    }
+    return re4vr::player_context();
+}
+
+std::optional<int32_t> RE4VRWeapons::get_equip_weapon_id() {
+    auto& fc = RE4VRFrameCache::get();
+    if (fc->on()) {
+        return fc->equip_wid();
+    }
+    auto* ctx = get_player_ctx();
+    auto* hu = ctx ? re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(ctx, "get_HeadUpdater"); }).value_or(nullptr) : nullptr;
+    if (!hu) {
+        return std::nullopt;
+    }
+    auto n = re4vr::safe([&] { return sdk::call_object_func_easy<int32_t>(hu, "get_EquipWeaponID"); });
+    if (n) {
+        return *n;
+    }
+    auto* o = re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(hu, "get_EquipWeaponID"); }).value_or(nullptr);
+    if (o) {
+        return wid_of(o);
+    }
+    return std::nullopt;
+}
+
+bool RE4VRWeapons::is_knife_equipped() {
+    auto w = get_equip_weapon_id();
+    return w && m_knife_ids.contains(*w);
+}
+bool RE4VRWeapons::is_grenade_equipped() {
+    auto w = get_equip_weapon_id();
+    return w && m_grenade_ids.contains(*w);
+}
+bool RE4VRWeapons::is_right_grip_held() {
+    return re4vr::grip_held(false);
+}
+
+void RE4VRWeapons::load_json() {
+    auto hb = re4vr::load_json_file("re4_vr/re4_vr_hide_body.json");
+    m_hide_body = re4vr::j_bool(hb, "enabled", true);
+    m_scope_proto.data = re4vr::load_json_file("re4_vr/re4_vr_scope_proto.json");
+    m_scope_proto.enabled = re4vr::j_bool(m_scope_proto.data, "enabled", false);
+    m_snappy.data = re4vr::load_json_file("re4_vr/re4_vr_snappy.json");
+    m_snappy.enabled = re4vr::j_bool(m_snappy.data, "enabled", true);
+    auto th = re4vr::load_json_file("re4_vr/re4_vr_throw.json");
+    if (!th.empty()) {
+        m_throw.enabled = re4vr::j_bool(th, "enabled", true);
+        m_throw.vmin = re4vr::j_num(th, "vmin", m_throw.vmin);
+        m_throw.vmax = re4vr::j_num(th, "vmax", m_throw.vmax);
+        m_throw.gravity = re4vr::j_num(th, "gravity", m_throw.gravity);
+        m_throw.extra = th;
+    }
+}
+
+void RE4VRWeapons::save_hide_body() {
+    re4vr::save_json_file("re4_vr/re4_vr_hide_body.json", {{"enabled", m_hide_body}});
+}
+
+void RE4VRWeapons::register_ui() {
+    if (m_ui_registered) {
+        return;
+    }
+    m_ui_registered = true;
+    RE4VRMenu::get()->add(60, "assist_light", [this]() {
+        bool v = m_disable_assist_light;
+        if (ImGui::Checkbox("Disable Assist Light", &v)) {
+            m_disable_assist_light = v;
+        }
+    });
+}
+
+std::optional<std::string> RE4VRWeapons::on_initialize() {
+    load_json();
+    if (auto* td = sdk::find_type_definition("chainsaw.PlayerEquipment")) {
+        if (auto* m = td->get_method("requestChangeWeaponAction")) {
+            g_hookman.add(m, &RE4VRWeapons::pre_change_weapon, &RE4VRWeapons::post_nop);
+        }
+        for (auto& m : td->get_methods()) {
+            const auto n = std::string{m.get_name()};
+            if (n == "requestEquipKnife") {
+                g_hookman.add(&m, &RE4VRWeapons::pre_request_equip_knife, &RE4VRWeapons::post_nop);
+            } else if (n == "equipWeapon") {
+                g_hookman.add(&m, &RE4VRWeapons::pre_equip_weapon, &RE4VRWeapons::post_nop);
+            } else if (n == "requestChangeActiveWeapon") {
+                g_hookman.add(&m, &RE4VRWeapons::pre_change_active, &RE4VRWeapons::post_nop);
+            }
+        }
+    }
+    if (auto* td = sdk::find_type_definition("chainsaw.HitController")) {
+        if (auto* m = td->get_method("poolDamage")) {
+            g_hookman.add(m, &RE4VRWeapons::pre_pool_damage, &RE4VRWeapons::post_nop);
+        }
+        if (auto* m = td->get_method("callbackAttackHit")) {
+            g_hookman.add(m, &RE4VRWeapons::pre_attack_hit, &RE4VRWeapons::post_nop);
+        }
+        if (auto* m = td->get_method("callbackCalculateDamage")) {
+            g_hookman.add(m, &RE4VRWeapons::pre_calc_damage, &RE4VRWeapons::post_nop);
+        }
+    }
+    if (auto* td = sdk::find_type_definition("chainsaw.ThrowingGrenadeGenerator")) {
+        if (auto* m = td->get_method("requestFire(via.vec3, via.Quaternion)")) {
+            g_hookman.add(m, &RE4VRWeapons::pre_gun_object, &RE4VRWeapons::post_nop);
+        }
+    }
+    register_ui();
+    re4vr::lua_set_bool("__re4_knife_change_block_hooked", true);
+    re4vr::lua_set_bool("__re4_quickknife_hooked", true);
+    re4vr::lua_set_bool("__re4_qk_block", true);
+    re4vr::lua_set_bool("__re4_stow_guard_hooked", true);
+    re4vr::lua_set_bool("__re4_stow_block", true);
+    return std::nullopt;
+}
+
+void RE4VRWeapons::export_globals(sol::state& lua) {
+    lua["__re4_do_knife_melee"] = [this]() { do_knife_melee(); };
+    lua["__re4_find_knife_hc"] = [this]() { return find_knife_hc(); };
+    lua["__re4_knife_get_attack_ud"] = [this](::REManagedObject* hc) { return knife_get_attack_ud(hc); };
+    lua["__re4_knife_hand_world"] = [this]() -> sol::object {
+        re4vr::LuaGuard g;
+        auto* L = g.lua();
+        if (!L) {
+            return sol::nil;
+        }
+        const bool left = re4vr::lua_string("__re4_knife_hand").value_or("R") == "left" || re4vr::lua_is_true("__re4_knife_left_clone");
+        auto p = left ? re4vr::lua_vec3("__vr_lh_world") : re4vr::lua_vec3("__vr_rh_world");
+        if (!p) {
+            auto* tf = re4vr::body_transform();
+            auto* j = tf ? re4vr::joint_by_name(tf, left ? "L_Hand" : "R_Hand") : nullptr;
+            if (j) {
+                p = re4vr::v3(sdk::get_joint_position(j));
+            }
+        }
+        return p ? sol::make_object(*L, *p) : sol::object(sol::nil);
+    };
+    lua["__re4_knife_grip_held"] = [this]() {
+        const bool left = re4vr::lua_string("__re4_knife_hand").value_or("") == "left" || re4vr::lua_is_true("__re4_knife_left_clone");
+        return re4vr::grip_held(left);
+    };
+    lua["__re4_throw_override"] = [](sol::variadic_args) {};
+    if (!lua["__re4_knife_snd"].valid() || lua["__re4_knife_snd"].get_type() == sol::type::nil) {
+        auto t = lua.create_table();
+        t["swing"] = 1800445513;
+        t["throw"] = 3788596668;
+        t["hit"] = 686504397;
+        t["floor"] = 643584649;
+        lua["__re4_knife_snd"] = t;
+    }
+    if (!lua["__re4_knife_fly_cfg"].valid() || lua["__re4_knife_fly_cfg"].get_type() == sol::type::nil) {
+        auto t = lua.create_table();
+        t["speed"] = 12.0;
+        t["gravity"] = 7.0;
+        t["spin"] = 12.0;
+        t["max_time"] = 1.5;
+        t["return_delay"] = 0.4;
+        t["hit_radius"] = 0.5;
+        t["break_radius"] = 0.9;
+        t["v_min"] = 4.0;
+        t["v_max"] = 14.0;
+        t["spin_fly"] = 5.0;
+        t["spin_fall"] = 22.0;
+        t["arm_clear"] = 0.7;
+        t["close_hit_radius"] = 0.5;
+        t["spin_ax"] = 1.0;
+        t["spin_ay"] = 0.0;
+        t["spin_az"] = 0.0;
+        t["spin_ax_l"] = 1.0;
+        t["spin_ay_l"] = 0.0;
+        t["spin_az_l"] = 0.0;
+        t["dir_max_deg"] = 90;
+        t["hmd_force"] = false;
+        t["assist_cone_deg"] = 20.0;
+        t["assist_homing"] = 0.05;
+        t["assist_strength"] = 0.0;
+        lua["__re4_knife_fly_cfg"] = t;
+    }
+    if (lua["__re4_knife_reach"].get_type() != sol::type::number) {
+        lua["__re4_knife_reach"] = 1.6;
+    }
+    if (lua["__re4_knife_dmg_override"].get_type() != sol::type::number) {
+        lua["__re4_knife_dmg_override"] = 150;
+    }
+    if (lua["__re4_knife_wince_override"].get_type() != sol::type::number) {
+        lua["__re4_knife_wince_override"] = 90.0;
+    }
+}
+
+void RE4VRWeapons::on_lua_state_created(sol::state& lua) {
+    export_globals(lua);
+    register_ui();
+}
+void RE4VRWeapons::on_lua_state_destroyed(sol::state&) {
+    m_fly = {};
+}
+
+void RE4VRWeapons::hide_body_weapons_tick() {
+    if (!m_hide_body) {
+        return;
+    }
+    auto* ctx = get_player_ctx();
+    auto* body = ctx ? re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(ctx, "get_BodyGameObject"); }).value_or(nullptr) : nullptr;
+    auto* tf = body ? re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(body, "get_Transform"); }).value_or(nullptr) : nullptr;
+    if (!tf) {
+        return;
+    }
+    auto cur_wid = get_equip_weapon_id();
+    std::string cur;
+    if (cur_wid) {
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "wp%04d", *cur_wid);
+        cur = buf;
+    }
+    bool plain_exists = false;
+    if (!cur.empty()) {
+        walk_children(tf, [&](::REGameObject* go, ::RETransform*) {
+            if (go && re4vr::go_name((::REManagedObject*)go) == cur) {
+                plain_exists = true;
+            }
+        });
+    }
+    walk_children(tf, [&](::REGameObject* go, ::RETransform*) {
+        if (!go) {
+            return;
+        }
+        auto name = re4vr::go_name((::REManagedObject*)go);
+        if (name.size() < 2 || name[0] != 'w' || name[1] != 'p') {
+            return;
+        }
+        const bool is_cur = !cur.empty() && (name == cur || (!plain_exists && (name == cur + "_AO" || name == cur + "_MC")));
+        if (!is_cur) {
+            auto vis = re4vr::safe([&] { return sdk::call_object_func_easy<bool>(go, "get_DrawSelf"); });
+            if (vis == true) {
+                re4vr::pcall([&] { sdk::call_object_func_easy<void*>(go, "set_DrawSelf", false); });
+            }
+        }
+    });
+}
+
+void RE4VRWeapons::hide_assist_light() {
+    if (!m_disable_assist_light) {
+        return;
+    }
+    auto* body = re4vr::body_game_object();
+    auto* tf = body ? re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(body, "get_Transform"); }).value_or(nullptr) : nullptr;
+    if (!tf) {
+        return;
+    }
+    walk_children(tf, [&](::REGameObject* go, ::RETransform*) {
+        if (go && re4vr::go_name((::REManagedObject*)go) == "assist_Light") {
+            re4vr::pcall([&] { sdk::call_object_func_easy<void*>(go, "set_DrawSelf", false); });
+            re4vr::pcall([&] { sdk::call_object_func_easy<void*>(go, "set_UpdateSelf", false); });
+        }
+    });
+}
+
+void RE4VRWeapons::scope_killswitch_tick() {
+    auto* ctx = get_player_ctx();
+    auto* hu = ctx ? re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(ctx, "get_HeadUpdater"); }).value_or(nullptr) : nullptr;
+    auto* gun = hu ? re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(hu, "get_EquipWeapon"); }).value_or(nullptr) : nullptr;
+    bool on = false;
+    if (gun) {
+        on = re4vr::safe([&] { return sdk::call_object_func_easy<bool>(gun, "get__IsViaScope"); }).value_or(false)
+            || re4vr::safe([&] { return utility::re_managed_object::get_field<bool>(gun, "_IsViaScope"); }).value_or(false);
+    }
+    re4vr::lua_set_bool("__re4_scope_via_raw", on);
+    auto ewid = get_equip_weapon_id();
+    if (ewid && m_scope_weps.contains(*ewid)) {
+        re4vr::lua_set_number("__re4_scope_wid", *ewid);
+        m_scope_wid = *ewid;
+    } else {
+        re4vr::lua_set_nil("__re4_scope_wid");
+        m_scope_wid.reset();
+    }
+    static bool via_seen = false;
+    if (!re4vr::lua_is_true("__vr_aim_input")) {
+        via_seen = false;
+    } else if (on) {
+        via_seen = true;
+    }
+    if (!on && via_seen && re4vr::lua_is_true("__re4_fork_ok") && re4vr::lua_not_false("__re4_scope_hold_enable")
+        && re4vr::lua_is_true("__vr_aim_input") && m_scope_wid) {
+        on = true;
+    }
+    if (ewid && m_bolt_rifles.contains(*ewid) && ctx) {
+        auto* body = re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(ctx, "get_BodyGameObject"); }).value_or(nullptr);
+        auto* fsm = body ? re4vr::get_component((::REManagedObject*)body, "via.motion.MotionFsm2") : nullptr;
+        auto* n5 = fsm ? re4vr::safe([&] { return sdk::call_object_func_easy<::SystemString*>(fsm, "getCurrentNodeName", 5); }).value_or(nullptr) : nullptr;
+        if (n5) {
+            auto ns = utility::re_string::get_string(n5);
+            if (ns.find("Shoot") != std::string::npos) {
+                re4vr::lua_set_number("__re4_bolt_shoot_t", re4vr::now());
+                if (re4vr::lua_not_false("__re4_bolt_reaim") && re4vr::lua_is_true("__vr_aim_input")
+                    && !re4vr::lua_number("__re4_bolt_aim_cut_t")) {
+                    re4vr::lua_set_number("__re4_bolt_aim_cut_t", re4vr::now());
+                }
+            }
+        }
+    }
+    const bool iron = on && ewid && m_iron_rifles.contains(*ewid) && !re4vr::lua_string("__re4_scope_id");
+    const bool scope_aim = on && !iron;
+    const bool native = scope_aim && re4vr::lua_is_true("__re4_fork_ok") && re4vr::lua_not_false("__re4_scope_mono_enable");
+    re4vr::lua_set_bool("__re4_scope_native", native);
+    m_scope_native = native;
+    bool bolt_win = false;
+    if (ewid && m_bolt_rifles.contains(*ewid)) {
+        auto st = re4vr::lua_number("__re4_bolt_shoot_t");
+        bolt_win = st && (re4vr::now() - *st) < 0.25;
+    }
+    re4vr::lua_set_bool("__re4_force_killswitch_scope", scope_aim && !bolt_win);
+    re4vr::lua_set_bool("__re4_force_killswitch_bolt", false);
+    m_force_ks_scope = scope_aim && !bolt_win;
+    re4vr::lua_set_bool("__vr_unlock_ry", scope_aim);
+    if (scope_aim && gun) {
+        auto* go = re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(gun, "get_GameObject"); }).value_or(nullptr);
+        auto* gtf = go ? re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(go, "get_Transform"); }).value_or(nullptr) : nullptr;
+        if (gtf) {
+            auto rot = sdk::get_transform_rotation(gtf);
+            auto f = re4vr::quat_rotate(rot, Vector3f{0, 0, 1});
+            const float fy = std::clamp(f.y, -1.0f, 1.0f);
+            auto st = re4vr::lua_number("__re4_bolt_shoot_t");
+            const bool freeze = ewid && m_bolt_rifles.contains(*ewid) && st && (re4vr::now() - *st) < 1.6;
+            if (!freeze) {
+                re4vr::lua_set_number("__re4_scope_aim_pitch", glm::degrees(std::asin(fy)));
+            }
+        }
+    } else {
+        re4vr::lua_set_nil("__re4_scope_aim_pitch");
+    }
+    if (on) {
+        // detect_scope_id: look for scope child names
+        if (gun) {
+            auto* go = re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(gun, "get_GameObject"); }).value_or(nullptr);
+            auto* gtf = go ? re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(go, "get_Transform"); }).value_or(nullptr) : nullptr;
+            std::optional<std::string> sid;
+            if (gtf) {
+                walk_children(gtf, [&](::REGameObject* cgo, ::RETransform*) {
+                    if (!cgo || sid) {
+                        return;
+                    }
+                    auto nm = re4vr::go_name((::REManagedObject*)cgo);
+                    if (nm.find("scope") != std::string::npos || nm.find("Scope") != std::string::npos) {
+                        sid = nm;
+                    }
+                });
+            }
+            if (sid) {
+                re4vr::lua_set_string("__re4_scope_id", *sid);
+            } else {
+                re4vr::lua_set_nil("__re4_scope_id");
+            }
+        }
+    }
+}
+
+void RE4VRWeapons::keep_knife_out() {
+    if (m_kko_frames > 0) {
+        return;
+    }
+    auto* ctx = get_player_ctx();
+    auto* head = ctx ? re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(ctx, "get_HeadGameObject"); }).value_or(nullptr) : nullptr;
+    if (!head) {
+        return;
+    }
+    auto* updater = re4vr::get_component((::REManagedObject*)head, "chainsaw.Ch0a0z0HeadUpdater");
+    if (!updater) {
+        updater = re4vr::get_component((::REManagedObject*)head, "chainsaw.Ch3a8z0HeadUpdater");
+    }
+    if (!updater) {
+        return;
+    }
+    auto* timer = re4vr::safe([&] { return utility::re_managed_object::get_field<::REManagedObject*>(updater, "<KnifeCloseTimer>k__BackingField"); }).value_or(nullptr);
+    if (!timer) {
+        return;
+    }
+    re4vr::pcall([&] {
+        auto* t = sdk::get_object_field<float>(timer, "_TransitTime");
+        if (t) {
+            *t = 0.0f;
+        }
+    });
+}
+
+::REManagedObject* RE4VRWeapons::find_knife_hc() {
+    auto* hm = sdk::get_managed_singleton<::REManagedObject>("chainsaw.HitManager");
+    auto* body = re4vr::body_game_object();
+    auto* tf = body ? re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(body, "get_Transform"); }).value_or(nullptr) : nullptr;
+    if (!hm || !tf) {
+        return nullptr;
+    }
+    ::REManagedObject* found = nullptr;
+    std::function<void(::RETransform*, int)> walk = [&](::RETransform* t, int depth) {
+        if (!t || depth > 6 || found) {
+            return;
+        }
+        auto* go = re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(t, "get_GameObject"); }).value_or(nullptr);
+        if (go) {
+            auto* hc = re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(hm, "getHitController", go); }).value_or(nullptr);
+            if (hc) {
+                auto wid = re4vr::safe([&] { return sdk::call_object_func_easy<int32_t>(hc, "get_WeaponId"); });
+                if (wid && m_knife_ids.contains(*wid)) {
+                    found = hc;
+                    return;
+                }
+            }
+        }
+        auto* c = re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(t, "get_Child"); }).value_or(nullptr);
+        while (c && !found) {
+            walk(c, depth + 1);
+            c = re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(c, "get_Next"); }).value_or(nullptr);
+        }
+    };
+    walk(tf, 0);
+    return found;
+}
+
+::REManagedObject* RE4VRWeapons::knife_get_attack_ud(::REManagedObject* hc) {
+    if (!hc) {
+        return nullptr;
+    }
+    auto* arr = re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(hc, "get_RequestSetAttackUserData"); }).value_or(nullptr);
+    if (!arr) {
+        arr = re4vr::lua_object("__re4_knife_atkUD");
+        return arr;
+    }
+    const int n = re4vr::safe([&] { return sdk::call_object_func_easy<int32_t>(arr, "get_Count"); }).value_or(0);
+    if (n > 0) {
+        return re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(arr, "get_Item", 0); }).value_or(nullptr);
+    }
+    return re4vr::lua_object("__re4_knife_atkUD");
+}
+
+void RE4VRWeapons::do_knife_melee() {
+    static double last_t = 0;
+    const double now = re4vr::now();
+    if (now - last_t < 0.2) {
+        return;
+    }
+    if (re4vr::call_killswitch_bool("is_active", false)) {
+        return;
+    }
+    last_t = now;
+    auto* hc = find_knife_hc();
+    if (!hc) {
+        return;
+    }
+    auto* atk = knife_get_attack_ud(hc);
+    auto hand = re4vr::lua_vec3("__vr_rh_world");
+    if (re4vr::lua_string("__re4_knife_hand").value_or("") == "left" || re4vr::lua_is_true("__re4_knife_left_clone")) {
+        hand = re4vr::lua_vec3("__vr_lh_world");
+    }
+    if (!atk || !hand) {
+        return;
+    }
+    auto* dmg_td = sdk::find_type_definition("chainsaw.collision.DamageUserData");
+    auto* dmg = dmg_td ? dmg_td->create_instance() : nullptr;
+    if (!dmg) {
+        return;
+    }
+    re4vr::lua_set_number("__re4_knife_our_until", now + 0.25);
+    re4vr::pcall([&] { sdk::call_object_func_easy<void*>(hc, "set_AttackEnable", true); });
+    // requestAttack needs a target collider; remaining lua scripts may supply via globals
+    auto* target = re4vr::lua_object("__re4_knife_last_target");
+    if (target) {
+        re4vr::pcall([&] { sdk::call_object_func_easy<void*>(hc, "requestAttack", target, atk, dmg); });
+    }
+    re4vr::pcall([&] { sdk::call_object_func_easy<void*>(hc, "set_AttackEnable", false); });
+}
+
+void RE4VRWeapons::knife_throw_launch(const Vector3f& dir, float speed) {
+    if (m_fly.active) {
+        return;
+    }
+    ::REGameObject* go = nullptr;
+    ::RETransform* tf = nullptr;
+    const bool clone = re4vr::lua_is_true("__re4_knife_left_clone");
+    if (clone) {
+        go = (::REGameObject*)re4vr::lua_object("__re4_knife_lh_clone_go");
+        tf = go ? re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(go, "get_Transform"); }).value_or(nullptr) : nullptr;
+        if (tf) {
+            re4vr::pcall([&] { sdk::call_object_func_easy<void*>(tf, "set_Parent(via.Transform)", (::RETransform*)nullptr); });
+        }
+    } else {
+        auto* hc = find_knife_hc();
+        go = hc ? re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(hc, "get_GameObject"); }).value_or(nullptr) : nullptr;
+        tf = go ? re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(go, "get_Transform"); }).value_or(nullptr) : nullptr;
+    }
+    if (!go || !tf) {
+        return;
+    }
+    auto hand_fn = [&]() -> std::optional<Vector3f> {
+        re4vr::LuaGuard g;
+        auto* L = g.lua();
+        sol::object f = L ? (*L)["__re4_knife_hand_world"] : sol::object{};
+        if (f.is<sol::protected_function>()) {
+            auto r = f.as<sol::protected_function>()();
+            if (r.valid()) {
+                return re4vr::as_vec3(r);
+            }
+        }
+        return std::nullopt;
+    };
+    auto hp = hand_fn();
+    auto p = hp ? *hp : re4vr::v3(sdk::get_transform_position(tf));
+    m_fly = {};
+    m_fly.active = true;
+    m_fly.go = go;
+    m_fly.tf = tf;
+    m_fly.pos = p;
+    m_fly.home = p;
+    m_fly.vel = dir * speed;
+    m_fly.rot = sdk::get_transform_rotation(tf);
+    m_fly.t0 = re4vr::now();
+    m_fly.returning = false;
+    m_fly.landed = false;
+    m_knife_flying = true;
+    re4vr::lua_set_bool("__re4_knife_flying", true);
+}
+
+void RE4VRWeapons::knife_flight_tick() {
+    if (!m_fly.active) {
+        return;
+    }
+    const double now = re4vr::now();
+    float dt = (float)(now - (m_last_hand_t.value_or(now)));
+    m_last_hand_t = now;
+    if (dt <= 0) {
+        dt = 0.016f;
+    } else if (dt > 0.1f) {
+        dt = 0.1f;
+    }
+    float grav = 7.0f, spin = 12.0f, max_t = 1.5f, ret = 0.4f;
+    {
+        re4vr::LuaGuard g;
+        auto* L = g.lua();
+        if (L) {
+            sol::object cfg = (*L)["__re4_knife_fly_cfg"];
+            if (cfg.is<sol::table>()) {
+                auto t = cfg.as<sol::table>();
+                grav = t.get_or("gravity", grav);
+                spin = t.get_or("spin_fly", spin);
+                max_t = t.get_or("max_time", max_t);
+                ret = t.get_or("return_delay", ret);
+            }
+        }
+    }
+    if (!m_fly.returning && !m_fly.landed) {
+        m_fly.pos += m_fly.vel * dt;
+        m_fly.vel.y -= grav * dt;
+        m_fly.spin = re4vr::axis_angle(Vector3f{1, 0, 0}, spin * dt) * m_fly.spin;
+        if (auto home = re4vr::lua_vec3("__re4_knife_home")) {
+            const float hs = (float)re4vr::lua_number("__re4_knife_home_str").value_or(0);
+            if (hs > 0) {
+                auto to = glm::normalize(*home - m_fly.pos);
+                const float sp = glm::length(m_fly.vel);
+                m_fly.vel = glm::normalize(glm::mix(glm::normalize(m_fly.vel), to, std::clamp(hs, 0.0f, 1.0f))) * sp;
+            }
+        }
+        if ((now - m_fly.t0) > max_t || m_fly.pos.y < m_fly.home.y - 4.0f) {
+            m_fly.landed = true;
+            m_fly.t0 = now;
+        }
+    } else if (m_fly.landed && !m_fly.returning) {
+        if ((now - m_fly.t0) > ret) {
+            m_fly.returning = true;
+            m_fly.t0 = now;
+        }
+    } else if (m_fly.returning) {
+        m_fly.active = false;
+        m_knife_flying = false;
+        re4vr::lua_set_bool("__re4_knife_flying", false);
+        re4vr::lua_pcall_name("__re4_knife_play_grab_sound");
+    }
+}
+
+void RE4VRWeapons::knife_flight_apply() {
+    re4vr::lua_set_bool("__re4_knife_flying", m_fly.active);
+    if (!m_fly.active || !m_fly.tf) {
+        return;
+    }
+    auto valid = re4vr::safe([&] { return sdk::call_object_func_easy<bool>(m_fly.tf, "get_Valid"); });
+    if (valid == false) {
+        m_fly.active = false;
+        return;
+    }
+    sdk::set_transform_position(m_fly.tf, re4vr::v4(m_fly.pos));
+    sdk::set_transform_rotation(m_fly.tf, glm::normalize(m_fly.rot * m_fly.spin));
+}
+
+void RE4VRWeapons::update_throw_velocity() {
+    auto p = re4vr::lua_vec3("__vr_rh_ctrl_raw");
+    if (!p) {
+        p = re4vr::lua_vec3("__vr_rh_world");
+    }
+    const bool left = re4vr::lua_string("__re4_knife_hand").value_or("") == "left" || re4vr::lua_is_true("__re4_knife_left_clone");
+    if (left) {
+        p = re4vr::lua_vec3("__vr_lh_ctrl_raw");
+        if (!p) {
+            p = re4vr::lua_vec3("__vr_lh_world");
+        }
+    }
+    if (!p) {
+        return;
+    }
+    const double now = re4vr::now();
+    if (m_last_hand_t) {
+        const float dt = (float)(now - *m_last_hand_t);
+        if (dt > 1e-4f && dt < 0.2f) {
+            m_hand_vel = (*p - m_hand_pos) / dt;
+        }
+    }
+    m_hand_pos = *p;
+    m_last_hand_t = now;
+}
+
+std::optional<Vector3f> RE4VRWeapons::get_throw_direction() {
+    auto v = m_hand_vel;
+    if (glm::length2(v) < 1e-6f) {
+        return get_hmd_forward();
+    }
+    return glm::normalize(v);
+}
+
+std::optional<Vector3f> RE4VRWeapons::get_hmd_forward() {
+    auto* cam = sdk::get_primary_camera();
+    if (!cam) {
+        return std::nullopt;
+    }
+    auto* go = re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(cam, "get_GameObject"); }).value_or(nullptr);
+    auto* tf = go ? re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(go, "get_Transform"); }).value_or(nullptr) : nullptr;
+    if (!tf) {
+        return std::nullopt;
+    }
+    auto az = re4vr::safe([&] { return sdk::call_object_func_easy<Vector3f>(tf, "get_AxisZ"); });
+    if (!az) {
+        return std::nullopt;
+    }
+    return glm::normalize(-*az);
+}
+
+void RE4VRWeapons::throw_on_frame() {
+    const bool knife_equ = is_knife_equipped();
+    re4vr::lua_set_bool("__re4_knife_equipped", knife_equ);
+    if (!knife_equ) {
+        re4vr::lua_set_string("__re4_knife_hand", "none");
+        m_knife_hand = "none";
+    } else {
+        const bool left = re4vr::lua_is_true("__re4_knife_left_intent");
+        re4vr::lua_set_string("__re4_knife_hand", left ? "left" : "right");
+        m_knife_hand = left ? "left" : "right";
+    }
+    if (knife_equ || re4vr::lua_is_true("__re4_knife_left_clone")) {
+        knife_flight_tick();
+        const bool left_knife = m_knife_hand == "left" || re4vr::lua_is_true("__re4_knife_left_clone");
+        const bool grip = re4vr::grip_held(left_knife);
+        const bool hz = left_knife ? re4vr::lua_is_true("__vr_knife_lh_holster_zone") : re4vr::lua_is_true("__vr_knife_holster_zone");
+        const bool flipped = re4vr::lua_is_true("__vr_knife_flip");
+        const bool gripping = !m_fly.active && !hz && !flipped && grip;
+        re4vr::lua_set_bool("__re4_knife_throw_gripping", gripping);
+        if (gripping) {
+            update_throw_velocity();
+            if (auto d = get_throw_direction()) {
+                re4vr::lua_set_vec3("__re4_knife_throw_dir", *d);
+            }
+            m_winding = true;
+        }
+        if (m_grip_was && !gripping) {
+            auto dir = re4vr::lua_vec3("__re4_knife_throw_dir");
+            if (dir && dir->y < -0.25f) {
+                const float h = std::sqrt(dir->x * dir->x + dir->z * dir->z);
+                if (h > 0.001f) {
+                    const float hs = std::sqrt(std::max(0.0001f, 1.0f - 0.25f * 0.25f)) / h;
+                    dir = Vector3f{dir->x * hs, -0.25f, dir->z * hs};
+                    re4vr::lua_set_vec3("__re4_knife_throw_dir", *dir);
+                }
+            }
+            const float peak = glm::length(m_hand_vel);
+            static double last_throw = 0;
+            const double now = re4vr::now();
+            if (dir && peak >= 1.5f && (now - last_throw) >= 0.4) {
+                last_throw = now;
+                float spd = 12.0f;
+                {
+                    re4vr::LuaGuard g;
+                    auto* L = g.lua();
+                    if (L && (*L)["__re4_knife_fly_cfg"].is<sol::table>()) {
+                        spd = (*L)["__re4_knife_fly_cfg"].as<sol::table>().get_or("speed", 12.0f);
+                    }
+                }
+                knife_throw_launch(*dir, spd);
+            }
+        }
+        m_grip_was = gripping;
+    }
+    // melee on swing edge
+    const bool swing = re4vr::lua_is_true("vr_knife_swing");
+    if (swing && !m_prev_swing && !re4vr::lua_is_true("__re4_knife_throw_gripping") && !m_fly.active) {
+        do_knife_melee();
+    }
+    m_prev_swing = swing;
+}
+
+HookManager::PreHookResult RE4VRWeapons::pre_change_weapon(std::vector<uintptr_t>&, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
+    auto& self = *get();
+    if (!re4vr::lua_is_true("__re4_frame_is_gameplay")) {
+        return HookManager::PreHookResult::CALL_ORIGINAL;
+    }
+    auto until = re4vr::lua_number("__re4_our_equip_until");
+    if (until && re4vr::now() < *until) {
+        return HookManager::PreHookResult::CALL_ORIGINAL;
+    }
+    auto eid = self.get_equip_weapon_id();
+    if (eid && self.m_knife_ids.contains(*eid)) {
+        return HookManager::PreHookResult::SKIP_ORIGINAL;
+    }
+    return HookManager::PreHookResult::CALL_ORIGINAL;
+}
+
+HookManager::PreHookResult RE4VRWeapons::pre_request_equip_knife(std::vector<uintptr_t>&, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
+    if (!re4vr::lua_not_false("__re4_qk_block")) {
+        return HookManager::PreHookResult::CALL_ORIGINAL;
+    }
+    auto until = re4vr::lua_number("__re4_our_equip_until");
+    if (until && re4vr::now() < *until) {
+        return HookManager::PreHookResult::CALL_ORIGINAL;
+    }
+    if ((re4vr::now() - re4vr::lua_number("__re4_knife_draw_ours_t").value_or(-999)) < 1.0) {
+        return HookManager::PreHookResult::CALL_ORIGINAL;
+    }
+    if (re4vr::lua_call_bool("__re4_is_finisher_prompt", false)) {
+        return HookManager::PreHookResult::CALL_ORIGINAL;
+    }
+    if (!re4vr::call_killswitch_bool("is_pure_gameplay", re4vr::lua_is_true("__re4_frame_is_gameplay"))) {
+        return HookManager::PreHookResult::CALL_ORIGINAL;
+    }
+    const bool aim = re4vr::lua_is_true("__vr_aim_input");
+    const bool rt = re4vr::lua_is_true("__vr_rt_raw") || re4vr::lua_is_true("__re4_rt_held");
+    if (rt && !aim) {
+        return HookManager::PreHookResult::SKIP_ORIGINAL;
+    }
+    return HookManager::PreHookResult::CALL_ORIGINAL;
+}
+
+HookManager::PreHookResult RE4VRWeapons::pre_equip_weapon(std::vector<uintptr_t>& args, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
+    if (!re4vr::lua_not_false("__re4_qk_block")) {
+        return HookManager::PreHookResult::CALL_ORIGINAL;
+    }
+    auto until = re4vr::lua_number("__re4_our_equip_until");
+    if (until && re4vr::now() < *until) {
+        return HookManager::PreHookResult::CALL_ORIGINAL;
+    }
+    return HookManager::PreHookResult::CALL_ORIGINAL;
+}
+
+HookManager::PreHookResult RE4VRWeapons::pre_change_active(std::vector<uintptr_t>&, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
+    auto g = re4vr::lua_number("__re4_stow_guard_until");
+    if (g && re4vr::now() < *g) {
+        auto ours = re4vr::lua_number("__re4_stow_ours_until");
+        if (!(ours && re4vr::now() < *ours) && re4vr::lua_not_false("__re4_stow_block")) {
+            return HookManager::PreHookResult::SKIP_ORIGINAL;
+        }
+    }
+    return HookManager::PreHookResult::CALL_ORIGINAL;
+}
+
+HookManager::PreHookResult RE4VRWeapons::pre_pool_damage(std::vector<uintptr_t>& args, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
+    if (args.size() > 5) {
+        re4vr::LuaGuard g;
+        auto* L = g.lua();
+        if (L) {
+            (*L)["__re4_lp_atk"] = (uintptr_t)args[3];
+            (*L)["__re4_lp_dmg"] = (uintptr_t)args[4];
+        }
+    }
+    return HookManager::PreHookResult::CALL_ORIGINAL;
+}
+HookManager::PreHookResult RE4VRWeapons::pre_attack_hit(std::vector<uintptr_t>&, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
+    return HookManager::PreHookResult::CALL_ORIGINAL;
+}
+HookManager::PreHookResult RE4VRWeapons::pre_calc_damage(std::vector<uintptr_t>& args, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
+    auto until = re4vr::lua_number("__re4_knife_our_until");
+    if (until && re4vr::now() < *until && args.size() > 2) {
+        // damage override applied by remaining lua consumers reading __re4_knife_dmg_override
+    }
+    return HookManager::PreHookResult::CALL_ORIGINAL;
+}
+HookManager::PreHookResult RE4VRWeapons::pre_gun_object(std::vector<uintptr_t>& args, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
+    if (args.size() > 1 && args[1]) {
+        re4vr::lua_set_object("__re4_grenade_gen", (::REManagedObject*)args[1]);
+    }
+    return HookManager::PreHookResult::CALL_ORIGINAL;
+}
+void RE4VRWeapons::post_nop(uintptr_t&, sdk::RETypeDefinition*, uintptr_t) {}
+
+void RE4VRWeapons::snappy_wep_tick() {
+    const bool on = m_snappy.enabled && re4vr::j_bool(m_snappy.data, "direct_snap", true);
+    re4vr::lua_set_bool("__vr_wsw_pin", on);
+    auto* ctx = get_player_ctx();
+    auto* body = ctx ? re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(ctx, "get_BodyGameObject"); }).value_or(nullptr) : nullptr;
+    const uintptr_t addr = (uintptr_t)body;
+    if (addr != m_snappy_last_body) {
+        m_snappy_last_body = addr;
+        m_snappy_applied = false;
+    }
+    if (m_snappy_applied || !body) {
+        return;
+    }
+    auto* bu = re4vr::safe([&] { return utility::re_managed_object::get_field<::REManagedObject*>(ctx, "_BodyUpdater"); }).value_or(nullptr);
+    auto* mfsm2 = bu ? re4vr::safe([&] { return utility::re_managed_object::get_field<::REManagedObject*>(bu, "<MotionFsm>k__BackingField"); }).value_or(nullptr) : nullptr;
+    if (!mfsm2) {
+        return;
+    }
+    auto* layer = re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(mfsm2, "getLayer", 4); }).value_or(nullptr);
+    if (!layer) {
+        return;
+    }
+    auto* tree = ((sdk::behaviortree::CoreHandle*)layer)->get_tree_object();
+    if (!tree) {
+        return;
+    }
+    m_snappy_applied = true;
+    if (auto* put = tree->get_node_by_name("wp4000H_0551_put_away")) {
+        auto acts = put->get_actions();
+        if (acts.size() > 3 && acts[3]) {
+            const bool feature = m_snappy.enabled;
+            float sf = 0;
+            if (feature) {
+                if (re4vr::j_bool(m_snappy.data, "direct_snap", true)) {
+                    auto* ef = sdk::get_object_field<float>(acts[3], "_EndFrame");
+                    sf = (ef && *ef > 1.0f) ? *ef : 9999.0f;
+                } else {
+                    sf = re4vr::j_num(m_snappy.data, "frameskip", 35.0f);
+                }
+            }
+            if (auto* sfp = sdk::get_object_field<float>(acts[3], "_StartFrame")) {
+                *sfp = sf;
+            }
+            if (auto* ov = sdk::get_object_field<bool>(acts[3], "_OverwriteInterpolation")) {
+                *ov = feature;
+            }
+        }
+    }
+    if (auto* hend = tree->get_node_by_name("HOLD_END")) {
+        auto acts = hend->get_actions();
+        if (acts.size() <= 3) {
+            acts = hend->get_unloaded_actions();
+        }
+        if (acts.size() > 3 && acts[3]) {
+            const bool fast = re4vr::j_bool(m_snappy.data, "fast_re_aim", true);
+            re4vr::pcall([&] { sdk::call_object_func_easy<void*>(acts[3], "set_Enabled", !fast); });
+        }
+    }
+}
+
+void RE4VRWeapons::weapon_switch_skip_tick() {
+    if (!(m_snappy.enabled && re4vr::j_bool(m_snappy.data, "direct_snap", true))) {
+        return;
+    }
+    auto* ctx = get_player_ctx();
+    auto* body = ctx ? re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(ctx, "get_BodyGameObject"); }).value_or(nullptr) : nullptr;
+    if (!body) {
+        m_wsw_body = nullptr;
+        return;
+    }
+    if (body != m_wsw_body) {
+        m_wsw_body = body;
+        m_wsw_fsm = re4vr::get_component((::REManagedObject*)body, "via.motion.MotionFsm2");
+        m_wsw_mot = re4vr::get_component((::REManagedObject*)body, "via.motion.Motion");
+    }
+    if (!m_wsw_fsm || !m_wsw_mot) {
+        return;
+    }
+    auto* node = re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(m_wsw_fsm, "getCurrentNodeName", 4); }).value_or(nullptr);
+    if (!node || re4vr::obj_name(node).find("ChangeWeapon") == std::string::npos) {
+        return;
+    }
+    auto* layer = re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(m_wsw_mot, "getLayer", 4); }).value_or(nullptr);
+    if (!layer) {
+        return;
+    }
+    re4vr::pcall([&] { sdk::call_object_func_easy<void*>(layer, "set_BlendRate", 0.0f); });
+    re4vr::pcall([&] { sdk::call_object_func_easy<void*>(layer, "set_Weight", 0.0f); });
+    const float ef = re4vr::safe([&] { return sdk::call_object_func_easy<float>(layer, "get_EndFrame"); }).value_or(0);
+    if (ef > 1.0f) {
+        re4vr::pcall([&] { sdk::call_object_func_easy<void*>(layer, "set_Frame", ef - 0.5f); });
+    }
+}
+
+void RE4VRWeapons::scope_proto_tick() {
+    if (!m_scope_proto.enabled && re4vr::j_num(m_scope_proto.data, "scale", 1.0f) == 1.0f
+        && re4vr::j_num(m_scope_proto.data, "ox", 0) == 0 && re4vr::j_num(m_scope_proto.data, "oy", 0) == 0
+        && re4vr::j_num(m_scope_proto.data, "oz", 0) == 0) {
+        return;
+    }
+    auto* ctx = get_player_ctx();
+    auto* hu = ctx ? re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(ctx, "get_HeadUpdater"); }).value_or(nullptr) : nullptr;
+    auto* gun = hu ? re4vr::safe([&] { return sdk::call_object_func_easy<::REManagedObject*>(hu, "get_EquipWeapon"); }).value_or(nullptr) : nullptr;
+    auto* go = gun ? re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(gun, "get_GameObject"); }).value_or(nullptr) : nullptr;
+    auto* tf = go ? re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(go, "get_Transform"); }).value_or(nullptr) : nullptr;
+    if (!tf) {
+        return;
+    }
+    const float sc = re4vr::j_num(m_scope_proto.data, "scale", 1.0f);
+    const float ox = re4vr::j_num(m_scope_proto.data, "ox", 0);
+    const float oy = re4vr::j_num(m_scope_proto.data, "oy", 0);
+    const float oz = re4vr::j_num(m_scope_proto.data, "oz", 0);
+    walk_children(tf, [&](::REGameObject* cgo, ::RETransform* ctf) {
+        if (!cgo || !ctf) {
+            return;
+        }
+        auto nm = re4vr::go_name((::REManagedObject*)cgo);
+        if (nm.find("scope") == std::string::npos && nm.find("Scope") == std::string::npos) {
+            return;
+        }
+        if (sc != 1.0f) {
+            re4vr::pcall([&] { sdk::call_object_func_easy<void*>(ctf, "set_LocalScale", Vector3f{sc, sc, sc}); });
+        }
+        if (ox != 0 || oy != 0 || oz != 0) {
+            auto lp = re4vr::safe([&] { return sdk::call_object_func_easy<Vector3f>(ctf, "get_LocalPosition"); });
+            if (lp) {
+                re4vr::pcall([&] { sdk::call_object_func_easy<void*>(ctf, "set_LocalPosition", Vector3f{lp->x + ox, lp->y + oy, lp->z + oz}); });
+            }
+        }
+    });
+}
+
+void RE4VRWeapons::iron_sight_tick(std::optional<int32_t> wid) {
+    auto* ctx = get_player_ctx();
+    auto* body = ctx ? re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(ctx, "get_BodyGameObject"); }).value_or(nullptr) : nullptr;
+    auto* tf = body ? re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(body, "get_Transform"); }).value_or(nullptr) : nullptr;
+    std::function<void(::RETransform*, int)> walk = [&](::RETransform* t, int depth) {
+        if (!t || depth > 8) {
+            return;
+        }
+        auto* go = re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(t, "get_GameObject"); }).value_or(nullptr);
+        if (go) {
+            auto nm = re4vr::go_name((::REManagedObject*)go);
+            if (nm == "body" || nm == "body_armor" || nm == "hair" || nm == "head") {
+                re4vr::pcall([&] { sdk::call_object_func_easy<void*>(go, "set_UpdateSelf", true); });
+                re4vr::pcall([&] { sdk::call_object_func_easy<void*>(go, "set_DrawSelf", true); });
+            }
+        }
+        auto* c = re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(t, "get_Child"); }).value_or(nullptr);
+        while (c) {
+            walk(c, depth + 1);
+            c = re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(c, "get_Next"); }).value_or(nullptr);
+        }
+    };
+    walk(tf, 0);
+    if (!wid) {
+        return;
+    }
+    char base[16];
+    std::snprintf(base, sizeof(base), "wp%04d", *wid);
+    ::REGameObject* wgo = nullptr;
+    if (tf) {
+        walk_children(tf, [&](::REGameObject* go, ::RETransform*) {
+            if (wgo || !go) {
+                return;
+            }
+            auto nm = re4vr::go_name((::REManagedObject*)go);
+            if (nm == base || nm == std::string(base) + "_AO" || nm == std::string(base) + "_MC") {
+                wgo = go;
+            }
+        });
+    }
+    if (!wgo) {
+        return;
+    }
+    auto* mesh = re4vr::get_component((::REManagedObject*)wgo, "via.render.Mesh");
+    if (mesh) {
+        re4vr::pcall([&] { sdk::call_object_func_easy<void*>(mesh, "setPartsEnable", 0, true); });
+    }
+    auto* wtf = re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(wgo, "get_Transform"); }).value_or(nullptr);
+    auto* parent = wtf ? re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(wtf, "get_Parent"); }).value_or(nullptr) : nullptr;
+    if (wtf && !parent && tf) {
+        re4vr::pcall([&] { sdk::call_object_func_easy<void*>(wtf, "set_Parent", tf); });
+    }
+}
+
+void RE4VRWeapons::sync_assist_light() {
+    hide_assist_light();
+}
+
+void RE4VRWeapons::update_knife_holster_timer() {
+    if (m_kko_frames <= 0) {
+        return;
+    }
+    auto* ctx = get_player_ctx();
+    auto* head = ctx ? re4vr::safe([&] { return sdk::call_object_func_easy<::REGameObject*>(ctx, "get_HeadGameObject"); }).value_or(nullptr) : nullptr;
+    auto* updater = head ? re4vr::get_component((::REManagedObject*)head, "chainsaw.Ch0a0z0HeadUpdater") : nullptr;
+    if (!updater && head) {
+        updater = re4vr::get_component((::REManagedObject*)head, "chainsaw.Ch3a8z0HeadUpdater");
+    }
+    auto* timer = updater ? re4vr::safe([&] { return utility::re_managed_object::get_field<::REManagedObject*>(updater, "<KnifeCloseTimer>k__BackingField"); }).value_or(nullptr) : nullptr;
+    if (timer) {
+        if (auto* lim = sdk::get_object_field<float>(timer, "_TimeLimit")) {
+            if (!m_kko_orig) {
+                m_kko_orig = *lim;
+            }
+            *lim = 0.0f;
+        }
+    }
+    --m_kko_frames;
+    if (m_kko_frames == 0 && m_kko_orig && timer) {
+        if (auto* lim = sdk::get_object_field<float>(timer, "_TimeLimit")) {
+            *lim = *m_kko_orig;
+        }
+        m_kko_orig.reset();
+    }
+}
+
+void RE4VRWeapons::grenade_on_frame() {
+    if (!is_grenade_equipped()) {
+        return;
+    }
+    update_throw_velocity();
+    if (auto d = get_throw_direction()) {
+        re4vr::lua_set_vec3("__re4_throw_dir", *d);
+    }
+}
+
+void RE4VRWeapons::melee_on_frame() { throw_on_frame(); }
+void RE4VRWeapons::publish_scope_globals() { scope_killswitch_tick(); }
+void RE4VRWeapons::save_scope_proto() {
+    re4vr::save_json_file("re4_vr/re4_vr_scope_proto.json", m_scope_proto.data);
+}
+void RE4VRWeapons::save_snappy() {
+    re4vr::save_json_file("re4_vr/re4_vr_snappy.json", m_snappy.data);
+}
+void RE4VRWeapons::save_throw() {
+    re4vr::save_json_file("re4_vr/re4_vr_throw.json", m_throw.extra);
+}
+
+void RE4VRWeapons::on_frame() {
+    ScriptProfileGuard guard("re4_vr_weapons.lua", "on_frame", re4vr::profile_frame());
+    hide_assist_light();
+    grenade_on_frame();
+    weapon_switch_skip_tick();
+    update_knife_holster_timer();
+    keep_knife_out();
+    throw_on_frame();
+}
+
+void RE4VRWeapons::on_pre_application_entry(void*, const char* name, size_t hash) {
+    const auto call = std::string("on_pre_application_entry:") + (name ? name : "");
+    if (hash == "LockScene"_fnv) {
+        ScriptProfileGuard guard("re4_vr_weapons.lua", call, re4vr::profile_frame());
+        hide_body_weapons_tick();
+        snappy_wep_tick();
+        auto ewid = get_equip_weapon_id();
+        if (ewid && m_iron_rifles.contains(*ewid) && re4vr::lua_is_true("__vr_aim_input")) {
+            iron_sight_tick(ewid);
+        }
+        scope_proto_tick();
+        knife_flight_apply();
+    } else if (hash == "UpdateScene"_fnv) {
+        ScriptProfileGuard guard("re4_vr_weapons.lua", call, re4vr::profile_frame());
+        scope_killswitch_tick();
+    } else if (hash == "BeginRendering"_fnv) {
+        ScriptProfileGuard guard("re4_vr_weapons.lua", call, re4vr::profile_frame());
+        knife_flight_apply();
+    }
+}
+
+void RE4VRWeapons::on_application_entry(void*, const char* name, size_t hash) {
+    const auto call = std::string("on_application_entry:") + (name ? name : "");
+    if (hash == "LateUpdateBehavior"_fnv || hash == "UpdateJointExpression"_fnv) {
+        ScriptProfileGuard guard("re4_vr_weapons.lua", call, re4vr::profile_frame());
+        knife_flight_apply();
+    }
+}
+#endif

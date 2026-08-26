@@ -21,6 +21,38 @@
 #include "mods/VR.hpp"
 #include "mods/LooseFileLoader.hpp"
 #include "mods/vr/games/RE8VR.hpp"
+#if defined(RE4)
+#include "mods/vr/games/RE4VR.hpp"
+#include "mods/vr/games/re4/RE4VRMenu.hpp"
+#include "mods/vr/games/re4/RE4VRStatics.hpp"
+#include "mods/vr/games/re4/RE4VRLib.hpp"
+#include "mods/vr/games/re4/RE4VRFrameCache.hpp"
+#include "mods/vr/games/re4/RE4VRKillswitch.hpp"
+#include "mods/vr/games/re4/RE4VRCapacitive.hpp"
+#include "mods/vr/games/re4/RE4VRAudio.hpp"
+#include "mods/vr/games/re4/RE4VRScope.hpp"
+#include "mods/vr/games/re4/RE4VRWhitelist.hpp"
+#include "mods/vr/games/re4/RE4VRFirstPerson.hpp"
+#include "mods/vr/games/re4/RE4VRBinding.hpp"
+#include "mods/vr/games/re4/RE4VRCrosshair.hpp"
+#include "mods/vr/games/re4/RE4VRRecoil.hpp"
+#include "mods/vr/games/re4/RE4VRGestures.hpp"
+#include "mods/vr/games/re4/RE4VRMaterials.hpp"
+#include "mods/vr/games/re4/RE4VRMerc.hpp"
+#include "mods/vr/games/re4/RE4VRMinecart.hpp"
+#include "mods/vr/games/re4/RE4VRUI.hpp"
+#include "mods/vr/games/re4/RE4VRWeapons.hpp"
+#include "mods/vr/games/re4/RE4VRWeapons2.hpp"
+#include "mods/vr/games/re4/RE4VRMotion.hpp"
+#include "mods/vr/games/re4/RE4VRArmChain.hpp"
+#include "mods/vr/games/re4/RE4VRHolster.hpp"
+#include "mods/vr/games/re4/RE4VRReloadAdv.hpp"
+#include "mods/vr/games/re4/RE4VRReload.hpp"
+#include "mods/vr/games/re4/RE4VRReload2.hpp"
+#include "mods/vr/games/re4/RE4VRReload3.hpp"
+#include "mods/vr/games/re4/RE4VRReload4.hpp"
+#include "mods/vr/games/re4/RE4VRReload5.hpp"
+#endif
 #include "mods/TemporalUpscaler.hpp"
 
 #include "Mods.hpp"
@@ -78,6 +110,41 @@ Mods::Mods() {
     m_mods.emplace_back(APIProxy::get());
     m_mods.emplace_back(PluginLoader::get());
     m_mods.emplace_back(ScriptRunner::get());
+
+#if defined(RE4)
+    // After ScriptRunner. One builtin Mod per former scripts/re4 lua file.
+    // Libs/cache/killswitch first; firstperson before movement lag_fix; motion before arm_chain; movement last.
+    m_mods.emplace_back(RE4VRMenu::get());
+    m_mods.emplace_back(RE4VRStatics::get());
+    m_mods.emplace_back(RE4VRLib::get());
+    m_mods.emplace_back(RE4VRFrameCache::get());
+    m_mods.emplace_back(RE4VRKillswitch::get());
+    m_mods.emplace_back(RE4VRCapacitive::get());
+    m_mods.emplace_back(RE4VRAudio::get());
+    m_mods.emplace_back(RE4VRScope::get());
+    m_mods.emplace_back(RE4VRWhitelist::get());
+    m_mods.emplace_back(RE4VRFirstPerson::get());
+    m_mods.emplace_back(RE4VRBinding::get());
+    m_mods.emplace_back(RE4VRCrosshair::get());
+    m_mods.emplace_back(RE4VRRecoil::get());
+    m_mods.emplace_back(RE4VRGestures::get());
+    m_mods.emplace_back(RE4VRMaterials::get());
+    m_mods.emplace_back(RE4VRMerc::get());
+    m_mods.emplace_back(RE4VRMinecart::get());
+    m_mods.emplace_back(RE4VRUI::get());
+    m_mods.emplace_back(RE4VRWeapons::get());
+    m_mods.emplace_back(RE4VRWeapons2::get());
+    m_mods.emplace_back(RE4VRMotion::get());
+    m_mods.emplace_back(RE4VRArmChain::get());
+    m_mods.emplace_back(RE4VRHolster::get());
+    m_mods.emplace_back(RE4VRReloadAdv::get());
+    m_mods.emplace_back(RE4VRReload::get());
+    m_mods.emplace_back(RE4VRReload2::get());
+    m_mods.emplace_back(RE4VRReload3::get());
+    m_mods.emplace_back(RE4VRReload4::get());
+    m_mods.emplace_back(RE4VRReload5::get());
+    m_mods.emplace_back(RE4VR::get());
+#endif
 }
 
 std::optional<std::string> Mods::on_initialize() const {
@@ -160,9 +227,10 @@ void Mods::on_post_frame() const {
 void Mods::on_draw_ui() const {
     // Only these mods are allowed to draw their tree in the menu, everything else stays hidden.
     // ScriptRunner also draws the "Script Generated UI" tree.
-    static const std::array<std::string_view, 2> visible_mods {
+    static const std::array<std::string_view, 3> visible_mods {
         "ScriptRunner",
-        "TemporalUpscaler" // shows up as "Upscaler"
+        "TemporalUpscaler", // shows up as "Upscaler"
+        "RE4VRMenu",
     };
 
     for (auto& mod : m_mods) {

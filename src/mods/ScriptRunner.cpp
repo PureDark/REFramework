@@ -120,98 +120,88 @@ void add_frame_time_locked(const std::string& lua_file, const std::string& call_
     s_frame_profile.per_call_ms[lua_file + ":" + call_name] += ms;
 }
 
-// ---------- ScriptProfileGuard ----------
-struct ScriptProfileGuard {
-    std::string lua_file;  // 来源 lua 文件
-    std::string call_name; // 调用名（如 on_frame / on_pre_application_entry:UpdateScene）
-    std::string full_key;  // lua_file:call_name，ProfileData 的 key
-    std::chrono::steady_clock::time_point start;
+} // namespace
 
-    ScriptProfileGuard(const std::string& file, const std::string& call, uint64_t frame_index)
-        : lua_file(file)
-        , call_name(call)
-        , full_key(file + ":" + call)
-        , start() {
-        std::optional<FrameSpikeInfo> spike_log;
+ScriptProfileGuard::ScriptProfileGuard(const std::string& file, const std::string& call, uint64_t frame_index)
+    : lua_file(file)
+    , call_name(call)
+    , full_key(file + ":" + call)
+    , start() {
+    std::optional<FrameSpikeInfo> spike_log;
+    {
+        std::lock_guard lock(s_script_profiles_mutex);
+        spike_log = check_frame_switch_locked(frame_index);
+    }
+    if (spike_log.has_value()) {
+        auto& info = *spike_log;
+        spdlog::warn("[FrameProfile] SPIKE frame#{}: script total {:.3f} ms "
+                     "(avg{}: {:.3f} ms, ratio: {:.1f}x)",
+            info.frame, info.frame_ms, info.sample_count, info.avg_ms, info.avg_ms > 0.0 ? info.frame_ms / info.avg_ms : 0.0);
+
+        std::vector<std::pair<std::string, double>> files(info.per_file_ms.begin(), info.per_file_ms.end());
+        std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+
+        for (auto&& [file_name, file_ms] : files) {
+            if (file_ms <= 0.01)
+                continue;
+            spdlog::warn("[FrameProfile]   [{}] {:.3f} ms ({:.1f}%)", file_name, file_ms,
+                info.frame_ms > 0.0 ? file_ms / info.frame_ms * 100.0 : 0.0);
+
+            const std::string prefix = file_name + ":";
+            std::vector<std::pair<std::string, double>> calls;
+            for (auto&& [key, cms] : info.per_call_ms) {
+                if (key.size() > prefix.size() && key.compare(0, prefix.size(), prefix) == 0) {
+                    calls.emplace_back(key.substr(prefix.size()), cms);
+                }
+            }
+            std::sort(calls.begin(), calls.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+            for (auto&& [cname, cms] : calls) {
+                if (cms <= 0.01)
+                    continue;
+                spdlog::warn("[FrameProfile]     {}: {:.3f} ms", cname, cms);
+            }
+        }
+    }
+    start = std::chrono::steady_clock::now();
+}
+
+ScriptProfileGuard::~ScriptProfileGuard() {
+    try {
+        const auto end = std::chrono::steady_clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(end - start).count();
+        std::optional<std::tuple<std::string, double, double, size_t, uint64_t>> log_params;
         {
             std::lock_guard lock(s_script_profiles_mutex);
-            spike_log = check_frame_switch_locked(frame_index);
-        }
-        if (spike_log.has_value()) {
-            auto& info = *spike_log;
-            spdlog::warn("[FrameProfile] SPIKE frame#{}: script total {:.3f} ms "
-                         "(avg{}: {:.3f} ms, ratio: {:.1f}x)",
-                info.frame, info.frame_ms, info.sample_count, info.avg_ms, info.avg_ms > 0.0 ? info.frame_ms / info.avg_ms : 0.0);
+            auto& pd = s_script_profiles[full_key];
+            pd.samples_ms.push_back(ms);
+            pd.window_sum_ms += ms;
+            if (pd.samples_ms.size() > PROFILE_MAX_SAMPLES) {
+                pd.window_sum_ms -= pd.samples_ms.front();
+                pd.samples_ms.pop_front();
+            }
+            pd.total_time_ms += ms;
+            pd.runs += 1;
+            add_frame_time_locked(lua_file, call_name, ms);
 
-            // 按文件总耗时降序
-            std::vector<std::pair<std::string, double>> files(info.per_file_ms.begin(), info.per_file_ms.end());
-            std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
-
-            for (auto&& [file, file_ms] : files) {
-                if (file_ms <= 0.01)
-                    continue;
-                spdlog::warn("[FrameProfile]   [{}] {:.3f} ms ({:.1f}%)", file, file_ms,
-                    info.frame_ms > 0.0 ? file_ms / info.frame_ms * 100.0 : 0.0);
-
-                // 展开该文件下的各调用，按耗时降序
-                const std::string prefix = file + ":";
-                std::vector<std::pair<std::string, double>> calls;
-                for (auto&& [key, cms] : info.per_call_ms) {
-                    if (key.size() > prefix.size() && key.compare(0, prefix.size(), prefix) == 0) {
-                        calls.emplace_back(key.substr(prefix.size()), cms);
-                    }
-                }
-                std::sort(calls.begin(), calls.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
-                for (auto&& [cname, cms] : calls) {
-                    if (cms <= 0.01)
-                        continue;
-                    spdlog::warn("[FrameProfile]     {}: {:.3f} ms", cname, cms);
-                }
+            double avg_ms = 0.0;
+            if (!pd.samples_ms.empty()) {
+                avg_ms = pd.window_sum_ms / static_cast<double>(pd.samples_ms.size());
+            }
+            const auto now = std::chrono::steady_clock::now();
+            if (now - pd.last_log_time >= PROFILE_LOG_INTERVAL) {
+                log_params.emplace(full_key, ms, avg_ms, pd.samples_ms.size(), pd.runs);
+                pd.last_log_time = now;
             }
         }
-        start = std::chrono::steady_clock::now();
+        if (log_params.has_value()) {
+            auto&& [log_name, last_ms, avg, sample_cnt, run_cnt] = log_params.value();
+            if (avg > 0.01)
+                spdlog::info(
+                    "[ScriptProfile] '{}' last: {:.3f} ms, avg({}): {:.3f} ms, runs: {}", log_name, last_ms, sample_cnt, avg, run_cnt);
+        }
+    } catch (...) {
     }
-
-    ~ScriptProfileGuard() {
-        try {
-            const auto end = std::chrono::steady_clock::now();
-            const double ms = std::chrono::duration<double, std::milli>(end - start).count();
-            std::optional<std::tuple<std::string, double, double, size_t, uint64_t>> log_params;
-            {
-                std::lock_guard lock(s_script_profiles_mutex);
-                auto& pd = s_script_profiles[full_key];
-                pd.samples_ms.push_back(ms);
-                pd.window_sum_ms += ms;
-                if (pd.samples_ms.size() > PROFILE_MAX_SAMPLES) {
-                    pd.window_sum_ms -= pd.samples_ms.front();
-                    pd.samples_ms.pop_front();
-                }
-                pd.total_time_ms += ms;
-                pd.runs += 1;
-                // 帧级：同时写入文件级和调用级
-                add_frame_time_locked(lua_file, call_name, ms);
-
-                double avg_ms = 0.0;
-                if (!pd.samples_ms.empty()) {
-                    avg_ms = pd.window_sum_ms / static_cast<double>(pd.samples_ms.size());
-                }
-                const auto now = std::chrono::steady_clock::now();
-                if (now - pd.last_log_time >= PROFILE_LOG_INTERVAL) {
-                    log_params.emplace(full_key, ms, avg_ms, pd.samples_ms.size(), pd.runs);
-                    pd.last_log_time = now;
-                }
-            }
-            if (log_params.has_value()) {
-                auto&& [log_name, last_ms, avg, sample_cnt, run_cnt] = log_params.value();
-                if (avg > 0.01)
-                    spdlog::info(
-                        "[ScriptProfile] '{}' last: {:.3f} ms, avg({}): {:.3f} ms, runs: {}", log_name, last_ms, sample_cnt, avg, run_cnt);
-            }
-        } catch (...) {
-        }
-    }
-};
-} // namespace
+}
 
 
 namespace api::re {

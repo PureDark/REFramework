@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <deque>
 #include <vector>
 #include <unordered_map>
@@ -7,6 +8,7 @@
 #include <mutex>
 #include <deque>
 #include <shared_mutex>
+#include <string>
 
 #include <Windows.h>
 
@@ -278,7 +280,7 @@ private:
     std::recursive_mutex m_execution_mutex{};
 
     struct ScriptCallback {
-        std::string source; // �ĸ� lua �ļ�ע���
+        std::string source; // ÄÄ¸ö lua ÎÄ¼þ×¢²áµÄ
         sol::protected_function fn;
     };
 
@@ -321,6 +323,21 @@ private:
     static inline std::recursive_mutex s_delegates_mutex{};
 
     static void delegate_callback(sdk::VMContext* ctx, REManagedObject* obj);
+};
+
+// RAII profiler shared by ScriptRunner Lua callbacks and builtin mods (e.g. RE4VR).
+// `lua_file` is the source name shown in [FrameProfile]/[ScriptProfile] logs.
+struct ScriptProfileGuard {
+    ScriptProfileGuard(const std::string& file, const std::string& call, uint64_t frame_index);
+    ~ScriptProfileGuard();
+
+    ScriptProfileGuard(const ScriptProfileGuard&) = delete;
+    ScriptProfileGuard& operator=(const ScriptProfileGuard&) = delete;
+
+    std::string lua_file;
+    std::string call_name;
+    std::string full_key;
+    std::chrono::steady_clock::time_point start;
 };
 
 class ScriptRunner : public Mod {
