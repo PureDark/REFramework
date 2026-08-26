@@ -57,6 +57,10 @@ private:
         ::REGameObject* go{nullptr};
         ::RETransform* tf{nullptr};
         Vector3f home{};
+        Vector3f start_pos{};
+        bool hit_done{false};
+        bool clone_throw{false};
+        bool is_left{false};
     };
     struct ScopeProto {
         bool enabled{false};
@@ -74,6 +78,10 @@ private:
     void save_snappy();
     void save_throw();
     void scope_killswitch_tick();
+    void scope_hide_arms_tick(bool on);
+    void scope_walk_body(::RETransform* tf, bool visible, int depth);
+    void scope_set_all_materials(::REManagedObject* renderer, bool visible);
+    bool gun_bolt_cycle_active(int32_t ewid);
     void scope_proto_tick();
     void iron_sight_tick(std::optional<int32_t> wid);
     void hide_body_weapons_tick();
@@ -96,6 +104,9 @@ private:
     std::optional<Vector3f> get_hmd_forward();
     std::optional<Vector3f> get_throw_direction();
     void knife_throw_launch(const Vector3f& dir, float speed);
+    std::optional<Vector3f> knife_hand_world();
+    ::REManagedObject* knife_pick_target(const std::optional<Vector3f>& kpos, bool proximity_only, float reach);
+    void knife_flight_hit_scan();
     ::REManagedObject* get_player_ctx();
     std::optional<int32_t> get_equip_weapon_id();
     void register_ui();
@@ -138,6 +149,7 @@ private:
     bool m_scope_native{false};
     bool m_force_ks_scope{false};
     bool m_force_ks_bolt{false};
+    bool m_scope_arms_on{false};
     bool m_ui_registered{false};
     bool m_snappy_applied{false};
     uintptr_t m_snappy_last_body{0};

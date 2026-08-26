@@ -15,6 +15,7 @@
 #include <sdk/Application.hpp>
 
 #include "RE4VRFrameCache.hpp"
+#include "RE4VRHolster.hpp"
 #include "RE4VRShared.hpp"
 #include "../../../ScriptRunner.hpp"
 
@@ -75,7 +76,7 @@ void RE4VRMinecart::load_json() {
 }
 
 bool RE4VRMinecart::railcar_active() {
-    return re4vr::lua_is_true("__re4_railcar_mode");
+    return RE4VRShared::get()->re4_railcar_mode;
 }
 
 void RE4VRMinecart::load_pin_pose() {
@@ -126,7 +127,7 @@ void RE4VRMinecart::apply_spine_pin() {
     if (!railcar_active()) {
         return;
     }
-    const float f = (float)re4vr::lua_number("__re4_railcar_reload_fade").value_or(1.0);
+    const float f = (float)RE4VRShared::get()->re4_railcar_reload_fade.value_or(1.0);
     if (f <= 0.0f) {
         return;
     }
@@ -167,7 +168,7 @@ void RE4VRMinecart::apply_spine_pin() {
 void RE4VRMinecart::update_anim_export() {
     auto* tf = body_tf();
     if (!tf) {
-        re4vr::lua_set_nil("__vr_anim_l0");
+        RE4VRShared::get()->vr_anim_l0.reset();
         m_bw_motion = nullptr;
         return;
     }
@@ -181,9 +182,9 @@ void RE4VRMinecart::update_anim_export() {
     }
     const auto name = motion_name(m_bw_motion);
     if (name.empty()) {
-        re4vr::lua_set_nil("__vr_anim_l0");
+        RE4VRShared::get()->vr_anim_l0.reset();
     } else {
-        re4vr::lua_set_string("__vr_anim_l0", name);
+        RE4VRShared::get()->vr_anim_l0 = std::string{name};
     }
 }
 
@@ -204,16 +205,16 @@ void RE4VRMinecart::update_reload_flag() {
     if (nm.find("reload") != std::string::npos) {
         reloading = true;
     }
-    re4vr::lua_set_bool("__re4_railcar_reloading", reloading);
-    float f = (float)re4vr::lua_number("__re4_railcar_reload_fade").value_or(1.0);
+    RE4VRShared::get()->re4_railcar_reloading = reloading;
+    float f = (float)RE4VRShared::get()->re4_railcar_reload_fade.value_or(1.0);
     if (reloading) {
         if (f > 0.0f) {
-            re4vr::lua_set_number("__re4_railcar_reload_fade", std::max(0.0f, f - 0.09f));
+            RE4VRShared::get()->re4_railcar_reload_fade = std::max(0.0f, f - 0.09f);
         }
-        re4vr::lua_set_nil("__re4_reload_hand_fp");
-        re4vr::lua_set_nil("__re4_reload_hand_fr");
+        RE4VRShared::get()->re4_reload_hand_fp = false;
+        RE4VRShared::get()->re4_reload_hand_fr = false;
     } else if (f < 1.0f) {
-        re4vr::lua_set_number("__re4_railcar_reload_fade", std::min(1.0f, f + 0.09f));
+        RE4VRShared::get()->re4_railcar_reload_fade = std::min(1.0f, f + 0.09f);
     }
 }
 
@@ -221,37 +222,27 @@ void RE4VRMinecart::force_crosshair() {
     if (!railcar_active()) {
         return;
     }
-    re4vr::lua_set_bool("is_reticle_displayed", true);
-    re4vr::lua_set_bool("is_aim", true);
+    RE4VRShared::get()->is_reticle_displayed = true;
+    RE4VRShared::get()->is_aim = true;
 }
 
 void RE4VRMinecart::update_yaw_follow() {
     m_cfg.yaw_follow = false;
     m_yf_entry_body.reset();
-    re4vr::lua_set_nil("__re4_railcar_yaw_delta");
+    RE4VRShared::get()->re4_railcar_yaw_delta = false;
 }
 
 void RE4VRMinecart::cart_knife_swap() {
-    const bool in_cart = railcar_active() || re4vr::lua_is_true("__re4_minecart_ks4_active") || re4vr::lua_is_true("__re4_minecart2_ks4_active");
+    const bool in_cart = railcar_active() || RE4VRShared::get()->re4_minecart_ks4_active || RE4VRShared::get()->re4_minecart2_ks4_active;
     if (!in_cart) {
         return;
     }
-    const double now = re4vr::lua_os_clock();
+    const double now = re4vr::now();
     if (now - m_ck_last < 0.4) {
         return;
     }
     m_ck_last = now;
-    re4vr::LuaGuard g;
-    auto* L = g.lua();
-    if (!L) {
-        return;
-    }
-    sol::object defer = (*L)["__re4_knife_defer"];
-    sol::object force = (*L)["__re4_force_change_to_main"];
-    if (defer.is<sol::protected_function>() && force.is<sol::protected_function>()) {
-        auto r = defer.as<sol::protected_function>()(force);
-        (void)r;
-    }
+    RE4VRHolster::get()->defer([]() { RE4VRHolster::get()->force_change_to_main(); });
 }
 
 ::REManagedObject* RE4VRMinecart::get_player_railcar() {
@@ -265,7 +256,7 @@ void RE4VRMinecart::cart_knife_swap() {
 }
 
 void RE4VRMinecart::update_cart_lean() {
-    re4vr::lua_set_nil("__re4_cart_lean_lx");
+    RE4VRShared::get()->re4_cart_lean_lx.reset();
     if (!m_cfg.lean_enabled || !railcar_active()) {
         return;
     }
@@ -294,7 +285,7 @@ void RE4VRMinecart::update_cart_lean() {
     float amt = (mag - th) / (full - th);
     amt = std::min(amt, 1.0f);
     const float out = amt * ((roll >= 0.0f) ? 1.0f : -1.0f) * m_cfg.lean_sign;
-    re4vr::lua_set_number("__re4_cart_lean_lx", out);
+    RE4VRShared::get()->re4_cart_lean_lx = out;
 }
 
 void RE4VRMinecart::update_cart_recenter() {
@@ -302,7 +293,7 @@ void RE4VRMinecart::update_cart_recenter() {
         m_rc_last_t.reset();
         return;
     }
-    const double now = re4vr::lua_os_clock();
+    const double now = re4vr::now();
     const double dt = m_rc_last_t ? (now - *m_rc_last_t) : 0.0;
     m_rc_last_t = now;
     if (dt <= 0.0 || dt > 0.25) {
@@ -340,7 +331,7 @@ float RE4VRMinecart::cart_speed_now() {
         return 0.0f;
     }
     const auto p = sdk::get_transform_position(tf);
-    const double now = re4vr::lua_os_clock();
+    const double now = re4vr::now();
     if (!m_spd_t) {
         m_spd_t = now;
         m_spd_x = p.x;
@@ -366,13 +357,13 @@ float RE4VRMinecart::cart_speed_now() {
 
 void RE4VRMinecart::update_cart_rumble() {
     auto& vr = VR::get();
-    const bool ride = railcar_active() || (m_cfg.rumble_intro && re4vr::lua_is_true("__re4_minecart2_ks4_active"));
+    const bool ride = railcar_active() || (m_cfg.rumble_intro && RE4VRShared::get()->re4_minecart2_ks4_active);
     if (!m_cfg.rumble_enabled || !vr->is_hmd_active() || !ride) {
         m_rum_t0.reset();
         m_spd_t.reset();
         return;
     }
-    const double now = re4vr::lua_os_clock();
+    const double now = re4vr::now();
     if (!m_rum_t0) {
         m_rum_t0 = now;
         m_rum_next_t = 0;
@@ -453,12 +444,12 @@ void RE4VRMinecart::on_pre_application_entry(void*, const char*, size_t hash) {
     update_yaw_follow();
     cart_knife_swap();
     if (!railcar_active()) {
-        re4vr::lua_set_bool("__re4_railcar_reloading", false);
+        RE4VRShared::get()->re4_railcar_reloading = false;
         return;
     }
     update_anim_export();
     update_reload_flag();
-    if (re4vr::lua_is_true("__re4_railcar_reloading") && re4vr::lua_number("__re4_railcar_reload_fade").value_or(0.0) > 0.0) {
+    if (RE4VRShared::get()->re4_railcar_reloading && RE4VRShared::get()->re4_railcar_reload_fade.value_or(0.0) > 0.0) {
         apply_spine_pin();
     }
     force_crosshair();
@@ -469,7 +460,7 @@ void RE4VRMinecart::on_application_entry(void*, const char*, size_t hash) {
         return;
     }
     ScriptProfileGuard guard("re4_vr_minecart.lua", "on_application_entry:LateUpdateBehavior", re4vr::profile_frame());
-    if (re4vr::lua_is_true("__re4_railcar_reloading") && re4vr::lua_number("__re4_railcar_reload_fade").value_or(0.0) > 0.0) {
+    if (RE4VRShared::get()->re4_railcar_reloading && RE4VRShared::get()->re4_railcar_reload_fade.value_or(0.0) > 0.0) {
         apply_spine_pin();
     }
     force_crosshair();

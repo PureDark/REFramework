@@ -1,6 +1,7 @@
 #pragma once
 
 #if defined(RE4)
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -27,6 +28,8 @@ public:
     void apply_left_knife_pose(::REManagedObject* go);
     void apply_wildwest_fingers();
     void apply_wildwest(Vector3f& wpos, glm::quat& wrot);
+    bool knife_lh_off(int32_t wid, Vector3f& pos, Vector3f& euler) const;
+    bool knife_lh_flip_pos(int32_t wid, Vector3f& pos) const;
 
 private:
     struct Off3 {
@@ -48,6 +51,12 @@ private:
     void clone_spawn();
     void clone_destroy();
     void clone_apply_pose();
+    void clone_isolate_part0();
+    void clone_reparent();
+    void lh_play_sound(uint32_t id);
+    bool direct_damage(const Vector3f& pos, float reach);
+    void parry_keep_gun_tick();
+    void drop_di_caches();
     void wildwest_tick();
     void blood_tick();
     void knife_di_guard();
@@ -73,8 +82,25 @@ private:
     std::unordered_map<std::string, Off3> m_lh_off{};
     std::unordered_map<std::string, Off3> m_lh_flip{};
     ::REGameObject* m_lh_clone{nullptr};
+    ::REManagedObject* m_lh_clone_mesh{nullptr};
+    std::optional<int32_t> m_lh_clone_wid{};
     bool m_lh_intent{false};
     bool m_lh_clone_on{false};
+    bool m_lh_part0{false};
+    bool m_lh_was_flying{false};
+    std::optional<bool> m_lh_vis{};
+    float m_lh_flip_lerp{0};
+    float m_lh_flip_prev{-1};
+    double m_orphan_t{0};
+    uintptr_t m_di_body{0};
+    double m_di_next{0};
+    ::REManagedObject* m_native_di{nullptr};
+    ::REManagedObject* m_dmginfo_cap{nullptr};
+    bool m_armed{false};
+    bool m_prev_lgrip{false};
+    std::optional<Vector3f> m_prev_lh{};
+    double m_lh_swing_t{0};
+    double m_last_lh_hit{0};
     std::optional<int32_t> m_current_knife_wid{};
     bool m_parry_was{false};
     double m_parry_until{0};

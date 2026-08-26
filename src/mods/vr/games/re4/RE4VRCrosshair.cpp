@@ -350,7 +350,7 @@ void RE4VRCrosshair::publish_re4() {
 }
 
 bool RE4VRCrosshair::ks_active() {
-    return re4vr::call_killswitch_bool("is_active", re4vr::lua_is_true("__re4_ks_active"));
+    return re4vr::call_killswitch_bool("is_active", RE4VRShared::get()->re4_ks_active);
 }
 
 void* RE4VRCrosshair::resolve_type(const char* name) {
@@ -823,18 +823,13 @@ glm::quat RE4VRCrosshair::hud_quat_from_euler_deg(float dxg, float dyg, float dz
 }
 
 void RE4VRCrosshair::apply_hand_hud(::REGameObject* game_object) {
-    re4vr::LuaGuard g;
-    auto* L = g.lua();
-    if (!L) {
+    auto hand_o = RE4VRShared::get()->vr_rh_world;
+    auto hrot_o = RE4VRShared::get()->vr_rh_rot;
+    if (!hand_o || !hrot_o) {
         return;
     }
-    sol::object hand_o = (*L)["__vr_rh_world"];
-    sol::object hrot_o = (*L)["__vr_rh_rot"];
-    if (!hand_o.is<Vector3f>() || !hrot_o.is<glm::quat>()) {
-        return;
-    }
-    const auto hand = hand_o.as<Vector3f>();
-    const auto hrot = hrot_o.as<glm::quat>();
+    const auto hand = *hand_o;
+    const auto hrot = *hrot_o;
     auto* tf = re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(game_object, "get_Transform"); }).value_or(nullptr);
     if (!tf) {
         return;
@@ -855,15 +850,9 @@ void RE4VRCrosshair::apply_hand_hud(::REGameObject* game_object) {
     }
     float _rx = m_hud.rx, _ry = m_hud.ry, _rz = m_hud.rz;
     float _dx = m_hud.dx, _dy = m_hud.dy, _dz = m_hud.dz;
-    if (m_hud.ada_rot) {
-        sol::object cn = (*L)["__re4_char_now"];
-        if (cn.is<sol::protected_function>()) {
-            auto r = cn.as<sol::protected_function>()();
-            if (r.valid() && r.get_type() == sol::type::string && r.get<std::string>() == "ada") {
-                _rx = m_hud.ada_rx; _ry = m_hud.ada_ry; _rz = m_hud.ada_rz;
-                _dx = m_hud.ada_dx; _dy = m_hud.ada_dy; _dz = m_hud.ada_dz;
-            }
-        }
+    if (m_hud.ada_rot && RE4VRShared::get()->re4_char_now.value_or("") == "ada") {
+        _rx = m_hud.ada_rx; _ry = m_hud.ada_ry; _rz = m_hud.ada_rz;
+        _dx = m_hud.ada_dx; _dy = m_hud.ada_dy; _dz = m_hud.ada_dz;
     }
     const auto off = hrot * Vector3f{_dx, _dy, _dz};
     const auto q = glm::normalize(hrot * hud_quat_from_euler_deg(_rx, _ry, _rz));
@@ -902,19 +891,17 @@ void RE4VRCrosshair::on_pre_request_fire(std::vector<uintptr_t>& args) {
             }
         }
     }
-    const int seq = (int)re4vr::lua_number("__vr_shot_seq").value_or(0.0) + 1;
-    re4vr::lua_set_number("__vr_shot_seq", seq);
+    const int seq = (int)RE4VRShared::get()->vr_shot_seq.value_or(0.0) + 1;
+    RE4VRShared::get()->vr_shot_seq = seq;
     if (!m_cfg.bullet_hook) {
         return;
     }
-    re4vr::LuaGuard g;
-    auto* L = g.lua();
-    if (L && re4vr::lua_is_true("vr_scope_active")) {
-        sol::object pos_o = (*L)["vr_scope_aim_pos"];
-        sol::object dir_o = (*L)["vr_scope_aim_dir"];
-        if (pos_o.is<Vector3f>() && dir_o.is<Vector3f>() && args.size() > 3 && args[2] && args[3]) {
-            const auto p = pos_o.as<Vector3f>();
-            auto d = dir_o.as<Vector3f>();
+    if (RE4VRShared::get()->vr_scope_active) {
+        auto pos_o = RE4VRShared::get()->vr_scope_aim_pos;
+        auto dir_o = RE4VRShared::get()->vr_scope_aim_dir;
+        if (pos_o && dir_o && args.size() > 3 && args[2] && args[3]) {
+            const auto p = *pos_o;
+            auto d = *dir_o;
             const float len = glm::length(d);
             if (len > 0.0001f) {
                 d /= len;
@@ -924,7 +911,7 @@ void RE4VRCrosshair::on_pre_request_fire(std::vector<uintptr_t>& args) {
             return;
         }
     }
-    if (ks_active() && !re4vr::lua_is_true("__re4_railcar_mode")) {
+    if (ks_active() && !RE4VRShared::get()->re4_railcar_mode) {
         return;
     }
     Vector3f muzzle_pos = m_last_muzzle_pos;
@@ -954,7 +941,7 @@ void RE4VRCrosshair::on_pre_rocket_generate(std::vector<uintptr_t>& args) {
     if (!m_cfg.bullet_hook) {
         return;
     }
-    if (ks_active() && !re4vr::lua_is_true("__re4_railcar_mode")) {
+    if (ks_active() && !RE4VRShared::get()->re4_railcar_mode) {
         return;
     }
     if (!m_has_muzzle) {
@@ -1185,8 +1172,8 @@ void RE4VRCrosshair::on_lua_state_destroyed(sol::state&) {
     m_reticle_params_applied = false;
     m_scene = nullptr;
     m_current_muzzle_joint = nullptr;
-    re4vr::lua_set_bool("is_aim", false);
-    re4vr::lua_set_bool("is_reticle_displayed", false);
+    RE4VRShared::get()->is_aim = false;
+    RE4VRShared::get()->is_reticle_displayed = false;
 }
 
 void RE4VRCrosshair::on_pre_application_entry(void*, const char*, size_t hash) {
@@ -1196,18 +1183,18 @@ void RE4VRCrosshair::on_pre_application_entry(void*, const char*, size_t hash) {
     ScriptProfileGuard guard("re4_vr_crosshair.lua", "on_pre_application_entry:LockScene", re4vr::profile_frame());
     auto* ctx = re4vr::player_context();
     if (re4vr::obj_ok(ctx)) {
-        re4vr::lua_set_bool("is_aim", re4vr::safe([&] { return sdk::call_object_func_easy<bool>(ctx, "get_IsShootEnable"); }).value_or(false));
-        re4vr::lua_set_bool("is_reticle_displayed", re4vr::safe([&] { return sdk::call_object_func_easy<bool>(ctx, "get_IsReticleDisp"); }).value_or(false));
-        re4vr::lua_set_bool("_IsWeaponChanging", re4vr::safe([&] { return sdk::call_object_func_easy<bool>(ctx, "get_IsWeaponChanging"); }).value_or(false));
+        RE4VRShared::get()->is_aim = re4vr::safe([&] { return sdk::call_object_func_easy<bool>(ctx, "get_IsShootEnable"); }).value_or(false);
+        RE4VRShared::get()->is_reticle_displayed = re4vr::safe([&] { return sdk::call_object_func_easy<bool>(ctx, "get_IsReticleDisp"); }).value_or(false);
+        RE4VRShared::get()->_IsWeaponChanging = re4vr::safe([&] { return sdk::call_object_func_easy<bool>(ctx, "get_IsWeaponChanging"); }).value_or(false);
     } else {
-        re4vr::lua_set_bool("is_aim", false);
-        re4vr::lua_set_bool("is_reticle_displayed", false);
-        re4vr::lua_set_bool("_IsWeaponChanging", false);
+        RE4VRShared::get()->is_aim = false;
+        RE4VRShared::get()->is_reticle_displayed = false;
+        RE4VRShared::get()->_IsWeaponChanging = false;
     }
-    if (ks_active() && !re4vr::lua_is_true("__re4_railcar_mode")) {
-        re4vr::lua_set_bool("is_aim", false);
-        re4vr::lua_set_bool("is_reticle_displayed", false);
-        re4vr::lua_set_bool("_IsWeaponChanging", false);
+    if (ks_active() && !RE4VRShared::get()->re4_railcar_mode) {
+        RE4VRShared::get()->is_aim = false;
+        RE4VRShared::get()->is_reticle_displayed = false;
+        RE4VRShared::get()->_IsWeaponChanging = false;
     }
     update_muzzle_data();
     apply_reticle_params();
@@ -1232,11 +1219,11 @@ bool RE4VRCrosshair::on_pre_gui_draw_element(REComponent* gui_element, void*) {
     const auto name = utility::re_string::get_string(nm);
     if (name == "Gui_ui2200") {
         m_finisher_prompt_seen = now_clock();
-        re4vr::lua_set_number("__re4_finisher_prompt_seen", m_finisher_prompt_seen);
+        RE4VRShared::get()->re4_finisher_prompt_seen = m_finisher_prompt_seen;
     }
     if (name == "Gui_ui2191_3" || name == "Gui_ui2150") {
         m_dodge_prompt_seen = now_clock();
-        re4vr::lua_set_number("__re4_dodge_prompt_seen", m_dodge_prompt_seen);
+        RE4VRShared::get()->re4_dodge_prompt_seen = m_dodge_prompt_seen;
     }
     if (name == "Gui_ui2042") {
         return false;
@@ -1246,7 +1233,7 @@ bool RE4VRCrosshair::on_pre_gui_draw_element(REComponent* gui_element, void*) {
         if (m_hud.hide_hud) {
             return false;
         }
-        if (re4vr::lua_is_true("__re4_force_killswitch_scope") || re4vr::lua_is_true("__re4_scope_native")) {
+        if (RE4VRShared::get()->re4_force_killswitch_scope || RE4VRShared::get()->re4_scope_native) {
             return false;
         }
         if (m_hud.enabled) {
@@ -1263,7 +1250,7 @@ bool RE4VRCrosshair::on_pre_gui_draw_element(REComponent* gui_element, void*) {
     if (m_current_laser_active) {
         return false;
     }
-    if (!re4vr::lua_is_true("is_aim") || !m_current_muzzle_joint || !m_crosshair_distance) {
+    if (!RE4VRShared::get()->is_aim || !m_current_muzzle_joint || !m_crosshair_distance) {
         return false;
     }
     auto* transform = re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(go, "get_Transform"); }).value_or(nullptr);

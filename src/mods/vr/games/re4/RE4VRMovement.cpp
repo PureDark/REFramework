@@ -164,6 +164,14 @@ std::optional<std::string> RE4VRMovement::on_initialize() {
             spdlog::info("[RE4VRMovement] Hooked MotionJackSuppliedHolder.setupJackLayer");
         }
     }
+    for (auto* tn : {"chainsaw.GmInterstice1Motion", "chainsaw.GmIntersticeWithEm"}) {
+        if (auto* td = sdk::find_type_definition(tn)) {
+            if (auto* m = td->get_method("startJackPl")) {
+                g_hookman.add(m, &RE4VRMovement::pre_start_jack_pl, &RE4VRMovement::post_start_jack_pl);
+                spdlog::info("[RE4VRMovement] Hooked {}.startJackPl", tn);
+            }
+        }
+    }
 
     return std::nullopt;
 }
@@ -2443,5 +2451,14 @@ void RE4VRMovement::post_setup_jack_layer(uintptr_t& ret_val, sdk::RETypeDefinit
         self.m_sqab_skip_ret.reset();
     }
 }
+
+HookManager::PreHookResult RE4VRMovement::pre_start_jack_pl(std::vector<uintptr_t>&, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
+    if (get()->sqab_is_retrigger()) {
+        return HookManager::PreHookResult::SKIP_ORIGINAL;
+    }
+    return HookManager::PreHookResult::CALL_ORIGINAL;
+}
+
+void RE4VRMovement::post_start_jack_pl(uintptr_t&, sdk::RETypeDefinition*, uintptr_t) {}
 
 #endif

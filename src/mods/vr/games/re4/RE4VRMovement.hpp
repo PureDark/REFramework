@@ -227,6 +227,8 @@ private:
     static void post_update_camera_position(uintptr_t& ret_val, sdk::RETypeDefinition* ret_ty, uintptr_t ret_addr);
     static HookManager::PreHookResult pre_setup_jack_layer(std::vector<uintptr_t>& args, std::vector<sdk::RETypeDefinition*>& arg_tys, uintptr_t ret_addr);
     static void post_setup_jack_layer(uintptr_t& ret_val, sdk::RETypeDefinition* ret_ty, uintptr_t ret_addr);
+    static HookManager::PreHookResult pre_start_jack_pl(std::vector<uintptr_t>& args, std::vector<sdk::RETypeDefinition*>& arg_tys, uintptr_t ret_addr);
+    static void post_start_jack_pl(uintptr_t& ret_val, sdk::RETypeDefinition* ret_ty, uintptr_t ret_addr);
 
 private:
     Cfg m_cfg{};

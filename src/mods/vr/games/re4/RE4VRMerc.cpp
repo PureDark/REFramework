@@ -183,7 +183,7 @@ void RE4VRMerc::save_json() {
 }
 
 void RE4VRMerc::export_globals() {
-    re4vr::lua_set_bool("__re4_in_mercs", m_in_mercs);
+    RE4VRShared::get()->re4_in_mercs = m_in_mercs;
 }
 
 std::pair<bool, std::optional<int32_t>> RE4VRMerc::detect() {
@@ -335,7 +335,7 @@ void RE4VRMerc::scan_extra_mats() {
     if (!m_extra_mats.empty()) {
         return;
     }
-    const double now = re4vr::lua_os_clock();
+    const double now = re4vr::now();
     if ((now - m_extra_scan_t) < 5.0) {
         return;
     }
@@ -417,14 +417,14 @@ void RE4VRMerc::bow_unpin() {
 }
 
 void RE4VRMerc::update_bow_pin() {
-    const auto wid = re4vr::lua_number("__vr_dbg_wep_id");
+    const auto wid = RE4VRShared::get()->vr_dbg_wep_id;
     const bool want = m_bow_pin_on && m_in_mercs && wid && (int)*wid == BOW_WID
-        && !re4vr::lua_is_true("__re4_ks4_active") && !re4vr::lua_is_true("__re4_ks_active");
+        && !RE4VRShared::get()->re4_ks4_active && !RE4VRShared::get()->re4_ks_active;
     if (!want) {
         if (m_bowp_pinned) {
             bow_unpin();
         }
-        re4vr::lua_set_bool("__re4_merc_bow_pinned", false);
+        RE4VRShared::get()->re4_merc_bow_pinned = false;
         return;
     }
     if (!m_bowp_pinned) {
@@ -468,7 +468,7 @@ void RE4VRMerc::update_bow_pin() {
         sdk::call_object_func_easy<void*>(m_bowp_tf, "set_LocalPosition", Vector3f{o.px, o.py, o.pz});
         sdk::call_object_func_easy<void*>(m_bowp_tf, "set_LocalRotation", re4vr::quat_euler_yxz_deg(o.rx, o.ry, o.rz));
     });
-    re4vr::lua_set_bool("__re4_merc_bow_pinned", true);
+    RE4VRShared::get()->re4_merc_bow_pinned = true;
 }
 
 bool RE4VRMerc::wep_apply(const Vector3f& wpos, const glm::quat& wrot, int32_t wid, const glm::quat* hand_rot, Vector3f& np, glm::quat& nr) {
@@ -485,7 +485,7 @@ bool RE4VRMerc::wep_apply(const Vector3f& wpos, const glm::quat& wrot, int32_t w
     }
     glm::quat rr = hand_rot ? *hand_rot : glm::quat{1, 0, 0, 0};
     if (!hand_rot) {
-        if (auto q = re4vr::lua_quat("__vr_rh_rot")) {
+        if (auto q = RE4VRShared::get()->vr_rh_rot) {
             rr = *q;
         } else {
             return false;
@@ -505,7 +505,7 @@ void RE4VRMerc::apply_bow_pose() {
     if (!m_bow_pose_on || !m_in_mercs) {
         return;
     }
-    const auto wid = re4vr::lua_number("__vr_dbg_wep_id");
+    const auto wid = RE4VRShared::get()->vr_dbg_wep_id;
     if (!wid || (int)*wid != BOW_WID) {
         return;
     }
@@ -536,7 +536,7 @@ void RE4VRMerc::apply_bow_pose() {
     };
     auto rp = mirror("compoundBOW");
     auto lp = mirror("compoundBOWLEFT");
-    if (auto kh = re4vr::lua_string("__re4_knife_hand"); kh && *kh == "left") {
+    if (auto kh = RE4VRShared::get()->re4_knife_hand; kh && *kh == "left") {
         lp.clear();
     }
     if (!rp.empty()) {
@@ -548,11 +548,11 @@ void RE4VRMerc::apply_bow_pose() {
 }
 
 void RE4VRMerc::update_bulletrush() {
-    const auto kind = re4vr::lua_number("__re4_merc_kind");
+    const auto kind = RE4VRShared::get()->re4_merc_kind;
     if (!m_in_mercs || !kind || (int)*kind != 600005) {
         m_br_hu = nullptr;
         m_br_since = 0;
-        re4vr::lua_set_bool("__re4_force_ks4_bulletrush", false);
+        RE4VRShared::get()->re4_force_ks4_bulletrush = false;
         return;
     }
     if (!m_br_hu) {
@@ -568,7 +568,7 @@ void RE4VRMerc::update_bulletrush() {
             on = *v;
         }
     }
-    const double now = re4vr::lua_os_clock();
+    const double now = re4vr::now();
     if (on) {
         if (m_br_since == 0) {
             m_br_since = now;
@@ -578,7 +578,7 @@ void RE4VRMerc::update_bulletrush() {
     } else {
         m_br_since = 0;
     }
-    re4vr::lua_set_bool("__re4_force_ks4_bulletrush", on);
+    RE4VRShared::get()->re4_force_ks4_bulletrush = on;
 }
 
 void RE4VRMerc::hud_apply() {
@@ -589,7 +589,7 @@ void RE4VRMerc::hud_apply() {
     if (!scene) {
         return;
     }
-    const double now = re4vr::lua_os_clock();
+    const double now = re4vr::now();
     if ((now - m_hud_scan_t) < 1.0 && !m_hud_cache.empty()) {
         return;
     }
@@ -664,14 +664,8 @@ void RE4VRMerc::hud_apply() {
 }
 
 void RE4VRMerc::dot_tick() {
-    {
-        re4vr::LuaGuard g;
-        if (auto* L = g.lua()) {
-            sol::object o = (*L)["__re4_merc_dot"];
-            if (o.get_type() == sol::type::boolean && !o.as<bool>()) {
-                return;
-            }
-        }
+    if (!RE4VRShared::get()->re4_merc_dot) {
+        return;
     }
     auto* body = re4vr::body_game_object();
     if (!body) {
@@ -718,13 +712,13 @@ void RE4VRMerc::dot_tick() {
         m_dot_aimed = false;
     }
     if (!m_dot_aimed) {
-        if (!re4vr::lua_is_true("__vr_aim_input")) {
+        if (!RE4VRShared::get()->vr_aim_input) {
             return;
         }
         m_dot_aimed = true;
     }
     if (!m_dot_lsc) {
-        const double t = re4vr::lua_os_clock();
+        const double t = re4vr::now();
         if (t < m_dot_next_scan) {
             return;
         }
@@ -781,11 +775,11 @@ HookManager::PreHookResult RE4VRMerc::pre_bare_hand(std::vector<uintptr_t>&, std
     if (!self.m_in_mercs) {
         return HookManager::PreHookResult::CALL_ORIGINAL;
     }
-    const auto wid = re4vr::lua_number("__vr_dbg_wep_id");
+    const auto wid = RE4VRShared::get()->vr_dbg_wep_id;
     if (!wid || (int)*wid != BOW_WID) {
         return HookManager::PreHookResult::CALL_ORIGINAL;
     }
-    if (re4vr::lua_is_true("__re4_holster_killswitch") || re4vr::lua_is_true("__re4_ks4_active")) {
+    if (RE4VRShared::get()->re4_holster_killswitch || RE4VRShared::get()->re4_ks4_active) {
         return HookManager::PreHookResult::CALL_ORIGINAL;
     }
     HMODULE mod = nullptr;
@@ -797,7 +791,7 @@ HookManager::PreHookResult RE4VRMerc::pre_bare_hand(std::vector<uintptr_t>&, std
     }
     self.m_bk_skipped = true;
     self.m_bk_blocked++;
-    re4vr::lua_set_number("__re4_merc_bow_keep_blocked", self.m_bk_blocked);
+    RE4VRShared::get()->re4_merc_bow_keep_blocked = self.m_bk_blocked;
     return HookManager::PreHookResult::SKIP_ORIGINAL;
 }
 
@@ -913,16 +907,16 @@ void RE4VRMerc::on_frame() {
         m_merc_body_ok = false;
     }
     m_in_mercs = in_mercs;
-    re4vr::lua_set_bool("__re4_in_mercs", in_mercs);
+    RE4VRShared::get()->re4_in_mercs = in_mercs;
     if (cid) {
-        re4vr::lua_set_number("__re4_merc_cid", *cid);
+        RE4VRShared::get()->re4_merc_cid = *cid;
     } else {
-        re4vr::lua_set_nil("__re4_merc_cid");
+        RE4VRShared::get()->re4_merc_cid.reset();
     }
     if (!in_mercs) {
-        re4vr::lua_set_nil("__re4_merc_kind");
-        re4vr::lua_set_nil("__re4_merc_body");
-        re4vr::lua_set_nil("__vr_active_char");
+        RE4VRShared::get()->re4_merc_kind.reset();
+        RE4VRShared::get()->re4_merc_body.reset();
+        RE4VRShared::get()->vr_active_char.reset();
         m_hh_meshes.clear();
         m_all_meshes.clear();
         m_full_hidden = false;
@@ -933,10 +927,10 @@ void RE4VRMerc::on_frame() {
     ::RETransform* tf = nullptr;
     get_player_body(kind, body, tf);
     if (kind) {
-        re4vr::lua_set_number("__re4_merc_kind", *kind);
+        RE4VRShared::get()->re4_merc_kind = *kind;
     }
     if (!body.empty()) {
-        re4vr::lua_set_string("__re4_merc_body", body);
+        RE4VRShared::get()->re4_merc_body = std::string{body};
     }
     if (body.empty()) {
         m_hh_meshes.clear();
@@ -944,15 +938,15 @@ void RE4VRMerc::on_frame() {
         m_full_hidden = false;
         if (!m_round_gap) {
             m_round_gap = true;
-            const int round = (int)re4vr::lua_number("__re4_merc_round").value_or(0) + 1;
-            re4vr::lua_set_number("__re4_merc_round", round);
+            const int round = (int)RE4VRShared::get()->re4_merc_round.value_or(0) + 1;
+            RE4VRShared::get()->re4_merc_round = round;
         }
         return;
     }
     m_round_gap = false;
     if (kind) {
         auto ak = MERC_ARM_KEYS.find(*kind);
-        re4vr::lua_set_string("__vr_active_char", ak != MERC_ARM_KEYS.end() ? ak->second : "leon");
+        RE4VRShared::get()->vr_active_char = std::string{ak != MERC_ARM_KEYS.end() ? ak->second : "leon"};
     }
     if (m_hh_body != body || m_hh_meshes.empty()) {
         auto hide = kind ? hide_for(*kind) : std::unordered_map<std::string, bool>{};

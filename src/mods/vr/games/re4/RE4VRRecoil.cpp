@@ -139,22 +139,11 @@ void RE4VRRecoil::load_haptic_json() {
 }
 
 void RE4VRRecoil::publish_vr_recoil() {
-    re4vr::LuaGuard g;
-    auto* L = g.lua();
-    if (!L) {
-        return;
-    }
-    sol::object o = (*L)["vr_recoil"];
-    sol::table t;
-    if (o.is<sol::table>()) {
-        t = o.as<sol::table>();
+    if (m_export_active) {
+        RE4VRShared::get()->vr_recoil_pos = m_export_pos;
     } else {
-        t = L->create_table();
-        (*L)["vr_recoil"] = t;
+        RE4VRShared::get()->vr_recoil_pos.reset();
     }
-    t["position"] = m_export_pos;
-    t["rotation"] = m_export_rot;
-    t["active"] = m_export_active;
 }
 
 void RE4VRRecoil::register_ui() {
@@ -232,7 +221,7 @@ float RE4VRRecoil::effective_weapon_recoil_multiplier(float* out_base) {
 }
 
 bool RE4VRRecoil::fp_active() {
-    if (!re4vr::call_killswitch_bool("is_active", re4vr::lua_is_true("__re4_ks_active"))) {
+    if (!re4vr::call_killswitch_bool("is_active", RE4VRShared::get()->re4_ks_active)) {
         return true;
     }
     if (re4vr::call_killswitch_bool("is_reload_active")) {
@@ -267,9 +256,9 @@ void RE4VRRecoil::on_pre_request_recoil_body() {
     float total_mult = std::pow(weapon_multiplier, expn) * random_factor;
 
     bool support_hand_active = false;
-    if (re4vr::lua_is_true("__vr_support_hand_docked")) {
+    if (RE4VRShared::get()->vr_support_hand_docked) {
         support_hand_active = true;
-    } else if (auto bf = re4vr::lua_number("__vr_support_blend_factor")) {
+    } else if (auto bf = RE4VRShared::get()->vr_support_blend_factor) {
         support_hand_active = *bf > 0.5;
     }
 
@@ -490,7 +479,7 @@ void RE4VRRecoil::haptic_fire(bool support) {
 }
 
 void RE4VRRecoil::haptic_tick() {
-    if (re4vr::lua_is_true("__re4_ks_active")) {
+    if (RE4VRShared::get()->re4_ks_active) {
         return;
     }
     if (!m_haptic.enabled) {
@@ -508,7 +497,7 @@ void RE4VRRecoil::haptic_tick() {
             ++i;
         }
     }
-    const double seq = re4vr::lua_number("__vr_shot_seq").value_or(0.0);
+    const double seq = RE4VRShared::get()->vr_shot_seq.value_or(0.0);
     if (!m_last_seq) {
         m_last_seq = seq;
         return;
@@ -517,7 +506,7 @@ void RE4VRRecoil::haptic_tick() {
         return;
     }
     m_last_seq = seq;
-    const bool support = re4vr::lua_is_true("__vr_support_hand_docked");
+    const bool support = RE4VRShared::get()->vr_support_hand_docked;
     if (m_haptic.delay <= 0.0f) {
         haptic_fire(support);
     } else {

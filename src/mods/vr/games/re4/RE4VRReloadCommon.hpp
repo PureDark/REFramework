@@ -472,19 +472,10 @@ inline void play_wep_sound(::RETransform* tf, uint32_t id) {
     }
 }
 inline bool unlimited() {
-    return false;
+    return RE4VRShared::get()->refresh_unlimited();
 }
 inline bool gameplay() {
-    re4vr::LuaGuard g;
-    auto* L = g.lua();
-    if (!L) {
-        return true;
-    }
-    sol::object o = (*L)["__re4_frame_is_gameplay"];
-    if (o.get_type() == sol::type::boolean && !o.as<bool>()) {
-        return false;
-    }
-    return true;
+    return RE4VRShared::get()->re4_frame_is_gameplay;
 }
 inline void mesh_parts(::REManagedObject* mesh, int part, bool enable_only) {
     if (!mesh) {

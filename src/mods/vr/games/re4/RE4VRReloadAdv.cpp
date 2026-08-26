@@ -359,7 +359,7 @@ bool RE4VRReloadAdv::begin_drop(::REJoint* joint, int32_t wid, std::optional<flo
     if (m_drop.use_keys) {
         m_drop.slide_dur = m_eject_dur;
     }
-    m_drop.t0 = re4vr::lua_os_clock();
+    m_drop.t0 = re4vr::now();
     m_drop.phase = "slide";
     m_drop.active = true;
     return true;
@@ -375,10 +375,10 @@ void RE4VRReloadAdv::tick() {
     if (!m_drop.active || !m_drop.joint) {
         return;
     }
-    const double now = re4vr::lua_os_clock();
+    const double now = re4vr::now();
     if (m_drop.phase == "slide") {
         if (m_drop.use_keys) {
-            auto* wtf = (::RETransform*)re4vr::lua_object("__re4_reload_weapon_tf");
+            auto* wtf = (::RETransform*)RE4VRShared::get()->re4_reload_weapon_tf;
             if (wtf) {
                 float t = (float)((now - m_drop.t0) / std::max(m_drop.slide_dur, 0.01f));
                 t = std::min(t, 1.0f);
@@ -455,7 +455,7 @@ void RE4VRReloadAdv::start_push(int32_t wid) {
     if (!m_push.on || !m_push_wids.count(wid)) {
         return;
     }
-    m_push_t0 = re4vr::lua_os_clock();
+    m_push_t0 = re4vr::now();
     m_push_wid = wid;
 }
 
@@ -474,7 +474,7 @@ void RE4VRReloadAdv::end_push_hold() {
     }
     m_push_hold = false;
     const float tm = time_mult();
-    m_push_t0 = re4vr::lua_os_clock() - (m_push.in_dur * tm + m_push.hold * tm);
+    m_push_t0 = re4vr::now() - (m_push.in_dur * tm + m_push.hold * tm);
 }
 
 float RE4VRReloadAdv::time_mult() const {
@@ -490,7 +490,7 @@ float RE4VRReloadAdv::push_blend() {
         if (!m_push_t0) {
             return 1.0f;
         }
-        const float e2 = (float)(re4vr::lua_os_clock() - *m_push_t0);
+        const float e2 = (float)(re4vr::now() - *m_push_t0);
         const float i2 = m_push.in_dur * time_mult();
         return (e2 < i2) ? (e2 / std::max(i2, 0.01f)) : 1.0f;
     }
@@ -498,7 +498,7 @@ float RE4VRReloadAdv::push_blend() {
         return 0.0f;
     }
     const float tm = time_mult();
-    const float e = (float)(re4vr::lua_os_clock() - *m_push_t0);
+    const float e = (float)(re4vr::now() - *m_push_t0);
     const float i_dur = m_push.in_dur * tm, h_dur = m_push.hold * tm, o_dur = m_push.out_dur * tm;
     const float total = i_dur + h_dur + o_dur;
     if (e >= total) {
@@ -522,21 +522,7 @@ void RE4VRReloadAdv::push_pos(std::optional<int32_t> wid, float& x, float& y, fl
     if (m_push_y_by_wid.count(w)) {
         y += m_push_y_by_wid[w];
     }
-    bool ada = false;
-    {
-        re4vr::LuaGuard g;
-        if (auto* L = g.lua()) {
-            sol::object o = (*L)["__re4_char_now"];
-            if (o.get_type() == sol::type::string) {
-                ada = o.as<std::string>() == "ada";
-            } else if (o.is<sol::protected_function>()) {
-                auto r = o.as<sol::protected_function>()();
-                if (r.valid() && r.get_type() == sol::type::string) {
-                    ada = r.get<std::string>() == "ada";
-                }
-            }
-        }
-    }
+    bool ada = RE4VRShared::get()->re4_char_now.value_or("") == "ada";
     if (ada) {
         x += m_push.ada_px;
         y += m_push.ada_py;
@@ -547,10 +533,10 @@ void RE4VRReloadAdv::push_pos(std::optional<int32_t> wid, float& x, float& y, fl
 void RE4VRReloadAdv::push_apply() {
     const float blend = push_blend();
     if (blend <= 0.0f) {
-        re4vr::lua_set_nil("__re4_push_blend");
+        RE4VRShared::get()->re4_push_blend.reset();
         return;
     }
-    re4vr::lua_set_number("__re4_push_blend", blend);
+    RE4VRShared::get()->re4_push_blend = blend;
     std::unordered_map<std::string, glm::quat> bones = m_push.bones;
     if (bones.empty()) {
         auto pq = [](float deg, int axis, float sign = 1.0f) {
@@ -671,19 +657,19 @@ std::optional<RE4VRReloadAdv::Vec3> RE4VRReloadAdv::dock_local(::RETransform* we
 }
 
 void RE4VRReloadAdv::shell_preview_apply() {
-    const int32_t wid = (int32_t)re4vr::lua_number("__re4_reload_ui_wid").value_or(0);
+    const int32_t wid = (int32_t)RE4VRShared::get()->re4_reload_ui_wid.value_or(0);
     if (m_shell_preview && m_keyframe_insert.count(wid)) {
-        re4vr::lua_set_number("__re4_shell_kf_preview", wid);
+        RE4VRShared::get()->re4_shell_kf_preview = wid;
     } else {
-        re4vr::lua_set_nil("__re4_shell_kf_preview");
+        RE4VRShared::get()->re4_shell_kf_preview.reset();
     }
-    re4vr::lua_set_number("__re4_shell_clone_part", m_shell_clone_part);
-    re4vr::lua_set_number("__re4_shell_clone_scale", m_shell_clone_scale);
+    RE4VRShared::get()->re4_shell_clone_part = m_shell_clone_part;
+    RE4VRShared::get()->re4_shell_clone_scale = m_shell_clone_scale;
     if (!m_shell_preview || !m_keyframe_insert.count(wid)) {
         return;
     }
-    auto* joint = (::REJoint*)re4vr::lua_object("__re4_reload_shell_joint");
-    auto* tf = (::RETransform*)re4vr::lua_object("__re4_reload_weapon_tf");
+    auto* joint = (::REJoint*)RE4VRShared::get()->re4_reload_shell_joint;
+    auto* tf = (::RETransform*)RE4VRShared::get()->re4_reload_weapon_tf;
     if (!joint || !tf) {
         return;
     }
@@ -692,17 +678,17 @@ void RE4VRReloadAdv::shell_preview_apply() {
 }
 
 void RE4VRReloadAdv::eject_preview_apply() {
-    const int32_t wid = (int32_t)re4vr::lua_number("__re4_reload_ui_wid").value_or(0);
+    const int32_t wid = (int32_t)RE4VRShared::get()->re4_reload_ui_wid.value_or(0);
     if (m_eject_preview && m_keyframe_eject.count(wid)) {
-        re4vr::lua_set_number("__re4_mag_eject_kf_preview", wid);
+        RE4VRShared::get()->re4_mag_eject_kf_preview = wid;
     } else {
-        re4vr::lua_set_nil("__re4_mag_eject_kf_preview");
+        RE4VRShared::get()->re4_mag_eject_kf_preview.reset();
     }
     if (!m_eject_preview || !m_keyframe_eject.count(wid)) {
         return;
     }
-    auto* joint = (::REJoint*)re4vr::lua_object("__re4_reload_shell_joint");
-    auto* tf = (::RETransform*)re4vr::lua_object("__re4_reload_weapon_tf");
+    auto* joint = (::REJoint*)RE4VRShared::get()->re4_reload_shell_joint;
+    auto* tf = (::RETransform*)RE4VRShared::get()->re4_reload_weapon_tf;
     if (!joint || !tf) {
         return;
     }
@@ -714,7 +700,7 @@ void RE4VRReloadAdv::tick_preview() {
     if (!m_preview.active) {
         return;
     }
-    if (re4vr::lua_os_clock() >= m_preview.until_t || !m_preview.joint) {
+    if (re4vr::now() >= m_preview.until_t || !m_preview.joint) {
         m_preview.active = false;
         m_preview.joint = nullptr;
         return;

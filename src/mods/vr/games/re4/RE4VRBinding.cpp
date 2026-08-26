@@ -179,6 +179,9 @@ void RE4VRBinding::register_ui() {
 
 void RE4VRBinding::reset_runtime() {
     m_inited = false;
+    m_vigem_axis_fn = {};
+    m_vigem_trigger_fn = {};
+    m_vigem_button_fn = {};
     m_prev_l_grip = false;
     m_grenade_throw_cooldown = 0;
     m_grenade_rt_pulse_frames = 0;
@@ -249,51 +252,24 @@ void RE4VRBinding::vigem_init() {
 }
 
 void RE4VRBinding::vigem_axis(const char* n, float v) {
-    re4vr::LuaGuard g;
-    auto* L = g.lua();
-    if (!L) {
+    if (!m_vigem_axis_fn.valid()) {
         return;
     }
-    sol::object vg = (*L)["vigem"];
-    if (!vg.is<sol::table>()) {
-        return;
-    }
-    sol::protected_function f = vg.as<sol::table>()["set_axis"];
-    if (f.valid()) {
-        (void)f(n, v);
-    }
+    (void)m_vigem_axis_fn(n, v);
 }
 
 void RE4VRBinding::vigem_trigger(const char* n, float v) {
-    re4vr::LuaGuard g;
-    auto* L = g.lua();
-    if (!L) {
+    if (!m_vigem_trigger_fn.valid()) {
         return;
     }
-    sol::object vg = (*L)["vigem"];
-    if (!vg.is<sol::table>()) {
-        return;
-    }
-    sol::protected_function f = vg.as<sol::table>()["set_trigger"];
-    if (f.valid()) {
-        (void)f(n, v);
-    }
+    (void)m_vigem_trigger_fn(n, v);
 }
 
 void RE4VRBinding::vigem_button(const char* n, bool v) {
-    re4vr::LuaGuard g;
-    auto* L = g.lua();
-    if (!L) {
+    if (!m_vigem_button_fn.valid()) {
         return;
     }
-    sol::object vg = (*L)["vigem"];
-    if (!vg.is<sol::table>()) {
-        return;
-    }
-    sol::protected_function f = vg.as<sol::table>()["set_button"];
-    if (f.valid()) {
-        (void)f(n, v);
-    }
+    (void)m_vigem_button_fn(n, v);
 }
 
 void RE4VRBinding::overlay_set_enabled(bool on) {
@@ -365,6 +341,9 @@ bool RE4VRBinding::ensure_init() {
     if (!ok) {
         return false;
     }
+    m_vigem_axis_fn = vg.as<sol::table>()["set_axis"];
+    m_vigem_trigger_fn = vg.as<sol::table>()["set_trigger"];
+    m_vigem_button_fn = vg.as<sol::table>()["set_button"];
     m_inited = true;
     return true;
 }
@@ -578,16 +557,8 @@ bool RE4VRBinding::is_mercs_active() {
 }
 
 bool RE4VRBinding::is_ada_active() {
-    re4vr::LuaGuard g;
-    auto* L = g.lua();
-    if (L) {
-        sol::object fn = (*L)["__re4_char_now"];
-        if (fn.is<sol::protected_function>()) {
-            auto r = fn.as<sol::protected_function>()();
-            if (r.valid() && r.get_type() == sol::type::string) {
-                return r.get<std::string>() == "ada";
-            }
-        }
+    if (RE4VRShared::get()->re4_char_now.value_or("") == "ada") {
+        return true;
     }
     auto* ctx = binding_ctx();
     if (!re4vr::obj_ok(ctx)) {
@@ -728,38 +699,27 @@ bool RE4VRBinding::is_binoculars_active() {
 
 bool RE4VRBinding::is_binoculars_active_this_frame() {
     const auto frame = VR::get()->get_frame_count();
-    re4vr::LuaGuard g;
-    auto* L = g.lua();
-    if (L) {
-        sol::object c = (*L)["__re4_bino_scan_cache"];
-        if (c.is<sol::table>()) {
-            auto t = c.as<sol::table>();
-            if (t.get_or("frame", -1) == frame) {
-                return t.get_or("active", false);
-            }
-        }
-        const bool active = is_binoculars_active();
-        auto t = c.is<sol::table>() ? c.as<sol::table>() : L->create_table();
-        t["frame"] = frame;
-        t["active"] = active;
-        (*L)["__re4_bino_scan_cache"] = t;
-        return active;
+    if (m_bino.scan_frame == (int)frame) {
+        return m_bino.scan_active;
     }
-    return is_binoculars_active();
+    m_bino.scan_frame = (int)frame;
+    m_bino.scan_active = is_binoculars_active();
+    return m_bino.scan_active;
 }
 
 float RE4VRBinding::bino_val(const char* key, float fallback) {
-    re4vr::LuaGuard g;
-    auto* L = g.lua();
-    if (!L) {
-        return fallback;
+    auto* s = RE4VRShared::get().get();
+    if (std::strcmp(key, "start") == 0) {
+        return (float)s->re4_bino_start.value_or(fallback);
     }
-    sol::object c = (*L)["__re4_bino_cfg"];
-    if (c.is<sol::table>()) {
-        sol::object v = c.as<sol::table>()[key];
-        if (v.get_type() == sol::type::number) {
-            return v.as<float>();
-        }
+    if (std::strcmp(key, "min") == 0) {
+        return (float)s->re4_bino_min.value_or(fallback);
+    }
+    if (std::strcmp(key, "max") == 0) {
+        return (float)s->re4_bino_max.value_or(fallback);
+    }
+    if (std::strcmp(key, "speed") == 0) {
+        return (float)s->re4_bino_speed.value_or(fallback);
     }
     return fallback;
 }

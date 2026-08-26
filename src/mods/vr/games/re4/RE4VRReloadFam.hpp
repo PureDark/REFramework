@@ -558,6 +558,8 @@ struct BoltFamily {
         float roll{0}, zf{0};
         bool needs{false};
         std::optional<int> prev_loaded;
+        float gx{0}, gy{0}, gz{0};
+        std::optional<float> rgx, rgy, rgz;
     } bolt;
     struct {
         bool active{false}, insert{false};
@@ -692,10 +694,36 @@ inline void BoltFamily::on_frame() {
     if (bj && hp && bp) {
         const float d = glm::distance(*hp, *bp);
         if (grip && d <= grab_dist) {
+            if (!bolt.grab) {
+                bolt.gx = hp->x;
+                bolt.gy = hp->y;
+                bolt.gz = hp->z;
+                auto rhr = RE4VRShared::get()->vr_rh_ctrl_raw;
+                if (!rhr) {
+                    rhr = RE4VRShared::get()->vr_rh_world;
+                }
+                if (rhr) {
+                    bolt.rgx = rhr->x;
+                    bolt.rgy = rhr->y;
+                    bolt.rgz = rhr->z;
+                } else {
+                    bolt.rgx.reset();
+                    bolt.rgy.reset();
+                    bolt.rgz.reset();
+                }
+            }
             bolt.grab = true;
-            auto lp = lh_ctrl();
-            const float pull = lp ? -lp->z : 0.f;
-            float zf = std::clamp(pull / std::max(travel, 0.01f), 0.f, 1.f);
+            float px = hp->x - bolt.gx, py = hp->y - bolt.gy, pz = hp->z - bolt.gz;
+            auto rhn = RE4VRShared::get()->vr_rh_ctrl_raw;
+            if (!rhn) {
+                rhn = RE4VRShared::get()->vr_rh_world;
+            }
+            if (bolt.rgx && rhn) {
+                px -= rhn->x - *bolt.rgx;
+                py -= rhn->y - *bolt.rgy;
+                pz -= rhn->z - *bolt.rgz;
+            }
+            float zf = std::clamp(std::max(0.f, -pz) / std::max(travel, 0.01f), 0.f, 1.f);
             if (!bolt.open) {
                 bolt.roll = std::min(1.f, bolt.roll + 0.15f);
                 if (bolt.roll >= 0.99f) {
@@ -956,6 +984,7 @@ struct Red9Family {
         bool grabbed{false}, open{false};
         float apply_z{0};
         bool need_regrip{false};
+        std::optional<double> heal_done_t;
     } rack;
     ::REGameObject* clone_obj{};
     ::REManagedObject* clone_mesh{};
@@ -1080,6 +1109,15 @@ inline void Red9Family::on_frame() {
             } else {
                 rack.apply_z = rest_z;
             }
+        }
+    }
+    {
+        auto det = RE4VRShared::get()->re4_damage_end_t;
+        const double now = re4vr::now();
+        if (det && (!rack.heal_done_t || *rack.heal_done_t != *det) && (now - *det) < 3.0 && !rack.grabbed && wep.slide) {
+            rack.heal_done_t = det;
+            rack.open = false;
+            rack.apply_z = rest_z;
         }
     }
     RE4VRShared::get()->vr_block_fire_when_empty = rack.open || rack.grabbed;
@@ -1468,6 +1506,7 @@ struct BlastBow {
     bool bolt_hand{false};
     bool drawn{false};
     float zf{0};
+    bool prev_dmg{false};
     void load() {
         auto d = re4vr::load_json_file(json_path);
         if (d.empty()) {
@@ -1524,6 +1563,19 @@ struct BlastBow {
                 drawn = zf >= 0.85f;
             }
         }
+        const bool dmg = RE4VRShared::get()->re4_damage_active;
+        if (prev_dmg && !dmg) {
+            if (!drawn) {
+                zf = 0;
+                bolt_hand = false;
+            } else {
+                zf = 1;
+            }
+        }
+        if (dmg) {
+            bolt_hand = false;
+        }
+        prev_dmg = dmg;
         RE4VRShared::get()->vr_mag_in_hand = bolt_hand;
         RE4VRShared::get()->vr_block_fire_when_empty = loaded <= 0 || !drawn;
         RE4VRShared::get()->re4_reload_grab_empty = loaded > 0 || (reserve_of(live_wi()) <= 0 && !unlimited());

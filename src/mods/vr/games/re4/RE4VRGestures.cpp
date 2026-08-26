@@ -148,14 +148,14 @@ void RE4VRGestures::load_poses() {
 }
 
 bool RE4VRGestures::hands_free() {
-    const auto kh = re4vr::lua_string("__re4_knife_hand");
+    const auto kh = RE4VRShared::get()->re4_knife_hand;
     if (kh && *kh == "right") {
         return false;
     }
-    if (re4vr::lua_is_true("__vr_bare_hands")) {
+    if (RE4VRShared::get()->vr_bare_hands) {
         return true;
     }
-    if (re4vr::lua_is_true("__re4_knife_equipped") && kh && *kh == "left") {
+    if (RE4VRShared::get()->re4_knife_equipped && kh && *kh == "left") {
         return true;
     }
     return false;
@@ -169,14 +169,14 @@ void RE4VRGestures::start(const std::string& name) {
         return;
     }
     m_active_name = name;
-    m_active_t0 = re4vr::lua_os_clock();
+    m_active_t0 = re4vr::now();
 }
 
 std::optional<float> RE4VRGestures::blend_now() {
     if (!m_active_name) {
         return std::nullopt;
     }
-    const float e = (float)(re4vr::lua_os_clock() - m_active_t0);
+    const float e = (float)(re4vr::now() - m_active_t0);
     if (e >= (LERP_IN + HOLD + LERP_OUT)) {
         return std::nullopt;
     }
@@ -194,7 +194,7 @@ void RE4VRGestures::apply() {
     if (!m_active_name) {
         return;
     }
-    if (!hands_free() || !re4vr::lua_is_true("__re4_frame_pure_gameplay")) {
+    if (!hands_free() || !RE4VRShared::get()->re4_frame_pure_gameplay) {
         m_active_name.reset();
         return;
     }
@@ -477,38 +477,24 @@ void RE4VRGestures::on_lua_state_destroyed(sol::state&) {
 
 void RE4VRGestures::on_frame() {
     ScriptProfileGuard guard("re4_vr_guestures.lua", "on_frame", re4vr::profile_frame());
-    if (auto fire = re4vr::lua_string("__re4_gesture_fire")) {
-        re4vr::lua_set_nil("__re4_gesture_fire");
-        if (hands_free() && re4vr::lua_is_true("__re4_frame_pure_gameplay")) {
+    if (auto fire = RE4VRShared::get()->re4_gesture_fire) {
+        RE4VRShared::get()->re4_gesture_fire.reset();
+        if (hands_free() && RE4VRShared::get()->re4_frame_pure_gameplay) {
             start(*fire);
             play_taunt();
         }
-    } else {
-        re4vr::LuaGuard g;
-        if (auto* L = g.lua()) {
-            sol::object o = (*L)["__re4_gesture_fire"];
-            if (o.get_type() != sol::type::nil && o.get_type() != sol::type::none) {
-                if (o.is<std::string>()) {
-                    re4vr::lua_set_nil("__re4_gesture_fire");
-                    if (hands_free() && re4vr::lua_is_true("__re4_frame_pure_gameplay")) {
-                        start(o.as<std::string>());
-                        play_taunt();
-                    }
-                }
-            }
-        }
     }
 
-    const bool gate = re4vr::lua_is_true("__re4_frame_pure_gameplay") && hands_free();
+    const bool gate = RE4VRShared::get()->re4_frame_pure_gameplay && hands_free();
     std::optional<std::string> g;
     if (gate) {
-        g = re4vr::lua_string("__re4_gest_prev");
+        g = RE4VRShared::get()->re4_gest_prev;
     }
     if (!g || *g != "fuck_you") {
         m_hold_t0.reset();
         m_hold_fired = false;
     } else {
-        const double now = re4vr::lua_os_clock();
+        const double now = re4vr::now();
         if (!m_hold_t0) {
             m_hold_t0 = now;
             m_hold_fired = false;

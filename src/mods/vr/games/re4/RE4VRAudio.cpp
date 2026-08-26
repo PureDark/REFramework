@@ -105,6 +105,9 @@ HookManager::PreHookResult RE4VRAudio::pre_set_listener(std::vector<uintptr_t>& 
 void RE4VRAudio::post_set_listener(uintptr_t&, sdk::RETypeDefinition*, uintptr_t) {}
 
 std::optional<std::string> RE4VRAudio::on_initialize() {
+    auto d = re4vr::load_json_file("re4_vr/re4_vr_audio.json");
+    m_enabled = re4vr::j_bool(d, "enabled", true);
+    m_use_full_hmd = re4vr::j_bool(d, "use_full_hmd", true);
     if (auto* td = sdk::find_type_definition("via.simplewwise.SendRequest")) {
         if (auto* m = td->get_method("setListenerPosition")) {
             g_hookman.add(m, &RE4VRAudio::pre_set_listener, &RE4VRAudio::post_set_listener);

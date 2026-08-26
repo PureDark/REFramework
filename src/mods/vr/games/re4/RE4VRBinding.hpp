@@ -9,6 +9,7 @@
 
 #include <sdk/REMath.hpp>
 #include <sdk/RETransform.hpp>
+#include <sol/sol.hpp>
 
 #include "../../../../Mod.hpp"
 #include "HookManager.hpp"
@@ -192,6 +193,8 @@ private:
         float min_offset{-7.0f};
         float max_offset{2.5f};
         float stick_speed{3.0f};
+        int scan_frame{-1};
+        bool scan_active{false};
     } m_bino{};
     struct PGrip {
         bool fired{false};
@@ -225,6 +228,9 @@ private:
     bool m_chapter_resolved{false};
     bool m_file_resolved{false};
     bool m_ui_registered{false};
+    sol::protected_function m_vigem_axis_fn;
+    sol::protected_function m_vigem_trigger_fn;
+    sol::protected_function m_vigem_button_fn;
     std::chrono::steady_clock::time_point m_clock_origin{std::chrono::steady_clock::now()};
 };
 #endif

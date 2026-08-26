@@ -107,7 +107,12 @@ private:
     void do_grab(Slot* best);
     Slot* nearest_with_clone();
     void mag_tick();
+    void start_calibration(Slot* slot, bool left);
+    void start_mag_calibration();
+    bool calibrate_slot(Slot& s, const Vector3f& P);
+    bool calibrate_mag(const Vector3f& P);
     void calibration_tick();
+    void register_ui();
     void knife_char_tick();
     void track_last_weapons();
     void auto_redraw_tick();
@@ -183,6 +188,8 @@ private:
     double m_cal_deadline{0};
     int m_cal_last_beep{-1};
     bool m_cal_left{false};
+    bool m_cal_mag{false};
+    bool m_ui_registered{false};
     ::REManagedObject* m_pe{nullptr};
     ::REManagedObject* m_et_main{nullptr};
     void* m_mesh_t{nullptr};

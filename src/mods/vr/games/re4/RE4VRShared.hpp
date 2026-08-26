@@ -42,7 +42,15 @@ public:
         return (prefix.size() && prefix[0] == 'L') ? vr_arm_chain_L_maxreach : vr_arm_chain_R_maxreach;
     }
 
+    bool refresh_unlimited();
+
     bool set_mag_in_hand(bool v) {
+        if (v) {
+            refresh_unlimited();
+            if (re4_is_unlimited) {
+                return false;
+            }
+        }
         for (auto& h : mag_in_hand_handlers) {
             if (auto r = h(v)) {
                 return *r;
@@ -84,6 +92,11 @@ public:
     bool re4_ar_pg{false};  // __re4_ar_pg
     bool re4_ar_suppress{false};  // __re4_ar_suppress
     bool re4_at_cannon{false};  // __re4_at_cannon
+    std::optional<double> re4_bino_max{2.5};  // __re4_bino_cfg.max
+    std::optional<double> re4_bino_min{-7.0};  // __re4_bino_cfg.min
+    std::optional<double> re4_bino_speed{3.0};  // __re4_bino_cfg.speed
+    std::optional<double> re4_bino_start{2.5};  // __re4_bino_cfg.start
+    bool re4_block_b_drop{false};  // __re4_block_b_drop
     std::optional<double> re4_autoreload_blocked{};  // __re4_autoreload_blocked
     bool re4_autoreload_gate{false};  // __re4_autoreload_gate
     bool re4_boat_active{false};  // __re4_boat_active
@@ -97,6 +110,8 @@ public:
     bool re4_burst_gate{false};  // __re4_burst_gate
     std::optional<double> re4_cart_lean_lx{};  // __re4_cart_lean_lx
     std::optional<std::string> re4_char_now{};  // __re4_char_now
+    bool re4_is_unlimited{false};  // __re4_is_unlimited
+    std::optional<double> re4_unlim_t{};
     bool re4_clone_finisher_restore{false};  // __re4_clone_finisher_restore
     bool re4_clone_no_autogun{false};  // __re4_clone_no_autogun
     std::optional<double> re4_coin_off_y{};  // __re4_coin_off_y
@@ -153,6 +168,10 @@ public:
     bool re4_knife_finisher_shake{false};  // __re4_knife_finisher_shake
     bool re4_knife_flip_pre_ks{false};  // __re4_knife_flip_pre_ks
     std::optional<double> re4_knife_flip_speed{};  // __re4_knife_flip_speed
+    std::optional<double> re4_knife_flip_finger_deg{};  // __re4_knife_flip_finger_deg
+    std::optional<double> re4_knife_flip_pos_x{};  // __re4_knife_flip_pos_x
+    std::optional<double> re4_knife_flip_pos_y{};  // __re4_knife_flip_pos_y
+    std::optional<double> re4_knife_flip_pos_z{};  // __re4_knife_flip_pos_z
     bool re4_knife_flying{false};  // __re4_knife_flying
     bool re4_knife_gate{true};  // __re4_knife_gate
     bool re4_knife_gate_hook{false};  // __re4_knife_gate_hook
@@ -172,6 +191,7 @@ public:
     std::optional<double> re4_knife_our_until{};  // __re4_knife_our_until
     std::optional<double> re4_knife_parry_fresh_until{};  // __re4_knife_parry_fresh_until
     bool re4_knife_parry_pose{false};  // __re4_knife_parry_pose
+    std::optional<double> re4_knife_reach{};  // __re4_knife_reach
     std::optional<double> re4_knife_swing_threshold{};  // __re4_knife_swing_threshold
     std::optional<Vector3f> re4_knife_throw_dir{};  // __re4_knife_throw_dir
     bool re4_knife_throw_gripping{false};  // __re4_knife_throw_gripping
@@ -195,6 +215,7 @@ public:
     std::optional<std::string> re4_merc_body{};  // __re4_merc_body
     std::optional<double> re4_merc_bow_keep_blocked{};  // __re4_merc_bow_keep_blocked
     bool re4_merc_bow_pinned{false};  // __re4_merc_bow_pinned
+    bool re4_merc_dot{true};  // __re4_merc_dot
     std::optional<double> re4_merc_cid{};  // __re4_merc_cid
     std::optional<double> re4_merc_kind{};  // __re4_merc_kind
     std::optional<double> re4_merc_round{};  // __re4_merc_round
@@ -204,6 +225,8 @@ public:
     bool re4_on_elevator2{false};  // __re4_on_elevator2
     std::optional<double> re4_our_equip_until{};  // __re4_our_equip_until
     std::optional<double> re4_parry_keep_gun_until{};  // __re4_parry_keep_gun_until
+    std::optional<double> re4_parry_keep_gun_from{};  // __re4_parry_keep_gun_from
+    std::optional<double> re4_parry_last_gun_wid{};  // __re4_parry_last_gun_wid
     std::optional<double> re4_pose_fade_dur{};  // __re4_pose_fade_dur
     std::optional<double> re4_push_blend{};  // __re4_push_blend
     bool re4_qk_block{true};  // __re4_qk_block
@@ -277,6 +300,9 @@ public:
     bool vr_block_two_hand{false};  // __vr_block_two_hand
     bool vr_break_open{false};  // __vr_break_open
     bool vr_burst_active{false};  // __vr_burst_active
+    bool vr_camera_fix_active{false};  // vr_camera_fix.active
+    std::optional<Vector3f> vr_camera_fix_pos{};  // vr_camera_fix.camera_pos
+    std::optional<glm::quat> vr_camera_fix_rot{};  // vr_camera_fix.camera_rot
     std::optional<double> vr_burst_count{};  // __vr_burst_count
     std::optional<double> vr_burst_press_id{};  // __vr_burst_press_id
     bool vr_burst_prev_rt{false};  // __vr_burst_prev_rt
@@ -358,6 +384,8 @@ public:
     bool vr_rt_raw{false};  // __vr_rt_raw
     bool vr_save_restore_active{false};  // __vr_save_restore_active
     bool vr_scope_active{false};  // vr_scope_active
+    std::optional<Vector3f> vr_scope_aim_dir{};  // vr_scope_aim_dir
+    std::optional<Vector3f> vr_scope_aim_pos{};  // vr_scope_aim_pos
     std::optional<double> vr_scope_grip_edge_t{};  // __vr_scope_grip_edge_t
     bool vr_scope_grip_prev{false};  // __vr_scope_grip_prev
     std::optional<double> vr_shot_seq{};  // __vr_shot_seq

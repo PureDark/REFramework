@@ -102,6 +102,7 @@ public:
         bool chambered_hold{false}, zeroed_by_us{false};
         float gx{0}, gy{0}, gz{0}, frac{0}, dock_blend{0}, tune_frac{0};
         float last_dist{-1};
+        std::optional<double> heal_done_t;
         std::optional<float> pump_init, pump_max, g_relz, ammo_input_t;
         std::optional<Vector3f> pump_off;
         std::optional<float> rgx, rgy, rgz;
@@ -2118,6 +2119,19 @@ inline void MagFed::on_frame() {
     }
     drop_prev = drop.active;
     update_rack_state();
+    {
+        auto det = RE4VRShared::get()->re4_damage_end_t;
+        const double now = re4vr::now();
+        if (det && (!rack.heal_done_t || *rack.heal_done_t != *det) && (now - *det) < 3.0 && !rack.needs && !rack.empty && !mag_out && wep.slide) {
+            rack.heal_done_t = det;
+            set_jlp_z(wep.slide, sp_of(wid()).rest_z);
+            rack.grab_active = false;
+            rack.pulled = false;
+            rack.pushed = false;
+            rack.frac = 0;
+            rack.chambered_hold = true;
+        }
+    }
     update_rack_gesture();
     update_rotary();
     update_dock_blend();
@@ -2211,7 +2225,10 @@ inline void MagFed::export_globals(sol::state& lua) {
         }
         return sol::object(t);
     };
-    lua["__re4_is_loop_reload"] = []() { return false; };
+    lua["__re4_is_loop_reload"] = []() {
+        auto* p = pe();
+        return p && re4vr::safe([&] { return sdk::call_object_func_easy<bool>(p, "isLoopReload"); }).value_or(false);
+    };
     pose_fade_export();
 }
 

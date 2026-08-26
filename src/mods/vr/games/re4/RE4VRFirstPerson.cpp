@@ -20,6 +20,8 @@
 #include <utility/String.hpp>
 
 #include "RE4VRFrameCache.hpp"
+#include "RE4VRKillswitch.hpp"
+#include "RE4VRScope.hpp"
 #include "RE4VRShared.hpp"
 #include "../../../ScriptRunner.hpp"
 
@@ -161,44 +163,28 @@ void RE4VRFirstPerson::load_json() {
 }
 
 void RE4VRFirstPerson::publish_bino() {
-    re4vr::LuaGuard g;
-    auto* L = g.lua();
-    if (!L) {
-        return;
-    }
-    auto t = L->create_table();
-    t["start"] = m_cfg.bino_start;
-    t["min"] = m_cfg.bino_min;
-    t["max"] = m_cfg.bino_max;
-    t["speed"] = m_cfg.bino_speed;
-    (*L)["__re4_bino_cfg"] = t;
+    RE4VRShared::get()->re4_bino_start = m_cfg.bino_start;
+    RE4VRShared::get()->re4_bino_min = m_cfg.bino_min;
+    RE4VRShared::get()->re4_bino_max = m_cfg.bino_max;
+    RE4VRShared::get()->re4_bino_speed = m_cfg.bino_speed;
 }
 
 void RE4VRFirstPerson::publish_camera_fix(bool active, const Vector3f* pos, const glm::quat* rot) {
-    re4vr::LuaGuard g;
-    auto* L = g.lua();
-    if (!L) {
-        return;
-    }
-    sol::object o = (*L)["vr_camera_fix"];
-    sol::table t;
-    if (o.is<sol::table>()) {
-        t = o.as<sol::table>();
-    } else {
-        t = L->create_table();
-        (*L)["vr_camera_fix"] = t;
-    }
-    t["active"] = active;
+    RE4VRShared::get()->vr_camera_fix_active = active;
     if (pos) {
-        t["camera_pos"] = *pos;
+        RE4VRShared::get()->vr_camera_fix_pos = *pos;
     }
     if (rot) {
-        t["camera_rot"] = *rot;
+        RE4VRShared::get()->vr_camera_fix_rot = *rot;
+    }
+    if (!active) {
+        RE4VRShared::get()->vr_camera_fix_pos.reset();
+        RE4VRShared::get()->vr_camera_fix_rot.reset();
     }
 }
 
 bool RE4VRFirstPerson::fp_perf_on() const {
-    return !re4vr::lua_is_true("__re4_fp_perf_off");
+    return !RE4VRShared::get()->re4_fp_perf_off;
 }
 
 std::optional<int32_t> RE4VRFirstPerson::fp_stage_cached() {
@@ -299,7 +285,7 @@ bool RE4VRFirstPerson::active() {
     if (!VR::get()->is_hmd_active()) {
         return false;
     }
-    if (re4vr::call_killswitch_bool("is_active", re4vr::lua_is_true("__re4_ks_active"))) {
+    if (re4vr::call_killswitch_bool("is_active", RE4VRShared::get()->re4_ks_active)) {
         const bool keep = re4vr::call_killswitch_bool("is_ks2")
             || re4vr::call_killswitch_bool("is_ks3")
             || re4vr::call_killswitch_bool("is_ks4")
@@ -410,8 +396,8 @@ Vector3f RE4VRFirstPerson::apply_surge_filter(const Vector3f& hp, const std::opt
     const float tau = m_cfg.surge_tau;
     if (tau <= 0.001f || !bp) {
         m_surge_px.reset();
-        re4vr::lua_set_nil("__vr_surge_dx");
-        re4vr::lua_set_nil("__vr_surge_dz");
+        RE4VRShared::get()->vr_surge_dx.reset();
+        RE4VRShared::get()->vr_surge_dz.reset();
         return hp;
     }
     if (frame_tick) {
@@ -504,12 +490,12 @@ Vector3f RE4VRFirstPerson::apply_surge_filter(const Vector3f& hp, const std::opt
         m_surge_lz = bp->z;
     }
     if (!m_surge_px) {
-        re4vr::lua_set_nil("__vr_surge_dx");
-        re4vr::lua_set_nil("__vr_surge_dz");
+        RE4VRShared::get()->vr_surge_dx.reset();
+        RE4VRShared::get()->vr_surge_dz.reset();
         return hp;
     }
-    re4vr::lua_set_number("__vr_surge_dx", *m_surge_px - bp->x);
-    re4vr::lua_set_number("__vr_surge_dz", *m_surge_pz - bp->z);
+    RE4VRShared::get()->vr_surge_dx = *m_surge_px - bp->x;
+    RE4VRShared::get()->vr_surge_dz = *m_surge_pz - bp->z;
     return Vector3f{hp.x + (*m_surge_px - bp->x), hp.y, hp.z + (*m_surge_pz - bp->z)};
 }
 
@@ -570,24 +556,7 @@ bool RE4VRFirstPerson::on_ladder_climb() {
 }
 
 bool RE4VRFirstPerson::is_gimmick_ks3_now() {
-    re4vr::LuaGuard g;
-    auto* L = g.lua();
-    if (!L) {
-        return false;
-    }
-    sol::object loaded = (*L)["package"]["loaded"]["re4vr/re4_vr_killswitch"];
-    if (!loaded.is<sol::table>()) {
-        return false;
-    }
-    sol::protected_function f = loaded.as<sol::table>()["get_activating_controller"];
-    if (!f.valid()) {
-        return false;
-    }
-    auto r = f();
-    if (!r.valid() || r.get_type() != sol::type::string) {
-        return false;
-    }
-    return r.get<std::string>() == "ks3_gimmick";
+    return RE4VRKillswitch::get()->get_activating_controller().value_or("") == "ks3_gimmick";
 }
 
 void RE4VRFirstPerson::compute_and_set(bool frame_tick) {
@@ -601,23 +570,23 @@ void RE4VRFirstPerson::compute_and_set(bool frame_tick) {
         return;
     }
 
-    const bool grappled_now = re4vr::lua_is_true("__re4_grappled_active");
-    const bool boxbreak_now = re4vr::lua_is_true("__re4_boxbreak_active");
+    const bool grappled_now = RE4VRShared::get()->re4_grappled_active;
+    const bool boxbreak_now = RE4VRShared::get()->re4_boxbreak_active;
     const bool ashley_ev_now = is_gimmick_ks3_now();
     const bool ladder_now = on_ladder_climb();
-    const bool fatalkick_now = re4vr::lua_is_true("__re4_fatalkick_active");
-    const bool forcecrouch_now = re4vr::lua_is_true("__re4_forcecrouch_active");
-    const bool gondola_now = re4vr::lua_is_true("__re4_gondola_active");
-    const bool jetski_now = re4vr::lua_is_true("__re4_jetski_active");
-    const bool boat_now = re4vr::lua_is_true("__re4_boat_active");
-    const bool begcrouch_now = re4vr::lua_is_true("__re4_forcecrouch_ks4_active");
+    const bool fatalkick_now = RE4VRShared::get()->re4_fatalkick_active;
+    const bool forcecrouch_now = RE4VRShared::get()->re4_forcecrouch_active;
+    const bool gondola_now = RE4VRShared::get()->re4_gondola_active;
+    const bool jetski_now = RE4VRShared::get()->re4_jetski_active;
+    const bool boat_now = RE4VRShared::get()->re4_boat_active;
+    const bool begcrouch_now = RE4VRShared::get()->re4_forcecrouch_ks4_active;
     const bool ks2_now = re4vr::call_killswitch_bool("is_ks2");
     const bool ks4_now = re4vr::call_killswitch_bool("is_ks4");
     const bool headpin_now = grappled_now || boxbreak_now || ashley_ev_now || ladder_now || ks2_now
         || fatalkick_now || forcecrouch_now || gondola_now || jetski_now || boat_now || begcrouch_now || ks4_now;
-    const bool cart_now = re4vr::lua_is_true("__re4_railcar_mode")
-        || re4vr::lua_is_true("__re4_minecart_ks4_active")
-        || re4vr::lua_is_true("__re4_minecart2_ks4_active");
+    const bool cart_now = RE4VRShared::get()->re4_railcar_mode
+        || RE4VRShared::get()->re4_minecart_ks4_active
+        || RE4VRShared::get()->re4_minecart2_ks4_active;
 
     if (cart_now || headpin_now) {
         const auto head = v3(sdk::get_joint_position(hj));
@@ -681,7 +650,7 @@ void RE4VRFirstPerson::compute_and_set(bool frame_tick) {
     }
 
     Vector3f hp = v3(sdk::get_joint_position(hj));
-    if (re4vr::lua_is_true("__vr_surge_bridged")) {
+    if (RE4VRShared::get()->vr_surge_bridged) {
         if (auto* btf0 = re4vr::body_transform()) {
             const auto bp0 = v3(sdk::get_transform_position(btf0));
             hp = Vector3f{bp0.x, hp.y, bp0.z};
@@ -786,7 +755,7 @@ void RE4VRFirstPerson::apply_movement_stabilization() {
         m_move_has_valid = false;
         return;
     }
-    if (re4vr::call_killswitch_bool("is_active", re4vr::lua_is_true("__re4_ks_active")) || re4vr::lua_is_true("__re4_throwsight_active")) {
+    if (re4vr::call_killswitch_bool("is_active", RE4VRShared::get()->re4_ks_active) || RE4VRShared::get()->re4_throwsight_active) {
         m_move_has_valid = false;
         m_move_last_t.reset();
         return;
@@ -888,7 +857,7 @@ bool RE4VRFirstPerson::recenter_neutralize_headset() {
 void RE4VRFirstPerson::recenter_tick() {
     if (!m_cfg.recenter_on_killswitch) {
         if (m_rc_was_active) {
-            re4vr::lua_set_bool("__vr_recenter_hold", false);
+            RE4VRShared::get()->vr_recenter_hold = false;
             m_rc_was_active = false;
         }
         return;
@@ -896,12 +865,12 @@ void RE4VRFirstPerson::recenter_tick() {
     if (!VR::get()->is_hmd_active()) {
         return;
     }
-    const bool ks = re4vr::call_killswitch_bool("is_active", re4vr::lua_is_true("__re4_ks_active"));
+    const bool ks = re4vr::call_killswitch_bool("is_active", RE4VRShared::get()->re4_ks_active);
     if (ks && !m_rc_was_active) {
         recenter_neutralize_headset();
-        re4vr::lua_set_bool("__vr_recenter_hold", true);
+        RE4VRShared::get()->vr_recenter_hold = true;
     } else if (!ks && m_rc_was_active) {
-        re4vr::lua_set_bool("__vr_recenter_hold", false);
+        RE4VRShared::get()->vr_recenter_hold = false;
     }
     m_rc_was_active = ks;
 }
@@ -1041,15 +1010,6 @@ void RE4VRFirstPerson::apply_event5_hmd_offset() {
 }
 
 void RE4VRFirstPerson::apply_event5_mono() {
-    re4vr::LuaGuard g;
-    auto* L = g.lua();
-    if (!L) {
-        return;
-    }
-    sol::object req = (*L)["__re4_mono_request"];
-    if (!req.is<sol::protected_function>()) {
-        return;
-    }
     bool on = false;
     if (m_cfg.event5_mono) {
         auto* ctx = re4vr::player_context();
@@ -1067,9 +1027,7 @@ void RE4VRFirstPerson::apply_event5_mono() {
             }
         }
     }
-    auto fn = req.as<sol::protected_function>();
-    auto r = fn("symbol_riddle", on);
-    (void)r;
+    RE4VRScope::get()->mono_request("symbol_riddle", on);
 }
 
 void RE4VRFirstPerson::apply_event6_hmd_offset() {
@@ -1258,7 +1216,7 @@ void RE4VRFirstPerson::reset_runtime() {
     m_sd_cache.clear();
     m_sd_last_scan = 0.0;
     m_rc_was_active = false;
-    re4vr::lua_set_bool("__vr_recenter_hold", false);
+    RE4VRShared::get()->vr_recenter_hold = false;
     publish_camera_fix(false);
 }
 

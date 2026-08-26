@@ -18,8 +18,12 @@
 
 #include "RE4VRCrosshair.hpp"
 #include "RE4VRFrameCache.hpp"
+#include "RE4VRMenu.hpp"
 #include "RE4VRShared.hpp"
 #include "../../../ScriptRunner.hpp"
+
+#include <imgui.h>
+#include <sdk/RETransform.hpp>
 
 namespace {
 const char* CHEST_JOINTS[] = {"Spine_1", "Spine1", "Spine_2", "Spine2", "Chest", "Kammer", "Spine", "Hip"};
@@ -169,6 +173,7 @@ std::optional<std::string> RE4VRHolster::on_initialize() {
     RE4VRShared::get()->re4_knife_holster_hook = true;
     RE4VRShared::get()->re4_knife_gate_hook = true;
     RE4VRShared::get()->re4_melee_gate_hook = true;
+    register_ui();
     return std::nullopt;
 }
 
@@ -1196,6 +1201,174 @@ void RE4VRHolster::grab_dispatch() {
     }
 }
 
+void RE4VRHolster::start_calibration(Slot* slot, bool left) {
+    m_cal_slot = slot;
+    m_cal_mag = false;
+    m_cal_left = left;
+    m_cal_deadline = re4vr::now() + 5.0;
+    m_cal_last_beep = -1;
+    haptic_right(0.10f, 200.0f, 0.9f);
+}
+
+void RE4VRHolster::start_mag_calibration() {
+    m_cal_slot = nullptr;
+    m_cal_mag = true;
+    m_cal_left = true;
+    m_cal_deadline = re4vr::now() + 5.0;
+    m_cal_last_beep = -1;
+    haptic_right(0.10f, 200.0f, 0.9f);
+}
+
+bool RE4VRHolster::calibrate_slot(Slot& s, const Vector3f& P) {
+    if (s.detached_zone) {
+        Vector3f hmd, right, up, fwd;
+        if (!hmd_basis(hmd, right, up, fwd)) {
+            return false;
+        }
+        const float dx = P.x - hmd.x, dy = P.y - hmd.y, dz = P.z - hmd.z;
+        s.cfg["zx"] = dx * right.x + dy * right.y + dz * right.z;
+        s.cfg["zy"] = dx * up.x + dy * up.y + dz * up.z;
+        s.cfg["zz"] = dx * fwd.x + dy * fwd.y + dz * fwd.z;
+        save_slot(s);
+        return true;
+    }
+    if (s.parented && s.clone_obj) {
+        auto* tf = s.clone_tf;
+        if (!tf) {
+            tf = re4vr::safe([&] { return sdk::call_object_func_easy<::RETransform*>(s.clone_obj, "get_Transform"); }).value_or(nullptr);
+            s.clone_tf = tf;
+        }
+        if (!tf) {
+            return false;
+        }
+        re4vr::pcall([&] { sdk::call_object_func_easy<void*>(tf, "set_LocalRotation", hol_quat(jn(s.cfg, "rx"), jn(s.cfg, "ry"), jn(s.cfg, "rz"))); });
+        sdk::set_transform_position(tf, re4vr::v4(P));
+        auto lp = re4vr::safe([&] { return sdk::call_object_func_easy<Vector3f>(tf, "get_LocalPosition"); });
+        if (!lp) {
+            return false;
+        }
+        const float d = (float)RE4VRShared::get()->re4_ub_z_delta.value_or(0);
+        const float g = (float)RE4VRShared::get()->re4_holster_crouch_gain.value_or(0);
+        const float az = (RE4VRShared::get()->re4_knife_char.value_or("") == "ada")
+            ? (float)RE4VRShared::get()->re4_holster_ada_mesh_z.value_or(0) : 0.0f;
+        const float cz = -d * g + az;
+        s.cfg["off_x"] = lp->x;
+        s.cfg["off_y"] = lp->y;
+        s.cfg["off_z"] = lp->z - cz;
+        s.cfg["pl_x"] = 0;
+        s.cfg["pl_y"] = 0;
+        s.cfg["pl_z"] = 0;
+        s.sm_has = false;
+        save_slot(s);
+        return true;
+    }
+    auto* j = slot_joint(s);
+    if (!j) {
+        return false;
+    }
+    const auto jp = re4vr::v3(sdk::get_joint_position(j));
+    const auto jr = sdk::get_joint_rotation(j);
+    const auto q = glm::normalize(jr * hol_quat(jn(s.cfg, "rx"), jn(s.cfg, "ry"), jn(s.cfg, "rz")));
+    const auto qpl = re4vr::quat_rotate(q, Vector3f{jn(s.cfg, "pl_x"), jn(s.cfg, "pl_y"), jn(s.cfg, "pl_z")});
+    const Vector3f tgt{P.x - jp.x - qpl.x, P.y - jp.y - qpl.y, P.z - jp.z - qpl.z};
+    const auto off = re4vr::quat_rotate(glm::inverse(jr), tgt);
+    s.cfg["off_x"] = off.x;
+    s.cfg["off_y"] = off.y;
+    s.cfg["off_z"] = off.z;
+    s.sm_has = false;
+    save_slot(s);
+    return true;
+}
+
+bool RE4VRHolster::calibrate_mag(const Vector3f& P) {
+    if (!m_mag_joint) {
+        auto* tf = body_tf();
+        if (tf) {
+            for (auto* nm : CHEST_JOINTS) {
+                if (auto* j = re4vr::joint_by_name(tf, nm)) {
+                    m_mag_joint = j;
+                    break;
+                }
+            }
+        }
+    }
+    if (!m_mag_joint) {
+        return false;
+    }
+    const auto jp = re4vr::v3(sdk::get_joint_position(m_mag_joint));
+    const auto jr = sdk::get_joint_rotation(m_mag_joint);
+    const auto off = re4vr::quat_rotate(glm::inverse(jr), Vector3f{P.x - jp.x, P.y - jp.y, P.z - jp.z});
+    m_mag_cfg["off_x"] = off.x;
+    m_mag_cfg["off_y"] = off.y;
+    m_mag_cfg["off_z"] = off.z;
+    re4vr::save_json_file("re4_vr/re4_vr_mag_holster.json", m_mag_cfg);
+    return true;
+}
+
+void RE4VRHolster::calibration_tick() {
+    if (!m_cal_slot && !m_cal_mag) {
+        return;
+    }
+    const double remaining = m_cal_deadline - re4vr::now();
+    if (remaining <= 0) {
+        std::optional<Vector3f> P;
+        if (m_cal_left) {
+            P = RE4VRShared::get()->vr_lh_ctrl_raw;
+            if (!P) {
+                P = lh_world();
+            }
+        } else {
+            P = RE4VRShared::get()->vr_rh_ctrl_raw;
+            if (!P) {
+                P = rh_world();
+            }
+        }
+        if (P) {
+            if (m_cal_mag) {
+                calibrate_mag(*P);
+            } else if (m_cal_slot) {
+                calibrate_slot(*m_cal_slot, *P);
+            }
+        }
+        haptic_right(0.30f, 200.0f, 1.0f);
+        m_cal_slot = nullptr;
+        m_cal_mag = false;
+        m_cal_last_beep = -1;
+        m_cal_deadline = 0;
+    } else {
+        const int int_s = (int)std::ceil(remaining);
+        if (int_s != m_cal_last_beep) {
+            m_cal_last_beep = int_s;
+            haptic_right(0.09f, 200.0f, 0.9f);
+        }
+    }
+}
+
+void RE4VRHolster::register_ui() {
+    if (m_ui_registered) {
+        return;
+    }
+    m_ui_registered = true;
+    RE4VRMenu::get()->add(70, "holster_cal", [this]() {
+        ImGui::TextUnformatted("Holster calibration (5s)");
+        if (ImGui::Button("Calibrate knife")) {
+            start_calibration(&m_knife, false);
+        }
+        if (ImGui::Button("Calibrate pistol")) {
+            start_calibration(&m_pistol, false);
+        }
+        if (ImGui::Button("Calibrate grenade")) {
+            start_calibration(&m_grenade, false);
+        }
+        if (ImGui::Button("Calibrate shoulder")) {
+            start_calibration(&m_shoulder, false);
+        }
+        if (ImGui::Button("Calibrate mag (left)")) {
+            start_mag_calibration();
+        }
+    });
+}
+
 void RE4VRHolster::mag_tick() {
     if (RE4VRShared::get()->re4_holster_killswitch || RE4VRShared::get()->re4_holster_knife_only || !jb(m_mag_cfg, "enabled", true)) {
         if (m_mag_holding) {
@@ -1587,6 +1760,7 @@ void RE4VRHolster::on_frame() {
     RE4VRShared::get()->re4_holster_killswitch = ks;
     RE4VRShared::get()->re4_holster_knife_only = knife_only_stage();
     knife_char_tick();
+    calibration_tick();
     track_last_weapons();
     auto_redraw_tick();
     tick_slot(m_knife);
