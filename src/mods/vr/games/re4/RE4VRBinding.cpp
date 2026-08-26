@@ -229,7 +229,7 @@ int32_t RE4VRBinding::resolve_enum(const char* type_name, const char* field, int
 }
 
 bool RE4VRBinding::digital(uint64_t action, uint64_t hand) const {
-    if (!action || !hand) {
+    if (!action) {
         return false;
     }
     return VR::get()->is_action_active((vr::VRActionHandle_t)action, (vr::VRInputValueHandle_t)hand);
@@ -255,6 +255,7 @@ void RE4VRBinding::vigem_axis(const char* n, float v) {
     if (!m_vigem_axis_fn.valid()) {
         return;
     }
+    re4vr::LuaGuard g;
     (void)m_vigem_axis_fn(n, v);
 }
 
@@ -262,6 +263,7 @@ void RE4VRBinding::vigem_trigger(const char* n, float v) {
     if (!m_vigem_trigger_fn.valid()) {
         return;
     }
+    re4vr::LuaGuard g;
     (void)m_vigem_trigger_fn(n, v);
 }
 
@@ -269,6 +271,7 @@ void RE4VRBinding::vigem_button(const char* n, bool v) {
     if (!m_vigem_button_fn.valid()) {
         return;
     }
+    re4vr::LuaGuard g;
     (void)m_vigem_button_fn(n, v);
 }
 
@@ -310,9 +313,6 @@ bool RE4VRBinding::ensure_init() {
     }
     auto& vr = VR::get();
     if (vr->get_controllers().size() < 2) {
-        return false;
-    }
-    if (!vr->get_left_joystick() || !vr->get_right_joystick()) {
         return false;
     }
     re4vr::LuaGuard g;

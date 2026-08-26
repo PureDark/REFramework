@@ -404,12 +404,8 @@ void RE4VRMinecart::update_cart_rumble() {
     }
     const auto lj = vr->get_left_joystick();
     const auto rj = vr->get_right_joystick();
-    if (lj) {
-        vr->trigger_haptic_vibration(0.0f, dur, frq, la, lj);
-    }
-    if (rj) {
-        vr->trigger_haptic_vibration(0.0f, dur, frq, ra, rj);
-    }
+    vr->trigger_haptic_vibration(0.0f, dur, frq, la, lj);
+    vr->trigger_haptic_vibration(0.0f, dur, frq, ra, rj);
 }
 
 std::optional<std::string> RE4VRMinecart::on_initialize() {

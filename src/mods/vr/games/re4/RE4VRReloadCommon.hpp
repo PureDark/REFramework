@@ -184,22 +184,18 @@ inline bool right_grip() {
 inline bool left_trigger() {
     auto& vr = VR::get();
     const auto act = vr->get_action_trigger();
-    const auto joy = vr->get_left_joystick();
-    return act && joy && vr->is_action_active(act, joy);
+    if (!act) {
+        return false;
+    }
+    return vr->is_action_active(act, vr->get_left_joystick());
 }
 inline void haptic_left(float amp, float dur) {
     auto& vr = VR::get();
-    auto h = vr->get_left_joystick();
-    if (h) {
-        vr->trigger_haptic_vibration(0.0f, dur, 169.385f, amp, h);
-    }
+    vr->trigger_haptic_vibration(0.0f, dur, 169.385f, amp, vr->get_left_joystick());
 }
 inline void haptic_right(float amp, float dur) {
     auto& vr = VR::get();
-    auto h = vr->get_right_joystick();
-    if (h) {
-        vr->trigger_haptic_vibration(0.0f, dur, 90.0f, amp, h);
-    }
+    vr->trigger_haptic_vibration(0.0f, dur, 90.0f, amp, vr->get_right_joystick());
 }
 inline void play_go_sound(::REManagedObject* go, uint32_t id) {
     if (!re4vr::obj_ok(go) || id == 0) {

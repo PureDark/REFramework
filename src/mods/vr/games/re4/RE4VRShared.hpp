@@ -668,10 +668,10 @@ inline void* runtime_type(const char* name) {
 inline bool grip_held(bool left) {
     auto& vr = VR::get();
     const auto act = vr->get_action_grip();
-    const auto joy = left ? vr->get_left_joystick() : vr->get_right_joystick();
-    if (!act || !joy) {
+    if (!act) {
         return false;
     }
+    const auto joy = left ? vr->get_left_joystick() : vr->get_right_joystick();
     return vr->is_action_active(act, joy);
 }
 

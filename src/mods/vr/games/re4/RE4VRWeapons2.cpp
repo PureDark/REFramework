@@ -668,9 +668,7 @@ void RE4VRWeapons2::left_knife_tick() {
                 clone_destroy();
                 {
                     auto& vr = VR::get();
-                    if (auto h = vr->get_left_joystick()) {
-                        vr->trigger_haptic_vibration(0.0f, 0.16f, 80.0f, 1.0f, h);
-                    }
+                    vr->trigger_haptic_vibration(0.0f, 0.16f, 80.0f, 1.0f, vr->get_left_joystick());
                 }
                 RE4VRHolster::get()->play_grab_sound();
             } else if (!equipped) {
@@ -681,9 +679,7 @@ void RE4VRWeapons2::left_knife_tick() {
                 RE4VRShared::get()->re4_clone_no_autogun = !gun;
                 {
                     auto& vr = VR::get();
-                    if (auto h = vr->get_left_joystick()) {
-                        vr->trigger_haptic_vibration(0.0f, 0.16f, 80.0f, 1.0f, h);
-                    }
+                    vr->trigger_haptic_vibration(0.0f, 0.16f, 80.0f, 1.0f, vr->get_left_joystick());
                 }
                 RE4VRHolster::get()->play_grab_sound();
             }

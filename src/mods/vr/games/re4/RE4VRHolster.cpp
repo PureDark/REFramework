@@ -832,17 +832,11 @@ bool RE4VRHolster::left_grip() {
 
 void RE4VRHolster::haptic_right(float dur, float freq, float amp) {
     auto& vr = VR::get();
-    auto h = vr->get_right_joystick();
-    if (h) {
-        vr->trigger_haptic_vibration(0.0f, dur, freq, amp, h);
-    }
+    vr->trigger_haptic_vibration(0.0f, dur, freq, amp, vr->get_right_joystick());
 }
 void RE4VRHolster::haptic_left(float dur, float freq, float amp) {
     auto& vr = VR::get();
-    auto h = vr->get_left_joystick();
-    if (h) {
-        vr->trigger_haptic_vibration(0.0f, dur, freq, amp, h);
-    }
+    vr->trigger_haptic_vibration(0.0f, dur, freq, amp, vr->get_left_joystick());
 }
 
 void RE4VRHolster::play_go_sound(::REManagedObject* go, uint32_t id) {

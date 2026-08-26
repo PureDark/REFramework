@@ -1401,7 +1401,7 @@ void RE4VRMotion::update_support_dock(const Vector3f& free_pos, const std::optio
                 auto& vr = VR::get();
                 const auto act = vr->get_action_trigger();
                 const auto joy = vr->get_left_joystick();
-                return act && joy && vr->is_action_active(act, joy);
+                return act && vr->is_action_active(act, joy);
             }();
             if (trig && !m_sup.prev_switch_trigger && m_wep.id) {
                 m_sup.fire_mode = fire_mode_next(*m_wep.id, m_sup.fire_mode);
