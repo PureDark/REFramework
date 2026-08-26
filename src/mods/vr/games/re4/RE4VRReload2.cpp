@@ -25,17 +25,17 @@ std::shared_ptr<RE4VRReload2>& RE4VRReload2::get() {
 }
 
 HookManager::PreHookResult RE4VRReload2::pre_bolt_cycle(std::vector<uintptr_t>&, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
-    if (re4vr::lua_is_true("__re4_bolt_in_cycle") || re4vr::lua_is_true("__re4_bolt_in_cycle_dlc")) {
+    if (RE4VRShared::get()->re4_bolt_in_cycle || RE4VRShared::get()->re4_bolt_in_cycle_dlc) {
         return HookManager::PreHookResult::SKIP_ORIGINAL;
     }
     return HookManager::PreHookResult::CALL_ORIGINAL;
 }
 HookManager::PreHookResult RE4VRReload2::pre_xbow_dummy(std::vector<uintptr_t>& args, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
-    if (re4vr::lua_is_true("__re4_xbow_dummy_await") && args.size() > 1) {
+    if (RE4VRShared::get()->re4_xbow_dummy_await && args.size() > 1) {
         auto* thiz = (::REManagedObject*)args[1];
         if (re4vr::obj_ok(thiz)) {
-            re4vr::lua_set_object("__re4_xbow_dummy_obj", thiz);
-            re4vr::lua_set_bool("__re4_xbow_dummy_await", false);
+            RE4VRShared::get()->re4_xbow_dummy_obj = thiz;
+            RE4VRShared::get()->re4_xbow_dummy_await = false;
         }
     }
     return HookManager::PreHookResult::CALL_ORIGINAL;

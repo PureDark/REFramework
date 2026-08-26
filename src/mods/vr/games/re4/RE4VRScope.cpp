@@ -299,10 +299,10 @@ void RE4VRScope::probe() {
     m_fork_gui = true;
     m_fork_canvas = true;
     m_probe_done = true;
-    re4vr::lua_set_bool("__re4_fork_ok", true);
-    re4vr::lua_set_bool("__re4_fork_mono", true);
-    re4vr::lua_set_bool("__re4_fork_gui_matrix", true);
-    re4vr::lua_set_bool("__re4_fork_canvas", true);
+    RE4VRShared::get()->re4_fork_ok = true;
+    RE4VRShared::get()->re4_fork_mono = true;
+    RE4VRShared::get()->re4_fork_gui_matrix = true;
+    RE4VRShared::get()->re4_fork_canvas = true;
 }
 
 void RE4VRScope::mono_request(std::string id, bool on) {
@@ -366,16 +366,16 @@ float RE4VRScope::zoom_y_now() const {
 }
 
 int32_t RE4VRScope::scope_raw_wid() {
-    if (auto w = re4vr::lua_number("__re4_scope_wid")) {
+    if (auto w = RE4VRShared::get()->re4_scope_wid) {
         m_last_raw_wid = (int32_t)*w;
     }
     return m_last_raw_wid;
 }
 
 std::string RE4VRScope::scope_raw_id() {
-    if (auto s = re4vr::lua_string("__re4_scope_id")) {
+    if (auto s = RE4VRShared::get()->re4_scope_id) {
         m_last_raw_id = *s;
-    } else if (re4vr::lua_number("__re4_scope_wid")) {
+    } else if (RE4VRShared::get()->re4_scope_wid) {
         m_last_raw_id = "ironsight";
     }
     return m_last_raw_id;
@@ -383,7 +383,7 @@ std::string RE4VRScope::scope_raw_id() {
 
 int32_t RE4VRScope::scope_wid_now() {
     const auto raw = scope_raw_wid();
-    if (re4vr::lua_not_false("__re4_ada_uses_leon_scope")) {
+    if (RE4VRShared::get()->re4_ada_uses_leon_scope) {
         if (raw == 6105) {
             return 4401;
         }
@@ -395,9 +395,9 @@ int32_t RE4VRScope::scope_wid_now() {
 }
 
 std::string RE4VRScope::scope_id_now() {
-    if (auto s = re4vr::lua_string("__re4_scope_id")) {
+    if (auto s = RE4VRShared::get()->re4_scope_id) {
         m_last_scope_id = *s;
-    } else if (re4vr::lua_number("__re4_scope_wid")) {
+    } else if (RE4VRShared::get()->re4_scope_wid) {
         m_last_scope_id = "ironsight";
     }
     return m_last_scope_id;
@@ -511,7 +511,7 @@ void RE4VRScope::scope_curve(const std::vector<Keyframe>& pts, float deg, float&
 }
 
 float RE4VRScope::scope_pitch_deg() {
-    auto p = re4vr::lua_number("__re4_scope_aim_pitch");
+    auto p = RE4VRShared::get()->re4_scope_aim_pitch;
     if (!m_scope_native) {
         m_deg_hist.clear();
         return p ? (float)*p : 0.0f;
@@ -519,7 +519,7 @@ float RE4VRScope::scope_pitch_deg() {
     if (!p) {
         return 0.0f;
     }
-    const double now = re4vr::lua_os_clock();
+    const double now = re4vr::now();
     m_deg_hist.push_back(DegSample{now, (float)*p});
     while (!m_deg_hist.empty() && (now - m_deg_hist.front().t) > 0.5) {
         m_last_scope_deg = m_deg_hist.front().p;
@@ -532,7 +532,7 @@ void RE4VRScope::apply_cam_offset() {
     if (!m_scope_native) {
         return;
     }
-    if (!re4vr::lua_number("__re4_scope_aim_pitch")) {
+    if (!RE4VRShared::get()->re4_scope_aim_pitch) {
         return;
     }
     const float deg = scope_pitch_deg();
@@ -548,9 +548,9 @@ void RE4VRScope::apply_cam_offset() {
     const float zx = zoom_x_now();
     const float zy = zoom_y_now();
     if (ox == 0.0f && oy == 0.0f && oz == 0.0f && zx == 0.0f && zy == 0.0f && py == 0.0f) {
-        re4vr::lua_set_number("__re4_scope_off_x", 0.0);
-        re4vr::lua_set_number("__re4_scope_off_y", 0.0);
-        re4vr::lua_set_number("__re4_scope_off_z", 0.0);
+        RE4VRShared::get()->re4_scope_off_x = 0.0;
+        RE4VRShared::get()->re4_scope_off_y = 0.0;
+        RE4VRShared::get()->re4_scope_off_z = 0.0;
         return;
     }
     ox += zx;
@@ -559,9 +559,9 @@ void RE4VRScope::apply_cam_offset() {
         ox += m_cfg.xr_dx;
         oy += m_cfg.xr_dy;
     }
-    re4vr::lua_set_number("__re4_scope_off_x", ox);
-    re4vr::lua_set_number("__re4_scope_off_y", oy);
-    re4vr::lua_set_number("__re4_scope_off_z", oz);
+    RE4VRShared::get()->re4_scope_off_x = ox;
+    RE4VRShared::get()->re4_scope_off_y = oy;
+    RE4VRShared::get()->re4_scope_off_z = oz;
 
     auto* cam = sdk::get_primary_camera();
     if (!cam) {
@@ -589,15 +589,15 @@ HookManager::PreHookResult RE4VRScope::pre_post_event(std::vector<uintptr_t>& ar
     if (!self.m_cfg.bolt_mute) {
         return HookManager::PreHookResult::CALL_ORIGINAL;
     }
-    const auto wid = re4vr::lua_number("__re4_scope_wid");
+    const auto wid = RE4VRShared::get()->re4_scope_wid;
     if (!wid || (*wid != 4400.0 && *wid != 6114.0)) {
         return HookManager::PreHookResult::CALL_ORIGINAL;
     }
-    const auto st = re4vr::lua_number("__re4_bolt_shoot_t");
+    const auto st = RE4VRShared::get()->re4_bolt_shoot_t;
     if (!st) {
         return HookManager::PreHookResult::CALL_ORIGINAL;
     }
-    const double dt = re4vr::lua_os_clock() - *st;
+    const double dt = re4vr::now() - *st;
     if (dt < 0.0 || dt > 1.20) {
         return HookManager::PreHookResult::CALL_ORIGINAL;
     }
@@ -659,12 +659,12 @@ void RE4VRScope::on_frame() {
     if (!m_probe_done) {
         probe();
     }
-    re4vr::lua_set_bool("__re4_scope_mono_enable", m_cfg.mono);
-    re4vr::lua_set_number("__re4_bolt_pitch_hold", m_cfg.bolt_pitch_hold);
-    re4vr::lua_set_bool("__re4_bolt_reaim", m_cfg.bolt_reaim);
+    RE4VRShared::get()->re4_scope_mono_enable = m_cfg.mono;
+    RE4VRShared::get()->re4_bolt_pitch_hold = m_cfg.bolt_pitch_hold;
+    RE4VRShared::get()->re4_bolt_reaim = m_cfg.bolt_reaim;
 
-    const bool raw_native = re4vr::lua_is_true("__re4_scope_native");
-    const double now = re4vr::lua_os_clock();
+    const bool raw_native = RE4VRShared::get()->re4_scope_native;
+    const double now = re4vr::now();
     if (raw_native) {
         m_scope_native = true;
         m_native_off_t.reset();
@@ -679,8 +679,8 @@ void RE4VRScope::on_frame() {
     }
 
     bool bolt_win = false;
-    if (auto st = re4vr::lua_number("__re4_bolt_shoot_t")) {
-        const auto wid = re4vr::lua_number("__re4_scope_wid");
+    if (auto st = RE4VRShared::get()->re4_bolt_shoot_t) {
+        const auto wid = RE4VRShared::get()->re4_scope_wid;
         if (wid && (*wid == 4400.0 || *wid == 6114.0) && (now - *st) < 1.10) {
             bolt_win = true;
         }
@@ -691,7 +691,7 @@ void RE4VRScope::on_frame() {
     mono_apply();
     proj_apply(m_scope_native);
 
-    re4vr::lua_set_number("__re4_scope_sens_factor", m_cfg.sens_out + (m_cfg.sens_in - m_cfg.sens_out) * zoom_ramp());
+    RE4VRShared::get()->re4_scope_sens_factor = m_cfg.sens_out + (m_cfg.sens_in - m_cfg.sens_out) * zoom_ramp();
 
     if (m_save_dirty && (now - m_save_t) > 1.0) {
         save_json();

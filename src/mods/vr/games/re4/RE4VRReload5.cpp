@@ -24,7 +24,7 @@ std::shared_ptr<RE4VRReload5>& RE4VRReload5::get() {
 }
 
 HookManager::PreHookResult RE4VRReload5::pre_bolt_cycle(std::vector<uintptr_t>&, std::vector<sdk::RETypeDefinition*>&, uintptr_t) {
-    if (re4vr::lua_is_true("__re4_bolt_in_cycle") || re4vr::lua_is_true("__re4_bolt_in_cycle_dlc")) {
+    if (RE4VRShared::get()->re4_bolt_in_cycle || RE4VRShared::get()->re4_bolt_in_cycle_dlc) {
         return HookManager::PreHookResult::SKIP_ORIGINAL;
     }
     return HookManager::PreHookResult::CALL_ORIGINAL;

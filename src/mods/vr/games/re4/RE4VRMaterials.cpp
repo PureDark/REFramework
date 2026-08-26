@@ -256,7 +256,7 @@ void RE4VRMaterials::scan_extra_mats() {
     if (!m_extra_mats.empty()) {
         return;
     }
-    const double now = re4vr::lua_os_clock();
+    const double now = re4vr::now();
     if ((now - m_extra_scan_t) < 5.0) {
         return;
     }
@@ -369,7 +369,7 @@ void RE4VRMaterials::gondola_unhide() {
 }
 
 void RE4VRMaterials::gondola_tick() {
-    const double now = re4vr::lua_os_clock();
+    const double now = re4vr::now();
     if (now < m_gondola_next_t) {
         return;
     }
@@ -447,10 +447,10 @@ void RE4VRMaterials::on_frame() {
 
     m_fp_only = ks3 || ks5;
     m_holster_hide = ks4;
-    if (re4vr::lua_is_true("__re4_throwsight_active")) {
+    if (RE4VRShared::get()->re4_throwsight_active) {
         m_fp_only = true;
     }
-    if (ks4 && re4vr::lua_is_true("__re4_railcar_mode")) {
+    if (ks4 && RE4VRShared::get()->re4_railcar_mode) {
         auto st = re4vr::call_killswitch_number("get_stage_name");
         if (!st) {
             if (auto s = re4vr::call_killswitch_string("get_stage_name")) {
@@ -464,10 +464,10 @@ void RE4VRMaterials::on_frame() {
             m_fp_only = true;
         }
     }
-    if (re4vr::lua_is_true("__re4_evt60874_fullhide") && re4vr::lua_not_false("__re4_ks_fp_enabled")) {
+    if (RE4VRShared::get()->re4_evt60874_fullhide && RE4VRShared::get()->re4_ks_fp_enabled) {
         m_fp_only = true;
     }
-    if (ks4 && re4vr::lua_not_false("__re4_ks_fp_enabled")) {
+    if (ks4 && RE4VRShared::get()->re4_ks_fp_enabled) {
         auto st = re4vr::call_killswitch_number("get_stage_name");
         auto rs = re4vr::call_killswitch_string("get_activating_controller");
         if (st && *st == 60880.0 && rs && *rs == "ks3_gimmick" && body) {
@@ -481,7 +481,7 @@ void RE4VRMaterials::on_frame() {
             }
         }
     }
-    m_scope_body_hide = re4vr::lua_is_true("__re4_force_killswitch_scope");
+    m_scope_body_hide = RE4VRShared::get()->re4_force_killswitch_scope;
     if (m_fp_only || m_scope_body_hide) {
         scan_extra_mats();
     }
@@ -489,7 +489,7 @@ void RE4VRMaterials::on_frame() {
     m_mat_set_enable = re4vr::call_killswitch_bool("is_active") && !ks2 && !ks3 && !ks4 && !ks5;
 
     auto fl_mesh_now = [&]() -> ::REManagedObject* {
-        if (auto* flm = re4vr::lua_object("__re4_fl_mesh")) {
+        if (auto* flm = RE4VRShared::get()->re4_fl_mesh) {
             return flm;
         }
         auto* scene = re4vr::current_scene();
@@ -558,7 +558,7 @@ void RE4VRMaterials::on_frame() {
     if (!tf) {
         return;
     }
-    const double now = re4vr::lua_os_clock();
+    const double now = re4vr::now();
     const double delta = m_last_time > 0.0 ? (now - m_last_time) : 0.0;
     m_last_time = now;
     m_refresh_timer += delta;

@@ -55,10 +55,10 @@ void RE4VRReload4::on_lua_state_created(sol::state& lua) {
     g_mag.load();
     g_mag.export_globals(lua);
     lua["__re4_r4dlc_release"] = []() {
-        if (!re4vr::lua_is_true("__re4_r4dlc_had")) {
+        if (!RE4VRShared::get()->re4_r4dlc_had) {
             return;
         }
-        re4vr::lua_set_bool("__re4_r4dlc_had", false);
+        RE4VRShared::get()->re4_r4dlc_had = false;
         g_mag.clear_globals();
     };
     lua["__re4_insert_manual_wid"] = lua.create_table();
